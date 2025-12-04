@@ -4,7 +4,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "echo 'Build finished'",
-    "start": "drizzle-kit migrate && tsx src/index.ts",
+    "start": "drizzle-kit push && tsx src/index.ts",
     "generate": "drizzle-kit generate",
     "migrate": "drizzle-kit migrate"
   },
