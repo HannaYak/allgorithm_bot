@@ -6,7 +6,7 @@ if (!connectionString) {
 }
 
 export default defineConfig({
-  schema: "./src/schema.ts", 
+  schema: "./drizzle/schema.ts",
   out: "./drizzle",
   dialect: "postgresql", // <-- Поменяйте 'mysql' на это
   dbCredentials: {
