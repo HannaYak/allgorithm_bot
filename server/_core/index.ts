@@ -7,6 +7,7 @@ import { registerOAuthRoutes } from "./oauth";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
+import { startBot, getBot } from "../bot";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -28,6 +29,22 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 }
 
 async function startServer() {
+  // Initialize Telegram bot first
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) {
+    console.error('[Bot] TELEGRAM_BOT_TOKEN is not set!');
+    process.exit(1);
+  }
+  
+  const webhookUrl = process.env.TELEGRAM_WEBHOOK_URL;
+  try {
+    await startBot(token, webhookUrl);
+    console.log('[Bot] Telegram bot initialized successfully');
+  } catch (error) {
+    console.error('[Bot] Failed to initialize bot:', error);
+    process.exit(1);
+  }
+  
   const app = express();
   const server = createServer(app);
   // Configure body parser with larger size limit for file uploads
@@ -35,6 +52,22 @@ async function startServer() {
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   // OAuth callback under /api/oauth/callback
   registerOAuthRoutes(app);
+  
+  // Telegram bot webhook endpoint
+  app.post('/api/telegram', express.json(), async (req, res) => {
+    try {
+      const bot = getBot();
+      if (!bot) {
+        console.error('[Telegram] Bot not initialized');
+        return res.status(500).json({ error: 'Bot not initialized' });
+      }
+      await bot.handleUpdate(req.body, res);
+    } catch (error) {
+      console.error('[Telegram] Webhook error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+  
   // tRPC API
   app.use(
     "/api/trpc",
@@ -49,6 +82,15 @@ async function startServer() {
   } else {
     serveStatic(app);
   }
+  
+  // Graceful shutdown
+  process.on('SIGINT', async () => {
+    console.log('[Server] Shutting down...');
+    server.close(() => {
+      console.log('[Server] HTTP server closed');
+      process.exit(0);
+    });
+  });
 
   const preferredPort = parseInt(process.env.PORT || "3000");
   const port = await findAvailablePort(preferredPort);
@@ -59,7 +101,11 @@ async function startServer() {
 
   server.listen(port, () => {
     console.log(`Server running on http://localhost:${port}/`);
+    console.log('[Bot] Telegram bot is ready to receive messages');
   });
 }
 
-startServer().catch(console.error);
+startServer().catch((error) => {
+  console.error('Fatal error:', error);
+  process.exit(1);
+});
