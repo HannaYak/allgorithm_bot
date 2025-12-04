@@ -4,6 +4,7 @@ import postgres from 'postgres';
 import { eq } from 'drizzle-orm';
 import * as schema from '../drizzle/schema'; // Путь к схеме
 import 'dotenv/config';
+import http from 'http';
 
 // --- НАСТРОЙКА БАЗЫ ---
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is missing');
@@ -264,6 +265,21 @@ bot.command('reply', (ctx) => {
     bot.telegram.sendMessage(userId, `👮‍♂️ Ответ администратора:\n\n${text}`)
         .then(() => ctx.reply('Ответ отправлен'))
         .catch(() => ctx.reply('Ошибка отправки (пользователь заблочил бота?)'));
+});
+
+// --- HACK ДЛЯ RENDER (ЧТОБЫ НЕ ПАДАЛ ПО ТАЙМАУТУ) ---
+const port = process.env.PORT || 10000;
+http.createServer((req, res) => {
+    res.writeHead(200);
+    res.end('Bot is running!');
+}).listen(port, () => {
+    console.log(`Dummy server listening on port ${port}`);
+});
+// ---------------------------------------------------
+
+// Запуск бота (эта часть у вас уже есть, просто убедитесь, что код выше стоит ПЕРЕД ней)
+bot.launch().then(() => {
+    console.log('🤖 Bot started successfully!');
 });
 
 // Запуск бота
