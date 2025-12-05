@@ -267,25 +267,37 @@ bot.command('reply', (ctx) => {
         .catch(() => ctx.reply('Ошибка отправки (пользователь заблочил бота?)'));
 });
 
-// --- HACK ДЛЯ RENDER (ЧТОБЫ НЕ ПАДАЛ ПО ТАЙМАУТУ) ---
-const port = process.env.PORT || 10000;
-http.createServer((req, res) => {
-    res.writeHead(200);
-    res.end('Bot is running!');
-}).listen(port, () => {
-    console.log(`Dummy server listening on port ${port}`);
-});
-// ---------------------------------------------------
+// --- ЗАПУСК БОТА ---
 
-// Запуск бота (эта часть у вас уже есть, просто убедитесь, что код выше стоит ПЕРЕД ней)
-bot.launch().then(() => {
-    console.log('🤖 Bot started successfully!');
-});
+const PORT = Number(process.env.PORT) || 3000;
+const WEBHOOK_URL = process.env.TELEGRAM_WEBHOOK_URL; 
+// Эта переменная должна быть в Environment Variables на Render!
+// Пример: https://allgorithm-bot-1.onrender.com
 
-// Запуск бота
-bot.launch().then(() => {
-    console.log('🤖 Bot started successfully!');
-});
+if (process.env.NODE_ENV === 'production' && WEBHOOK_URL) {
+  // РЕЖИМ PRODUCTION (RENDER)
+  // Используем Webhook, чтобы не было конфликтов
+  console.log(`🚀 Запуск в режиме Webhook на порту ${PORT}`);
+  
+  // Telegraf сам поднимет сервер на нужном порту
+  bot.launch({
+    webhook: {
+      domain: WEBHOOK_URL, // Ваш URL от Render
+      port: PORT
+    }
+  }).then(() => {
+    console.log('✅ Бот запущен через Webhook');
+  });
+
+} else {
+  // РЕЖИМ DEVELOPMENT (ЛОКАЛЬНО)
+  // Используем Polling для удобства
+  console.log('🛠 Запуск в режиме Polling (локально)');
+  
+  bot.launch().then(() => {
+    console.log('✅ Бот запущен через Polling');
+  });
+}
 
 // Graceful stop
 process.once('SIGINT', () => bot.stop('SIGINT'));
