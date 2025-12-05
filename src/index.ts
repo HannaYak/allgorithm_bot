@@ -120,6 +120,39 @@ bot.hears('🎮 Игры', (ctx) => {
   ]));
 });
 
+// --- МЕНЮ: ЛИЧНЫЙ КАБИНЕТ ---
+bot.hears('👤 Личный кабинет', async (ctx) => {
+  const user = await db.query.users.findFirst({
+    where: eq(schema.users.telegramId, ctx.from.id)
+  });
+
+  if (!user) return ctx.reply('Сначала пройдите регистрацию /start');
+
+  // Считаем, сколько осталось до бесплатной игры (каждая 5-я бесплатно)
+  const gamesLeft = 5 - (user.gamesPlayed % 5);
+  
+  ctx.reply(
+    `👤 *Личный кабинет*\n\n` +
+    `👤 Имя: ${user.name}\n` +
+    `🎂 ДР: ${user.birthDate}\n` +
+    `🎲 Игр сыграно: ${user.gamesPlayed}\n` +
+    `🎁 До бесплатной игры осталось: ${gamesLeft}`,
+    { parse_mode: 'Markdown' }
+  );
+});
+
+// --- МЕНЮ: ПРАВИЛА ---
+bot.hears('📜 Правила', (ctx) => {
+  ctx.reply(
+    '📜 *Общие правила клуба Allgorithm:*\n\n' +
+    '1️⃣ **Уважение:** Мы ценим комфорт каждого участника. Будьте вежливы.\n' +
+    '2️⃣ **Оплата:** Место бронируется только после оплаты. Возврат возможен не позднее чем за 24 часа до игры.\n' +
+    '3️⃣ **Опоздания:** Игры начинаются вовремя. При опоздании более чем на 15 минут участие не гарантируется.\n\n' +
+    'Подробные правила каждой игры можно найти внутри меню "Игры".',
+    { parse_mode: 'Markdown' }
+  );
+});
+
 // --- ОБРАБОТКА ВЫБОРА ИГРЫ (ПРИМЕР ДЛЯ Talk & Toast) ---
 bot.action('game_talk', (ctx) => {
   ctx.editMessageText(
@@ -167,6 +200,88 @@ bot.action('book_talk', async (ctx) => {
   });
 
   ctx.reply('Выберите дату:', Markup.inlineKeyboard(buttons));
+});
+
+// --- ИГРА: STOCK & KNOW ---
+bot.action('game_stock', (ctx) => {
+  ctx.editMessageText(
+    '🧠 *Stock & Know*\n\n' + 
+    'Интеллектуальная биржа знаний. 12 вопросов, ставки на ответы и азарт!\n' +
+    'У вас есть 3 подсказки. Победитель забирает приз.\n\n' +
+    'Макс. игроков: 8',
+    {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback('📅 Записаться', 'book_stock')],
+        [Markup.button.callback('🔙 Назад к играм', 'back_to_games')]
+      ])
+    }
+  );
+});
+
+// --- ЗАПИСЬ НА STOCK & KNOW ---
+bot.action('book_stock', async (ctx) => {
+  const availableEvents = await db.query.events.findMany({
+    where: (events, { eq, and }) => and(
+      eq(events.type, 'stock_know'), // Ищем только этот тип игр
+      eq(events.isActive, true)
+    )
+  });
+
+  if (availableEvents.length === 0) {
+    return ctx.reply('К сожалению, игр Stock & Know на ближайшее время нет 😔');
+  }
+
+  const buttons = availableEvents.map(event => {
+    const label = `${event.dateString} (${event.maxPlayers - event.currentPlayers} мест)`;
+    return [Markup.button.callback(label, `pay_event_${event.id}`)];
+  });
+  
+  // Добавляем кнопку назад
+  buttons.push([Markup.button.callback('🔙 Назад', 'game_stock')]);
+
+  ctx.editMessageText('Выберите дату для Stock & Know:', Markup.inlineKeyboard(buttons));
+});
+
+// --- ИГРА: БЫСТРЫЕ СВИДАНИЯ ---
+bot.action('game_dating', (ctx) => {
+  ctx.editMessageText(
+    '💘 *Быстрые свидания*\n\n' + 
+    '14 человек, 7 минут на каждое знакомство. \n' +
+    'Девушки сидят за столиками, мужчины пересаживаются.\n' +
+    'В конце вы отмечаете симпатии, и если они совпадут — мы пришлем контакты!\n\n' +
+    'Макс. игроков: 14',
+    {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback('📅 Записаться', 'book_dating')],
+        [Markup.button.callback('🔙 Назад к играм', 'back_to_games')]
+      ])
+    }
+  );
+});
+
+// --- ЗАПИСЬ НА СВИДАНИЯ ---
+bot.action('book_dating', async (ctx) => {
+  const availableEvents = await db.query.events.findMany({
+    where: (events, { eq, and }) => and(
+      eq(events.type, 'speed_dating'), // Ищем свидания
+      eq(events.isActive, true)
+    )
+  });
+
+  if (availableEvents.length === 0) {
+    return ctx.reply('К сожалению, Быстрых свиданий на ближайшее время нет 😔');
+  }
+
+  const buttons = availableEvents.map(event => {
+    const label = `${event.dateString}`;
+    return [Markup.button.callback(label, `pay_event_${event.id}`)];
+  });
+
+  buttons.push([Markup.button.callback('🔙 Назад', 'game_dating')]);
+
+  ctx.editMessageText('Выберите дату для Свиданий:', Markup.inlineKeyboard(buttons));
 });
 
 // --- ОПЛАТА (ЗАГЛУШКА) ---
