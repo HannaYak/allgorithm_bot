@@ -23,7 +23,7 @@ const FAST_DATES_STATE = {
     women: [] as number[], // Номера женщин (1, 3, 5...)
     adminInputTargetId: 0 
 };
-};
+
 // --- НАСТРОЙКА STRIPE ---
 // Важно: Убедись, что ключ в .env.local правильный (начинается на sk_live_ или sk_test_)
 if (!process.env.STRIPE_SECRET_KEY) throw new Error('STRIPE_SECRET_KEY is missing');
