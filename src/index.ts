@@ -268,9 +268,9 @@ bot.action('back_to_games', (ctx) => {
 
 // ВСТАВЬТЕ СЮДА ВАШИ ID (которые начинаются на price_...)
 const GAME_PRICES: Record<string, string> = {
-  'talk_toast': 'price_1SUTlVHhXyjuCWwfU1IzNMlf', // Скопируйте из Stripe
+  'talk_toast': 'price_1SUTjrHhXyjuCWwfhQ7zwxLQ', // Скопируйте из Stripe
   'stock_know': 'price_1SUTkoHhXyjuCWwfxD89YIpP',
-  'speed_dating': 'price_1SUTjrHhXyjuCWwfhQ7zwxLQ',
+  'speed_dating': 'price_1SUTlVHhXyjuCWwfU1IzNMlf',
 };
 
 // --- СИСТЕМА ОПЛАТЫ STRIPE ---
