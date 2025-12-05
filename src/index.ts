@@ -11,7 +11,19 @@ const STRIPE_COUPON_ID = '8RiQPzVX';
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is missing');
 const client = postgres(process.env.DATABASE_URL);
 const db = drizzle(client, { schema });
-
+// --- ХРАНИЛИЩЕ БЫСТРЫХ СВИДАНИЙ ---
+const FAST_DATES_STATE = {
+    eventId: 0,
+    round: 0, // Текущий раунд
+    votes: new Map<number, number[]>(),
+    // Храним всех участников
+    participants: new Map<number, { id: number, name: string, username: string, num: number, gender: string }>(),
+    // Отдельные списки для логики пересадки
+    men: [] as number[],   // Номера мужчин (2, 4, 6...)
+    women: [] as number[], // Номера женщин (1, 3, 5...)
+    adminInputTargetId: 0 
+};
+};
 // --- НАСТРОЙКА STRIPE ---
 // Важно: Убедись, что ключ в .env.local правильный (начинается на sk_live_ или sk_test_)
 if (!process.env.STRIPE_SECRET_KEY) throw new Error('STRIPE_SECRET_KEY is missing');
@@ -446,16 +458,58 @@ bot.hears('🆘 Помощь', (ctx) => {
   ctx.session = { waitingForSupport: true };
 });
 
+// --- ОБРАБОТКА СООБЩЕНИЙ (ПОДДЕРЖКА + ГОЛОСОВАНИЕ) ---
+// --- ОБРАБОТКА ТЕКСТА (АДМИН ВВОДИТ ЦИФРЫ + ПОДДЕРЖКА) ---
 bot.on('message', async (ctx, next) => {
-  // @ts-ignore
-  if (ctx.session?.waitingForSupport && ctx.message.text) {
-    await ctx.telegram.sendMessage(ADMIN_ID, `🆘 ВОПРОС от ID: ${ctx.from.id}\nИмя: ${ctx.from.first_name}\n\n"${ctx.message.text}"\n\n⬇️ Ответить: /reply ${ctx.from.id} Текст`);
-    ctx.reply('Ваш вопрос отправлен! Ждите ответа.');
+    // 1. ПРОВЕРКА: Если Админ вводит цифры с карточки
+    if (ctx.from.id === ADMIN_ID && FAST_DATES_STATE.adminInputTargetId !== 0 && ctx.message && 'text' in ctx.message) {
+        const text = ctx.message.text;
+        const targetId = FAST_DATES_STATE.adminInputTargetId;
+        const player = FAST_DATES_STATE.participants.get(targetId);
+
+        // Парсим цифры
+        const numbers = text.match(/\d+/g)?.map(Number);
+
+        if (numbers) {
+            // Сохраняем выбор
+            FAST_DATES_STATE.votes.set(targetId, numbers);
+            
+            await ctx.reply(`✅ Сохранено для ${player?.name}: [ ${numbers.join(', ')} ]`);
+            
+            // Выключаем режим ввода и возвращаем меню
+            FAST_DATES_STATE.adminInputTargetId = 0;
+            
+            // Повторяем код показа меню, чтобы админ мог выбрать следующего
+            // (Дублируем логику 'fd_input_menu' чуть упрощенно для скорости)
+            const buttons: any[] = [];
+            const sorted = Array.from(FAST_DATES_STATE.participants.values()).sort((a, b) => a.num - b.num);
+            sorted.forEach(p => {
+                const hasVotes = FAST_DATES_STATE.votes.has(p.id) ? '✅ ' : '';
+                buttons.push([Markup.button.callback(`${hasVotes}№${p.num} ${p.name}`, `fd_edit_user_${p.id}`)]);
+            });
+            buttons.push([Markup.button.callback('🏁 Расчитать', 'fd_calc_matches')]);
+            
+            return ctx.reply('Кто следующий?', Markup.inlineKeyboard(buttons));
+        } else {
+            return ctx.reply('⚠️ Не вижу цифр. Напишите номера, например: 2 5');
+        }
+    }
+
+    // 2. ФОТО ВАУЧЕРА
     // @ts-ignore
-    ctx.session.waitingForSupport = false;
-    return;
-  }
-  next();
+    if (ctx.session?.waitingForVoucher) return next();
+
+    // 3. ПОДДЕРЖКА (Вопросы от юзеров)
+    // @ts-ignore
+    if (ctx.session?.waitingForSupport && ctx.message && 'text' in ctx.message) {
+        await ctx.telegram.sendMessage(ADMIN_ID, `🆘 ВОПРОС от ID: ${ctx.from.id}\nИмя: ${ctx.from.first_name}\n\n"${ctx.message.text}"\n\n⬇️ Ответить: /reply ${ctx.from.id} Текст`);
+        ctx.reply('Ваш вопрос отправлен! Ждите ответа.');
+        // @ts-ignore
+        ctx.session.waitingForSupport = false;
+        return;
+    }
+    
+    next();
 });
 
 // --- СИСТЕМА ВАУЧЕРОВ ---
@@ -564,7 +618,8 @@ bot.action(/voucher_reject_(\d+)/, async (ctx) => {
 bot.command('panel', async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
   ctx.reply('🔒 Админ-панель', Markup.inlineKeyboard([
-    [Markup.button.callback('🧠 Пульт Stock & Know', 'admin_stock_list')], // <--- НОВАЯ КНОПКА
+    [Markup.button.callback('💘 Пульт Fast Dates', 'admin_fd_panel')], // <--- НОВОЕ
+    [Markup.button.callback('🧠 Пульт Stock & Know', 'admin_stock_list')],
     [Markup.button.callback('📋 Кто записался?', 'admin_bookings')],
     [Markup.button.callback('➕ Добавить игру', 'admin_add_event')],
   ]));
@@ -899,6 +954,249 @@ const STOCK_QUESTIONS = [
     a: "45"
   }
 ];
+
+// --- ЛОГИКА FAST DATES ---
+
+// --- ЛОГИКА FAST DATES (АДМИН ВВОДИТ КАРТОЧКИ) ---
+
+// 1. Панель управления
+// 1. Панель управления
+bot.action('admin_fd_panel', async (ctx) => {
+    if (ctx.from?.id !== ADMIN_ID) return;
+    
+    const event = await db.query.events.findFirst({
+        where: (events, { and, eq }) => and(eq(events.type, 'speed_dating'), eq(events.isActive, true))
+    });
+
+    if (!event) return ctx.reply('❌ Нет активных игр Speed Dating.');
+
+    const roundText = FAST_DATES_STATE.round > 0 ? `(Раунд ${FAST_DATES_STATE.round})` : '';
+
+    ctx.editMessageText(
+        `💘 <b>Управление Fast Dates</b>\n` +
+        `Игра: ${event.dateString} ${roundText}\n` +
+        `Всего участников: ${FAST_DATES_STATE.participants.size}\n` +
+        `(Ж: ${FAST_DATES_STATE.women.length}, М: ${FAST_DATES_STATE.men.length})\n\n` +
+        `1. Загрузить список (М=Чет, Ж=Нечет).\n` +
+        `2. 🔄 <b>Объявить следующий раунд</b> (Бот скажет, кто куда пересаживается).\n` +
+        `3. Внести результаты с карточек.\n` +
+        `4. Расчитать совпадения.`, 
+        {
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([
+                [Markup.button.callback('1️⃣ Загрузить список', `fd_load_${event.id}`)],
+                [Markup.button.callback('2️⃣ 🔄 СЛЕДУЮЩИЙ РАУНД', 'fd_next_round')], // <--- НОВАЯ КНОПКА
+                [Markup.button.callback('3️⃣ ✍️ Внести результаты', 'fd_input_menu')],
+                [Markup.button.callback('4️⃣ 🏁 Расчитать', 'fd_calc_matches')],
+                [Markup.button.callback('🔙 В меню', 'panel')]
+            ])
+        }
+    );
+});
+
+// 2. Загрузка участников (присвоение номеров)
+// 2. Умная загрузка участников
+bot.action(/fd_load_(\d+)/, async (ctx) => {
+    const eventId = parseInt(ctx.match[1]);
+    const bookings = await db.query.bookings.findMany({
+        where: (b, { and, eq }) => and(eq(b.eventId, eventId), eq(b.paid, true))
+    });
+
+    if (bookings.length === 0) return ctx.reply('Никто не записался 🤷‍♂️');
+
+    // Сброс состояния
+    FAST_DATES_STATE.participants.clear();
+    FAST_DATES_STATE.votes.clear();
+    FAST_DATES_STATE.men = [];
+    FAST_DATES_STATE.women = [];
+    FAST_DATES_STATE.eventId = eventId;
+    FAST_DATES_STATE.round = 0;
+    FAST_DATES_STATE.adminInputTargetId = 0;
+
+    let msg = '📋 <b>Список участников:</b>\n\n';
+
+    // Временные массивы для сортировки
+    const menList: any[] = [];
+    const womenList: any[] = [];
+
+    // 1. Сортируем людей по полу
+    for (const booking of bookings) {
+        const user = await db.query.users.findFirst({ where: eq(schema.users.id, booking.userId) });
+        if (user) {
+            if (user.gender === 'Мужчина') {
+                menList.push(user);
+            } else {
+                womenList.push(user); // Женщины (и если пол не указан, по умолчанию сюда)
+            }
+        }
+    }
+
+    msg += '👩 <b>Девушки (Нечетные):</b>\n';
+    // 2. Раздаем номера ДЕВУШКАМ (1, 3, 5...)
+    womenList.forEach((u, index) => {
+        const num = (index * 2) + 1; // 1, 3, 5
+        FAST_DATES_STATE.women.push(num);
+        
+        FAST_DATES_STATE.participants.set(u.telegramId, {
+            id: u.telegramId,
+            name: u.name || 'Игрок',
+            username: u.username ? `@${u.username}` : '',
+            num: num,
+            gender: 'female'
+        });
+        msg += `№${num} - ${u.name}\n`;
+    });
+
+    msg += '\n👨 <b>Мужчины (Четные):</b>\n';
+    // 3. Раздаем номера МУЖЧИНАМ (2, 4, 6...)
+    menList.forEach((u, index) => {
+        const num = (index * 2) + 2; // 2, 4, 6
+        FAST_DATES_STATE.men.push(num);
+
+        FAST_DATES_STATE.participants.set(u.telegramId, {
+            id: u.telegramId,
+            name: u.name || 'Игрок',
+            username: u.username ? `@${u.username}` : '',
+            num: num,
+            gender: 'male'
+        });
+        msg += `№${num} - ${u.name}\n`;
+    });
+
+    ctx.reply(msg, { parse_mode: 'HTML' });
+});
+
+// 2.5 Логика пересадки (Кто к кому садится)
+bot.action('fd_next_round', (ctx) => {
+    if (FAST_DATES_STATE.participants.size === 0) return ctx.reply('Сначала загрузите список!');
+
+    FAST_DATES_STATE.round++;
+    const round = FAST_DATES_STATE.round;
+    const totalTables = FAST_DATES_STATE.women.length; 
+    // Предполагаем, что количество столов = количеству женщин
+
+    let msg = `🔔 <b>РАУНД ${round} НАЧАЛСЯ!</b>\n\n📢 Объявите пересадку:\n\n`;
+
+    // Логика:
+    // Женщины сидят на месте (Стол 1 = Женщина №1, Стол 2 = Женщина №3...)
+    // Мужчины двигаются по кругу.
+    
+    if (FAST_DATES_STATE.men.length === 0 || totalTables === 0) {
+        return ctx.reply('Недостаточно участников для пересадки.');
+    }
+
+    // Составляем пары на этот раунд
+    for (let i = 0; i < FAST_DATES_STATE.men.length; i++) {
+        const manNum = FAST_DATES_STATE.men[i];
+        
+        // Математика сдвига: каждый раунд мужчина сдвигается на 1 позицию
+        // Индекс женщины = (Индекс мужчины + Раунд - 1) % Кол-во женщин
+        // Это простая карусель
+        const womanIndex = (i + round - 1) % totalTables;
+        const womanNum = FAST_DATES_STATE.women[womanIndex];
+
+        // Находим имена для красоты (опционально)
+        // Но для скорости просто пишем номера
+        msg += `🏃‍♂️ <b>№${manNum}</b>  ➡️  к  👩 <b>№${womanNum}</b>\n`;
+    }
+
+    msg += `\n<i>(Остальные ждут или отдыхают)</i>`;
+
+    // Отправляем админу сообщение, чтобы он зачитал в микрофон
+    ctx.reply(msg, { parse_mode: 'HTML' });
+    
+    // Опционально: можно отправить это сообщение всем игрокам в личку,
+    // если раскомментировать код ниже:
+    /*
+    FAST_DATES_STATE.participants.forEach(p => {
+        bot.telegram.sendMessage(p.id, `🔔 РАУНД ${round}!\nСмотрите на экран или слушайте ведущего.`).catch(() => {});
+    });
+    */
+});
+
+// 3. Меню выбора игрока (Чью карточку вводим?)
+bot.action('fd_input_menu', async (ctx) => {
+    if (FAST_DATES_STATE.participants.size === 0) return ctx.reply('Сначала загрузите список (Кнопка 1)');
+
+    const buttons: any[] = [];
+    // Сортируем по номеру (1, 2, 3...)
+    const sorted = Array.from(FAST_DATES_STATE.participants.values()).sort((a, b) => a.num - b.num);
+
+    sorted.forEach(p => {
+        // Проверяем, ввели ли мы уже данные для него
+        const hasVotes = FAST_DATES_STATE.votes.has(p.id) ? '✅ ' : '';
+        // Кнопка: "1. Анна"
+        buttons.push([Markup.button.callback(`${hasVotes}№${p.num} ${p.name}`, `fd_edit_user_${p.id}`)]);
+    });
+
+    buttons.push([Markup.button.callback('🔙 Назад', 'admin_fd_panel')]);
+
+    ctx.editMessageText(
+        '✍️ <b>Чью карточку вводим?</b>\nНажмите на имя участника, а затем напишите номера тех, кто ему понравился.',
+        { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) }
+    );
+});
+
+// 4. Режим ввода для конкретного игрока
+bot.action(/fd_edit_user_(\d+)/, (ctx) => {
+    const targetId = parseInt(ctx.match[1]); // ID игрока, за которого вводим
+    const player = FAST_DATES_STATE.participants.get(targetId);
+    
+    if (!player) return ctx.reply('Ошибка: игрок не найден');
+
+    FAST_DATES_STATE.adminInputTargetId = targetId; // Включаем режим ввода
+
+    ctx.reply(
+        `✍️ Введите выбор для игрока: <b>№${player.num} ${player.name}</b>\n\n` +
+        `Просто отправьте номера через пробел или запятую.\n` +
+        `Пример: 2 5 8`, 
+        { parse_mode: 'HTML' }
+    );
+    ctx.answerCbQuery();
+});
+
+// 5. Финиш и расчет (Рассылка)
+bot.action('fd_calc_matches', async (ctx) => {
+    const matches: string[] = [];
+
+    FAST_DATES_STATE.participants.forEach((playerA) => {
+        const likesOfA = FAST_DATES_STATE.votes.get(playerA.id) || []; 
+
+        likesOfA.forEach(numB => {
+            // Находим игрока B по номеру
+            let playerB: any = null;
+            for (let [_, p] of FAST_DATES_STATE.participants) {
+                if (p.num === numB) playerB = p;
+            }
+
+            if (playerB) {
+                const likesOfB = FAST_DATES_STATE.votes.get(playerB.id) || [];
+                // Если B тоже лайкнул A (по номеру)
+                if (likesOfB.includes(playerA.num)) {
+                    // МЭТЧ!
+                    if (playerA.id < playerB.id) {
+                        matches.push(`${playerA.name} + ${playerB.name}`);
+                        
+                        // Шлем контакты
+                        bot.telegram.sendMessage(playerA.id, `🎉 <b>Взаимная симпатия!</b>\nПара: ${playerB.name}\nКонтакт: ${playerB.username}`, { parse_mode: 'HTML' });
+                        bot.telegram.sendMessage(playerB.id, `🎉 <b>Взаимная симпатия!</b>\nПара: ${playerA.name}\nКонтакт: ${playerA.username}`, { parse_mode: 'HTML' });
+                    }
+                }
+            }
+        });
+    });
+
+    // Очищаем режим ввода
+    FAST_DATES_STATE.adminInputTargetId = 0;
+
+    if (matches.length > 0) {
+        ctx.reply(`🏁 <b>Готово! Сообщения отправлены.</b>\n\nПары:\n${matches.join('\n')}`, { parse_mode: 'HTML' });
+    } else {
+        ctx.reply('🏁 Готово. Совпадений нет.');
+    }
+});
+
+
 
 // --- ЗАПУСК (WEBHOOK / POLLING) ---
 const PORT = Number(process.env.PORT) || 3000;
