@@ -21,7 +21,7 @@ bot.use(stage.middleware());
 
 // ID Администратора (замените на свой ID, чтобы работала панель)
 // Узнать свой ID можно в боте @userinfobot
-const ADMIN_ID = 123456789; 
+const ADMIN_ID = 5456905649; 
 
 // --- СЦЕНА РЕГИСТРАЦИИ (АНКЕТА) ---
 const registerScene = new Scenes.WizardScene(
