@@ -117,6 +117,7 @@ bot.hears('🎮 Игры', (ctx) => {
 });
 
 // --- МЕНЮ: ЛИЧНЫЙ КАБИНЕТ ---
+// --- МЕНЮ: ЛИЧНЫЙ КАБИНЕТ ---
 bot.hears('👤 Личный кабинет', async (ctx) => {
   const user = await db.query.users.findFirst({
     where: eq(schema.users.telegramId, ctx.from.id)
@@ -132,7 +133,12 @@ bot.hears('👤 Личный кабинет', async (ctx) => {
     `🎂 ДР: ${user.birthDate}\n` +
     `🎲 Игр сыграно: ${user.gamesPlayed}\n` +
     `🎁 До бесплатной игры осталось: ${gamesLeft}`,
-    { parse_mode: 'Markdown' }
+    { 
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback('🎟 У меня есть ваучер', 'upload_voucher')] // <--- НОВАЯ КНОПКА
+      ])
+    }
   );
 });
 
@@ -411,6 +417,108 @@ bot.on('message', async (ctx, next) => {
     return;
   }
   next();
+});
+
+// --- СИСТЕМА ВАУЧЕРОВ ---
+
+// Шаг 1: Нажатие кнопки "У меня есть ваучер"
+bot.action('upload_voucher', (ctx) => {
+    ctx.reply('📸 Пожалуйста, отправьте фотографию вашего ваучера или чека следующим сообщением.');
+    // Ставим "флажок", что ждем от пользователя фото
+    // @ts-ignore
+    ctx.session = { waitingForVoucher: true };
+    ctx.answerCbQuery();
+});
+
+// Шаг 2: Обработка получения ФОТО
+bot.on('photo', async (ctx, next) => {
+    // @ts-ignore
+    // Если мы НЕ ждем ваучер, то пропускаем (вдруг это просто фото котика)
+    if (!ctx.session?.waitingForVoucher) return next();
+
+    const photos = ctx.message.photo;
+    // Берем фото самого лучшего качества (последнее в массиве)
+    const fileId = photos[photos.length - 1].file_id;
+    const telegramId = ctx.from.id;
+
+    try {
+        const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, telegramId) });
+        if (!user) return ctx.reply('Ошибка: пользователь не найден.');
+
+        // Сохраняем в базу со статусом 'pending' (на проверке)
+        const [voucher] = await db.insert(schema.vouchers).values({
+            userId: user.id,
+            photoFileId: fileId,
+            status: 'pending'
+        }).returning();
+
+        ctx.reply('✅ Ваучер отправлен на проверку администратору! Мы сообщим вам решение.');
+        
+        // Сбрасываем флажок
+        // @ts-ignore
+        ctx.session.waitingForVoucher = false;
+
+        // ОТПРАВЛЯЕМ АДМИНУ
+        await bot.telegram.sendPhoto(ADMIN_ID, fileId, {
+            caption: `🎟 <b>Новый ваучер на проверку!</b>\n\nОт: ${user.name} (@${user.username})\nID ваучера: ${voucher.id}`,
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([
+                [
+                    Markup.button.callback('✅ Принять (-10 PLN)', `voucher_approve_${voucher.id}`),
+                    Markup.button.callback('❌ Отклонить', `voucher_reject_${voucher.id}`)
+                ]
+            ])
+        });
+
+    } catch (e) {
+        console.error('Ошибка ваучера:', e);
+        ctx.reply('Произошла ошибка при загрузке. Попробуйте позже.');
+    }
+});
+
+// Шаг 3: Админ ПРИНИМАЕТ ваучер
+bot.action(/voucher_approve_(\d+)/, async (ctx) => {
+    if (ctx.from?.id !== ADMIN_ID) return;
+    const voucherId = parseInt(ctx.match[1]);
+
+    // Обновляем статус в базе
+    await db.update(schema.vouchers)
+        .set({ status: 'approved' })
+        .where(eq(schema.vouchers.id, voucherId));
+
+    // Уведомляем админа
+    ctx.editMessageCaption(`✅ Ваучер #${voucherId} одобрен!`);
+
+    // Уведомляем пользователя
+    // Сначала найдем, чей это был ваучер
+    const voucher = await db.query.vouchers.findFirst({ where: eq(schema.vouchers.id, voucherId) });
+    if (voucher && voucher.userId) {
+        const user = await db.query.users.findFirst({ where: eq(schema.users.id, voucher.userId) });
+        if (user) {
+             bot.telegram.sendMessage(user.telegramId, '🎉 <b>Ваш ваучер одобрен!</b>\n\nВы получили скидку 10 PLN на следующую игру. Покажите это сообщение организатору на входе.', { parse_mode: 'HTML' });
+        }
+    }
+});
+
+// Шаг 4: Админ ОТКЛОНЯЕТ ваучер
+bot.action(/voucher_reject_(\d+)/, async (ctx) => {
+    if (ctx.from?.id !== ADMIN_ID) return;
+    const voucherId = parseInt(ctx.match[1]);
+
+    await db.update(schema.vouchers)
+        .set({ status: 'rejected' })
+        .where(eq(schema.vouchers.id, voucherId));
+
+    ctx.editMessageCaption(`❌ Ваучер #${voucherId} отклонен.`);
+
+    // Уведомляем пользователя
+    const voucher = await db.query.vouchers.findFirst({ where: eq(schema.vouchers.id, voucherId) });
+    if (voucher && voucher.userId) {
+        const user = await db.query.users.findFirst({ where: eq(schema.users.id, voucher.userId) });
+        if (user) {
+             bot.telegram.sendMessage(user.telegramId, '😔 К сожалению, ваш ваучер не прошел проверку.', { parse_mode: 'HTML' });
+        }
+    }
 });
 
 // --- АДМИН ПАНЕЛЬ ---
