@@ -266,7 +266,15 @@ bot.action('back_to_games', (ctx) => {
 
 // --- СИСТЕМА ОПЛАТЫ STRIPE ---
 
-// Шаг 1: Создание ссылки на оплату
+// ВСТАВЬТЕ СЮДА ВАШИ ID (которые начинаются на price_...)
+const GAME_PRICES: Record<string, string> = {
+  'talk_toast': 'price_1SUTlVHhXyjuCWwfU1IzNMlf', // Скопируйте из Stripe
+  'stock_know': 'price_1SUTkoHhXyjuCWwfxD89YIpP',
+  'speed_dating': 'price_1SUTjrHhXyjuCWwfhQ7zwxLQ',
+};
+
+// --- СИСТЕМА ОПЛАТЫ STRIPE ---
+
 bot.action(/pay_event_(\d+)/, async (ctx) => {
   const eventId = parseInt(ctx.match[1]);
   const telegramId = ctx.from?.id;
@@ -274,19 +282,29 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
   if (!telegramId) return;
 
   try {
+    // 1. Находим событие в базе
+    const event = await db.query.events.findFirst({
+        where: eq(schema.events.id, eventId)
+    });
+    if (!event) return ctx.reply('Ошибка: игра не найдена');
+
+    // 2. Выбираем правильную цену
+    const priceId = GAME_PRICES[event.type];
+    if (!priceId) {
+        return ctx.reply('⚠️ Ошибка: цена для этой игры не настроена в коде.');
+    }
+
+    // 3. Создаем персональную ссылку на оплату
     const session = await stripe.checkout.sessions.create({
-      payment_method_types: ['card'],
+      payment_method_types: ['card'], // или ['card', 'blik'] для Польши
       line_items: [{
-        price_data: {
-          currency: 'usd', 
-          product_data: { name: `Участие в игре #${eventId}` },
-          unit_amount: 1000, // 10.00 USD
-        },
+        price: priceId, // Используем ваш продукт за 50 PLN
         quantity: 1,
       }],
       mode: 'payment',
       success_url: `https://t.me/AllgorithmBot?start=success`,
       cancel_url: `https://t.me/AllgorithmBot?start=cancel`,
+      // "Клеим" стикер с ID, чтобы узнать плательщика
       metadata: {
         telegramId: telegramId.toString(),
         eventId: eventId.toString(),
@@ -296,19 +314,21 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
     if (!session.url) throw new Error('No URL');
 
     ctx.reply(
-      '💳 Ссылка на оплату готова! (10$)\nНажмите кнопку ниже, чтобы оплатить.',
+      `💳 Оплата участия: ${event.description || 'Игра'}\nСумма: 50 PLN\n\nНажмите кнопку, чтобы оплатить:`,
       Markup.inlineKeyboard([
-        [Markup.button.url('💸 Оплатить картой', session.url)],
+        [Markup.button.url('💸 Оплатить картой / BLIK', session.url)],
         [Markup.button.callback('✅ Я оплатил', `confirm_pay_${eventId}`)]
       ])
     );
   } catch (e) {
     console.error('Stripe Error:', e);
-    ctx.reply('⚠️ Ошибка создания платежа. Проверьте STRIPE_SECRET_KEY.');
+    // Выводим ошибку в чат, пока вы настраиваете
+    const errorMsg = e instanceof Error ? e.message : String(e);
+    ctx.reply(`⚠️ Ошибка Stripe: ${errorMsg}\n\n(Скорее всего, неверный API ключ в Render)`);
   }
 });
 
-// Шаг 2: Проверка оплаты
+// Проверка оплаты остается прежней (она работает через поиск сессий)
 bot.action(/confirm_pay_(\d+)/, async (ctx) => {
     const eventId = parseInt(ctx.match[1]);
     const telegramId = ctx.from?.id.toString();
@@ -316,10 +336,8 @@ bot.action(/confirm_pay_(\d+)/, async (ctx) => {
     if (!telegramId) return;
 
     try {
-        // Ищем последние сессии в Stripe
         const sessions = await stripe.checkout.sessions.list({ limit: 10 });
         
-        // Находим оплаченную сессию для этого юзера и этой игры
         const paidSession = sessions.data.find(s => 
             s.metadata?.telegramId === telegramId && 
             s.metadata?.eventId === eventId.toString() &&
@@ -327,14 +345,12 @@ bot.action(/confirm_pay_(\d+)/, async (ctx) => {
         );
 
         if (!paidSession) {
-            return ctx.reply('🔍 Оплата пока не найдена. Если вы оплатили только что, подождите 10 секунд и нажмите кнопку снова.');
+            return ctx.reply('🔍 Оплата пока не найдена. Если оплатили только что, подождите 10 секунд и нажмите снова.');
         }
 
-        // Если нашли оплату — записываем в базу
         const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id)});
-        if (!user) return ctx.reply('Ошибка: пользователь не найден.');
+        if (!user) return;
 
-        // Проверяем, не записан ли он уже
         const existingBooking = await db.query.bookings.findFirst({
             where: (bookings, { and, eq }) => and(
                 eq(bookings.userId, user.id),
@@ -342,9 +358,7 @@ bot.action(/confirm_pay_(\d+)/, async (ctx) => {
             )
         });
 
-        if (existingBooking) {
-             return ctx.reply('✅ Вы уже записаны на эту игру!');
-        }
+        if (existingBooking) return ctx.reply('✅ Вы уже записаны!');
 
         await db.insert(schema.bookings).values({
             userId: user.id,
@@ -352,8 +366,7 @@ bot.action(/confirm_pay_(\d+)/, async (ctx) => {
             paid: true
         });
 
-        // Увеличиваем счетчик игроков в событии
-        // (Примечание: тут лучше использовать транзакцию, но для простоты оставим так)
+        // +1 игрок
         const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
         if (event) {
              await db.update(schema.events)
@@ -361,11 +374,11 @@ bot.action(/confirm_pay_(\d+)/, async (ctx) => {
                 .where(eq(schema.events.id, eventId));
         }
 
-        ctx.editMessageText('🎉 Оплата подтверждена! Вы успешно записаны. Мы пришлем детали накануне игры.');
+        ctx.editMessageText('🎉 Оплата (50 PLN) получена! Вы в игре.');
 
     } catch (e) {
         console.error('Check Error:', e);
-        ctx.reply('Ошибка при проверке оплаты.');
+        ctx.reply('Ошибка проверки.');
     }
 });
 
