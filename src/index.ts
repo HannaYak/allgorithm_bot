@@ -413,12 +413,77 @@ bot.on('message', async (ctx, next) => {
   next();
 });
 
+// --- АДМИН ПАНЕЛЬ ---
 bot.command('panel', async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
+
   ctx.reply('🔒 Админ-панель', Markup.inlineKeyboard([
     [Markup.button.callback('➕ Добавить игру', 'admin_add_event')],
+    [Markup.button.callback('📋 Кто записался?', 'admin_bookings')], // <--- НОВАЯ КНОПКА
     [Markup.button.callback('📊 Статистика', 'admin_stats')]
   ]));
+});
+
+// Обработчик кнопки "Список записей"
+bot.action('admin_bookings', async (ctx) => {
+    // Проверка на админа
+    if (ctx.from?.id !== ADMIN_ID) return;
+
+    try {
+        // 1. Делаем сложный запрос: объединяем Таблицу Брони + Юзеров + События
+        // Нам нужно достать имена людей и названия игр, на которые они записались
+        const result = await db.select({
+            eventName: schema.events.type,
+            eventDate: schema.events.dateString,
+            eventDesc: schema.events.description,
+            userName: schema.users.name,
+            userNick: schema.users.username,
+            paid: schema.bookings.paid
+        })
+        .from(schema.bookings)
+        .innerJoin(schema.users, eq(schema.bookings.userId, schema.users.id))
+        .innerJoin(schema.events, eq(schema.bookings.eventId, schema.events.id))
+        .where(eq(schema.bookings.paid, true)); // Берем только тех, кто реально оплатил
+
+        if (result.length === 0) {
+            return ctx.reply('📭 Пока нет оплаченных записей.');
+        }
+
+        // 2. Группируем список по играм
+        // Чтобы было красиво: Сначала Дата, потом список людей под ней
+        const report = new Map<string, string[]>();
+
+        result.forEach(row => {
+            // Формируем заголовок игры: "20.12 (Talk & Toast)"
+            const header = `${row.eventDate} | ${row.eventDesc || row.eventName}`;
+            
+            if (!report.has(header)) {
+                report.set(header, []);
+            }
+            
+            // Формируем строку про человека: "1. Имя (@nick)"
+            const userLine = `${row.userName} (@${row.userNick || 'без ника'})`;
+            report.get(header)?.push(userLine);
+        });
+
+        // 3. Собираем итоговое сообщение
+        let message = '📋 <b>Список участников (Оплачено):</b>\n\n';
+        
+        report.forEach((participants, header) => {
+            message += `🗓 <b>${header}</b>\n`;
+            participants.forEach((p, i) => {
+                message += `  ${i + 1}. ${p}\n`;
+            });
+            message += '\n';
+        });
+
+        // Отправляем (используем HTML для жирного шрифта)
+        ctx.reply(message, { parse_mode: 'HTML' });
+
+    } catch (e) {
+        console.error('Ошибка админки:', e);
+        ctx.reply('Ошибка при получении списка.');
+    }
 });
 
 bot.action('admin_add_event', (ctx) => {
