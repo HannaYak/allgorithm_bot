@@ -5,8 +5,9 @@ import { eq } from 'drizzle-orm';
 import * as schema from '../drizzle/schema'; 
 import 'dotenv/config';
 import Stripe from 'stripe';
+import { DateTime } from 'luxon'; // Нужен для работы со временем
 
-// --- 1. НАСТРОЙКИ И КОНСТАНТЫ ---
+// --- 1. НАСТРОЙКИ ---
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is missing');
 const client = postgres(process.env.DATABASE_URL);
@@ -15,7 +16,7 @@ const db = drizzle(client, { schema });
 if (!process.env.STRIPE_SECRET_KEY) throw new Error('STRIPE_SECRET_KEY is missing');
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2023-10-16' });
 
-// ID Цен и Купона (Проверь их в Stripe!)
+// Цены (Проверь в Stripe!)
 const GAME_PRICES: Record<string, string> = {
   'talk_toast': 'price_1SUTjrHhXyjuCWwfhQ7zwxLQ', 
   'stock_know': 'price_1SUTkoHhXyjuCWwfxD89YIpP',
@@ -24,7 +25,11 @@ const GAME_PRICES: Record<string, string> = {
 const STRIPE_COUPON_ID = '8RiQPzVX'; 
 const ADMIN_ID = 5456905649; 
 
-// Темы Talk & Toast
+// Защита от повторного запуска авто-событий (храним ID запущенных викторин)
+const PROCESSED_AUTO_ACTIONS = new Set<string>(); 
+
+// --- 2. ВОПРОСЫ И ТЕМЫ ---
+
 const CONVERSATION_TOPICS = [
   "🎬 Какой фильм ты можешь пересматривать бесконечно?",
   "✈️ В какую страну ты бы поехал прямо сейчас?",
@@ -36,14 +41,13 @@ const CONVERSATION_TOPICS = [
   "🎁 Лучший подарок в твоей жизни?",
 ];
 
-// Вопросы Stock & Know
 const STOCK_QUESTIONS = [
-  { q: "Сколько славянских народов выделяют в этнологии?", h1: "Число городов-героев.", h2: "Число лунных циклов в году.", h3: "Джейсон Вурхиз (Пятница 13).", a: "13" },
-  { q: "Количество 'Новых чудес света'.", h1: "Звезды в ковше Медведицы.", h2: "Число Рождества (январь).", h3: "Футов под килем.", a: "7" },
-  { q: "Сколько основных видов чая по ферментации?", h1: "Игроков в волейболе на поле.", h2: "Ног у насекомых.", h3: "Граней у куба.", a: "6" }
+  { q: "Сколько славянских народов выделяют в этнологии?", h1: "Число городов-героев.", h2: "Число лунных циклов в году.", h3: "Пятница 13.", a: "13" },
+  { q: "Количество 'Новых чудес света'.", h1: "Звезды в ковше Медведицы.", h2: "Рождество (январь).", h3: "Футов под килем.", a: "7" },
+  { q: "Сколько основных видов чая по ферментации?", h1: "Игроков в волейболе.", h2: "Ног у насекомых.", h3: "Граней у куба.", a: "6" }
 ];
 
-// --- 2. СОСТОЯНИЕ (STATE) ---
+// --- 3. СОСТОЯНИЕ (STATE) ---
 
 const FAST_DATES_STATE = {
     eventId: 0, round: 0, votes: new Map<number, number[]>(),
@@ -52,18 +56,133 @@ const FAST_DATES_STATE = {
 };
 
 const STOCK_STATE = { isActive: false, currentQuestionId: 0 };
+const TALK_STATE = { currentFact: '', currentUser: '', isActive: false };
 
-// --- 3. ИНИЦИАЛИЗАЦИЯ БОТА ---
+// --- 4. ИНИЦИАЛИЗАЦИЯ БОТА ---
 
 const bot = new Telegraf<any>(process.env.TELEGRAM_BOT_TOKEN || '');
 const stage = new Scenes.Stage([]); 
 bot.use(session());
 bot.use(stage.middleware());
 
-// --- 4. СЦЕНА РЕГИСТРАЦИИ ---
+// --- 5. АВТОПИЛОТ (ТАЙМЕР) ---
+// Проверяет расписание каждую минуту
+setInterval(async () => {
+    try {
+        // Получаем текущее время (серверное)
+        // Важно: Убедитесь, что при добавлении игры вы учитываете часовой пояс сервера (обычно UTC)
+        const now = DateTime.now(); 
+
+        // Ищем все активные игры
+        const activeEvents = await db.query.events.findMany({
+            where: eq(schema.events.isActive, true)
+        });
+
+        for (const event of activeEvents) {
+            // Парсим дату игры (Формат: ДД.ММ.ГГГГ ЧЧ:ММ)
+            const start = DateTime.fromFormat(event.dateString, "dd.MM.yyyy HH:mm");
+            
+            if (!start.isValid) continue;
+
+            // 1. АВТО-ВИКТОРИНА для Talk & Toast (за 15 мин до конца)
+            // Игра идет 2 часа (120 мин). Викторина начинается на 105-й минуте.
+            const quizTime = start.plus({ minutes: 105 }); 
+            const endOfGame = start.plus({ minutes: 120 });
+
+            // Если тип игры Talk&Toast И наступило время викторины И еще не закончилась И мы еще не запускали
+            if (event.type === 'talk_toast' && now >= quizTime && now < endOfGame) {
+                const actionId = `quiz_${event.id}`;
+                if (!PROCESSED_AUTO_ACTIONS.has(actionId)) {
+                    PROCESSED_AUTO_ACTIONS.add(actionId);
+                    console.log(`🚀 Запуск авто-викторины для игры ${event.id}`);
+                    runAutoQuiz(event.id); // <-- ЗАПУСК
+                }
+            }
+
+            // 2. АВТО-ЗАВЕРШЕНИЕ (Для всех игр через 2 часа)
+            // Даем небольшой буфер (например, закрываем через 2 часа 10 мин)
+            const closeTime = start.plus({ minutes: 130 });
+            if (now >= closeTime) {
+                const actionId = `close_${event.id}`;
+                if (!PROCESSED_AUTO_ACTIONS.has(actionId)) {
+                    PROCESSED_AUTO_ACTIONS.add(actionId);
+                    console.log(`🏁 Авто-завершение игры ${event.id}`);
+                    autoCloseEvent(event.id); // <-- ЗАПУСК
+                }
+            }
+        }
+    } catch (e) {
+        console.error("Autopilot Error:", e);
+    }
+}, 60000); // Проверка каждую минуту (60000 мс)
+
+// Функция Авто-Викторины (Без админа)
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+async function runAutoQuiz(eventId: number) {
+    // 1. Берем участников
+    const bookings = await db.query.bookings.findMany({ where: (b, {and, eq}) => and(eq(b.eventId, eventId), eq(b.paid, true)) });
+    if (bookings.length < 2) return; // Мало людей - не проводим
+
+    // 2. Объявляем начало
+    await broadcastToEvent(eventId, `🔔 <b>Осталось 15 минут!</b>\n\nДавайте поиграем! Бот будет присылать факты об участниках, а вы угадывайте, о ком это. 🧐`);
+    await delay(5000);
+
+    // 3. Выбираем 3 случайных факта
+    const shuffled = bookings.sort(() => 0.5 - Math.random()).slice(0, 3);
+
+    for (const booking of shuffled) {
+        const user = await db.query.users.findFirst({ where: eq(schema.users.id, booking.userId) });
+        if (!user) continue;
+        const fact = (user.fact && user.fact.length > 2) ? user.fact : user.strangeStory;
+        if (!fact) continue;
+
+        // Вопрос
+        await broadcastToEvent(eventId, `❓ <b>Чей это факт?</b>\n\n"${fact}"\n\n<i>(У вас 30 секунд на обсуждение...)</i>`);
+        
+        // Ждем 30 секунд
+        await delay(30000);
+
+        // Ответ
+        await broadcastToEvent(eventId, `🔓 <b>Это был(а):</b> ${user.name}! 🎉`);
+        
+        // Пауза перед следующим
+        await delay(5000);
+    }
+
+    await broadcastToEvent(eventId, `🏁 <b>Викторина окончена!</b>\nСпасибо за прекрасный вечер. До скорых встреч! 👋`);
+}
+
+// Функция Авто-Завершения
+async function autoCloseEvent(eventId: number) {
+    // 1. Закрываем
+    await db.update(schema.events).set({ isActive: false }).where(eq(schema.events.id, eventId));
+    
+    // 2. Начисляем баллы
+    const bookings = await db.query.bookings.findMany({ where: (b, {and, eq}) => and(eq(b.eventId, eventId), eq(b.paid, true)) });
+    for (const b of bookings) {
+        const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+        if (u) {
+             await db.update(schema.users).set({ gamesPlayed: (u.gamesPlayed||0)+1 }).where(eq(schema.users.id, u.id));
+             // Можно отправить уведомление
+             // bot.telegram.sendMessage(u.telegramId, '🎁 Вам начислен балл лояльности за прошедшую игру!').catch(()=>{});
+        }
+    }
+}
+
+// Помощник для рассылки по ID события
+async function broadcastToEvent(eventId: number, text: string) {
+    const bookings = await db.query.bookings.findMany({ where: (b, {and, eq}) => and(eq(b.eventId, eventId), eq(b.paid, true)) });
+    for (const b of bookings) {
+        const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+        if (u) bot.telegram.sendMessage(u.telegramId, text, { parse_mode: 'HTML' }).catch(()=>{});
+    }
+}
+
+// --- 6. СЦЕНЫ И МЕНЮ (СТАНДАРТ) ---
 
 const registerScene = new Scenes.WizardScene('REGISTER_SCENE',
-  async (ctx) => { ctx.reply('👋 Добро пожаловать! Как тебя зовут?'); return ctx.wizard.next(); },
+  async (ctx) => { ctx.reply('👋 Добро пожаловать в Allgorithm! Давай начнем с регистрации.\n\n1. Как тебя зовут?'); return ctx.wizard.next(); },
   async (ctx) => { 
       // @ts-ignore
       ctx.wizard.state.name = ctx.message.text; 
@@ -72,17 +191,17 @@ const registerScene = new Scenes.WizardScene('REGISTER_SCENE',
   async (ctx) => { 
       // @ts-ignore
       ctx.wizard.state.birthDate = ctx.message.text; 
-      ctx.reply('3. Факт о себе:'); return ctx.wizard.next(); 
+      ctx.reply('3. Напиши факт о себе, который никто не знает:'); return ctx.wizard.next(); 
   },
   async (ctx) => { 
       // @ts-ignore
       ctx.wizard.state.fact = ctx.message.text; 
-      ctx.reply('4. Странная история:'); return ctx.wizard.next(); 
+      ctx.reply('4. Самая странная история из твоей жизни:'); return ctx.wizard.next(); 
   },
   async (ctx) => { 
       // @ts-ignore
       ctx.wizard.state.story = ctx.message.text; 
-      ctx.reply('5. Твой пол:', Markup.keyboard([['Мужчина', 'Женщина']]).oneTime().resize()); return ctx.wizard.next(); 
+      ctx.reply('5. Твой пол (для быстрых свиданий):', Markup.keyboard([['Мужчина', 'Женщина']]).oneTime().resize()); return ctx.wizard.next(); 
   },
   async (ctx) => {
     // @ts-ignore
@@ -93,7 +212,7 @@ const registerScene = new Scenes.WizardScene('REGISTER_SCENE',
       telegramId: ctx.from.id, username: ctx.from.username, firstName: ctx.from.first_name,
       name: data.name, birthDate: data.birthDate, fact: data.fact, strangeStory: data.story, gender: gender, isAdmin: ctx.from.id === ADMIN_ID 
     });
-    ctx.reply('✅ Регистрация завершена!', getMainKeyboard());
+    ctx.reply('✅ Регистрация завершена! Добро пожаловать.', getMainKeyboard());
     return ctx.scene.leave();
   }
 );
@@ -102,8 +221,6 @@ stage.register(registerScene);
 function getMainKeyboard() {
   return Markup.keyboard([['🎮 Игры', '👤 Личный кабинет'], ['🆘 Помощь', '📜 Правила']]).resize();
 }
-
-// --- 5. ОСНОВНЫЕ КОМАНДЫ ---
 
 bot.start(async (ctx) => {
   const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
@@ -122,14 +239,10 @@ bot.hears('🎮 Игры', (ctx) => {
 bot.hears('👤 Личный кабинет', async (ctx) => {
   const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
   if (!user) return ctx.reply('Пройдите регистрацию /start');
-  
   const gamesLeft = 5 - (user.gamesPlayed % 5);
   ctx.reply(
     `👤 *Личный кабинет*\n\n👤 Имя: ${user.name}\n🎂 ДР: ${user.birthDate}\n🎲 Игр сыграно: ${user.gamesPlayed}\n🎁 До бесплатной игры: ${gamesLeft}`,
-    { parse_mode: 'Markdown', ...Markup.inlineKeyboard([
-        [Markup.button.callback('📅 Мои билеты', 'my_games')],
-        [Markup.button.callback('🎟 У меня есть ваучер', 'upload_voucher')]
-    ])}
+    { parse_mode: 'Markdown', ...Markup.inlineKeyboard([[Markup.button.callback('📅 Мои билеты', 'my_games')], [Markup.button.callback('🎟 У меня есть ваучер', 'upload_voucher')]]) }
   );
 });
 
@@ -140,9 +253,8 @@ bot.hears('🆘 Помощь', (ctx) => {
     ctx.session = { waitingForSupport: true };
 });
 
-// --- 6. ИГРОВЫЕ МЕНЮ ---
+// --- 7. ЛОГИКА ИГР (РУЧНАЯ) ---
 
-// Talk & Toast
 bot.action('game_talk', (ctx) => {
   ctx.editMessageText('🥂 *Talk & Toast*\nУжин, общение, викторина.\nМакс: 7', { parse_mode: 'Markdown', ...Markup.inlineKeyboard([[Markup.button.callback('📅 Записаться', 'book_talk')], [Markup.button.callback('🎲 Дай тему', 'get_random_topic')], [Markup.button.callback('🔙 Назад', 'back_to_games')]]) });
 });
@@ -153,13 +265,11 @@ bot.action('get_random_topic', async (ctx) => {
 });
 bot.action('book_talk', async (ctx) => bookGame(ctx, 'talk_toast'));
 
-// Stock & Know
 bot.action('game_stock', (ctx) => {
   ctx.editMessageText('🧠 *Stock & Know*\nИнтеллектуальная биржа.\nМакс: 8', { parse_mode: 'Markdown', ...Markup.inlineKeyboard([[Markup.button.callback('📅 Записаться', 'book_stock')], [Markup.button.callback('🔙 Назад', 'back_to_games')]]) });
 });
 bot.action('book_stock', async (ctx) => bookGame(ctx, 'stock_know'));
 
-// Fast Dates
 bot.action('game_dating', (ctx) => {
   ctx.editMessageText('💘 *Быстрые свидания*\n7 минут на знакомство.\nМакс: 14', { parse_mode: 'Markdown', ...Markup.inlineKeyboard([[Markup.button.callback('📅 Записаться', 'book_dating')], [Markup.button.callback('🔙 Назад', 'back_to_games')]]) });
 });
@@ -178,12 +288,10 @@ bot.action('back_to_games', (ctx) => {
   ctx.reply('Выберите игру:', Markup.inlineKeyboard([[Markup.button.callback('Talk & Toast 🥂', 'game_talk')], [Markup.button.callback('Stock & Know 🧠', 'game_stock')], [Markup.button.callback('Быстрые свидания 💘', 'game_dating')]]));
 });
 
-// "Мои игры"
 bot.action('my_games', async (ctx) => {
     const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
     if (!user) return;
     const myBookings = await db.select({ t: schema.events.type, d: schema.events.dateString, desc: schema.events.description }).from(schema.bookings).innerJoin(schema.events, eq(schema.bookings.eventId, schema.events.id)).where((b, { and, eq }) => and(eq(b.userId, user.id), eq(b.paid, true), eq(schema.events.isActive, true)));
-    
     if (myBookings.length === 0) return ctx.reply('📭 У вас нет активных записей.');
     let msg = '📅 <b>Ваши билеты:</b>\n\n';
     myBookings.forEach(b => msg += `🗓 <b>${b.d}</b> | ${b.t}\n📍 ${b.desc}\n\n`);
@@ -191,7 +299,7 @@ bot.action('my_games', async (ctx) => {
     ctx.answerCbQuery();
 });
 
-// --- 7. ОПЛАТА И СКИДКИ ---
+// --- 8. ОПЛАТА И СКИДКИ ---
 
 bot.action(/pay_event_(\d+)/, async (ctx) => {
   const eventId = parseInt(ctx.match[1]);
@@ -204,7 +312,7 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
     if (!user || !event) return ctx.reply('Ошибка данных.');
 
     const priceId = GAME_PRICES[event.type];
-    if (!priceId) return ctx.reply('Ошибка цены.');
+    if (!priceId) return ctx.reply('Ошибка: цена не настроена.');
 
     const activeVoucher = await db.query.vouchers.findFirst({ where: (v, { and, eq }) => and(eq(v.userId, user.id), eq(v.status, 'approved')) });
 
@@ -260,7 +368,7 @@ bot.action(/confirm_pay_(\d+)/, async (ctx) => {
     } catch (e) { ctx.reply('Ошибка проверки.'); }
 });
 
-// --- 8. ВАУЧЕРЫ (ЗАГРУЗКА И ПРОВЕРКА) ---
+// --- 9. ВАУЧЕРЫ ---
 
 bot.action('upload_voucher', (ctx) => {
     ctx.reply('📸 Отправьте фото ваучера/чека.');
@@ -306,7 +414,7 @@ bot.action(/voucher_reject_(\d+)/, async (ctx) => {
     ctx.editMessageCaption('❌ Отклонено.');
 });
 
-// --- 9. АДМИН-ПАНЕЛЬ И УПРАВЛЕНИЕ ---
+// --- 10. АДМИН-ПАНЕЛЬ ---
 
 bot.command('panel', async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
@@ -317,35 +425,9 @@ bot.command('panel', async (ctx) => {
     [Markup.button.callback('📋 Записи', 'admin_bookings')],
     [Markup.button.callback('💘 Пульт FD', 'admin_fd_panel')],
     [Markup.button.callback('🧠 Пульт Stock', 'admin_stock_list')],
+    [Markup.button.callback('🥂 Пульт Talk', 'admin_talk_panel')], // Оставляем на всякий случай
     [Markup.button.callback('📊 Статистика', 'admin_stats')]
   ], { columns: 2 }));
-});
-
-// Статистика
-bot.action('admin_stats', async (ctx) => {
-    if (ctx.from?.id !== ADMIN_ID) return;
-    const users = await db.query.users.findMany();
-    const paid = await db.query.bookings.findMany({ where: eq(schema.bookings.paid, true) });
-    ctx.editMessageText(`📊 Пользователей: ${users.length}\n💰 Билетов: ${paid.length}`, { ...Markup.inlineKeyboard([[Markup.button.callback('🔙', 'panel')]]) });
-});
-
-// Завершение игры
-bot.action('admin_close_event', async (ctx) => {
-    if (ctx.from?.id !== ADMIN_ID) return;
-    const active = await db.query.events.findMany({ where: eq(schema.events.isActive, true) });
-    const btns = active.map(e => [Markup.button.callback(`🏁 ${e.dateString} (${e.type})`, `close_confirm_${e.id}`)]);
-    ctx.editMessageText('Какую игру закрыть?', Markup.inlineKeyboard([...btns, [Markup.button.callback('🔙', 'panel')]]));
-});
-bot.action(/close_confirm_(\d+)/, async (ctx) => {
-    const eid = parseInt(ctx.match[1]);
-    const bookings = await db.query.bookings.findMany({ where: (b, {and,eq}) => and(eq(b.eventId, eid), eq(b.paid, true)) });
-    await db.update(schema.events).set({ isActive: false }).where(eq(schema.events.id, eid));
-    let c = 0;
-    for (const b of bookings) {
-        const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
-        if (u) { await db.update(schema.users).set({ gamesPlayed: (u.gamesPlayed||0)+1 }).where(eq(schema.users.id, u.id)); c++; }
-    }
-    ctx.editMessageText(`✅ Закрыто. Баллы начислены ${c} игрокам.`);
 });
 
 // Рассылка
@@ -357,7 +439,60 @@ bot.action('admin_broadcast_start', (ctx) => {
     ctx.answerCbQuery();
 });
 
-// Пульт Stock & Know
+// Статистика
+bot.action('admin_stats', async (ctx) => {
+    if (ctx.from?.id !== ADMIN_ID) return;
+    const users = await db.query.users.findMany();
+    const paid = await db.query.bookings.findMany({ where: eq(schema.bookings.paid, true) });
+    ctx.editMessageText(`📊 Пользователей: ${users.length}\n💰 Билетов: ${paid.length}`, { ...Markup.inlineKeyboard([[Markup.button.callback('🔙', 'panel')]]) });
+});
+
+// Завершение игры (ручное)
+bot.action('admin_close_event', async (ctx) => {
+    if (ctx.from?.id !== ADMIN_ID) return;
+    const active = await db.query.events.findMany({ where: eq(schema.events.isActive, true) });
+    const btns = active.map(e => [Markup.button.callback(`🏁 ${e.dateString} (${e.type})`, `close_confirm_${e.id}`)]);
+    ctx.editMessageText('Какую игру закрыть вручную?', Markup.inlineKeyboard([...btns, [Markup.button.callback('🔙', 'panel')]]));
+});
+bot.action(/close_confirm_(\d+)/, async (ctx) => {
+    await autoCloseEvent(parseInt(ctx.match[1])); // Используем ту же функцию
+    ctx.editMessageText(`✅ Закрыто.`);
+});
+
+// Пульт Talk & Toast (Ручной, на всякий случай)
+bot.action('admin_talk_panel', async (ctx) => {
+    if (ctx.from?.id !== ADMIN_ID) return;
+    const event = await db.query.events.findFirst({ where: (e, {and, eq}) => and(eq(e.type, 'talk_toast'), eq(e.isActive, true)) });
+    if (!event) return ctx.reply('Нет активной игры Talk & Toast.');
+    ctx.editMessageText(`🥂 <b>Talk & Toast:</b> ${event.dateString}`, { parse_mode: 'HTML', ...Markup.inlineKeyboard([
+            [Markup.button.callback('🎲 Случайный факт', `talk_gen_fact_${event.id}`)],
+            [Markup.button.callback('🔙', 'panel')]
+        ])
+    });
+});
+bot.action(/talk_gen_fact_(\d+)/, async (ctx) => {
+    const eid = parseInt(ctx.match[1]);
+    const bookings = await db.query.bookings.findMany({ where: (b, {and, eq}) => and(eq(b.eventId, eid), eq(b.paid, true)) });
+    if (bookings.length === 0) return ctx.reply('Нет участников.');
+    const randomBooking = bookings[Math.floor(Math.random() * bookings.length)];
+    const user = await db.query.users.findFirst({ where: eq(schema.users.id, randomBooking.userId) });
+    if (!user) return;
+    const text = (Math.random() > 0.5 ? user.fact : user.strangeStory) || user.fact || '...';
+    TALK_STATE.currentFact = text; TALK_STATE.currentUser = user.name || 'Аноним';
+    ctx.editMessageText(`📝 "${text}"\n👤 ${user.name}\nОтправить?`, { parse_mode: 'HTML', ...Markup.inlineKeyboard([
+            [Markup.button.callback('📢 Загадать', `talk_send_riddle_${eid}`)], [Markup.button.callback('🔄 Другой', `talk_gen_fact_${eid}`)], [Markup.button.callback('🔙', 'admin_talk_panel')]
+        ])});
+});
+bot.action(/talk_send_riddle_(\d+)/, async (ctx) => {
+    await broadcastToEvent(parseInt(ctx.match[1]), `🧐 <b>Угадайте, о ком это?</b>\n\n"${TALK_STATE.currentFact}"`);
+    ctx.reply('✅ Отправлено. Потом нажми "Раскрыть".', Markup.inlineKeyboard([[Markup.button.callback('🔓 Раскрыть', `talk_reveal_${ctx.match[1]}`)]]));
+});
+bot.action(/talk_reveal_(\d+)/, async (ctx) => {
+    await broadcastToEvent(parseInt(ctx.match[1]), `🔓 <b>Это был(а):</b> ${TALK_STATE.currentUser}! 🎉`);
+    ctx.reply('✅ Имя раскрыто.');
+});
+
+// Пульт Stock & Know (Ручной)
 bot.action('admin_stock_list', (ctx) => {
     if (ctx.from?.id !== ADMIN_ID) return;
     const btns = STOCK_QUESTIONS.map((_, i) => [Markup.button.callback(`❓ Вопрос ${i+1}`, `stock_manage_${i}`)]);
@@ -383,20 +518,12 @@ bot.action(/stock_toggle_(\d+)/, (ctx) => {
     // @ts-ignore
     return bot.handleUpdate(ctx.update, ctx.webhookReply);
 });
-
-// Функция рассылки с проверкой
 const broadcastToPlayers = async (ctx: any, text: string, type: string) => {
     const event = await db.query.events.findFirst({ where: (e, {and, eq}) => and(eq(e.type, type), eq(e.isActive, true)), orderBy: (e, {desc}) => [desc(e.id)] });
-    if (!event) return ctx.reply('Нет активной игры.');
-    const bookings = await db.query.bookings.findMany({ where: (b, {and, eq}) => and(eq(b.eventId, event.id), eq(b.paid, true)) });
-    if (bookings.length === 0) return ctx.reply('Список пуст.');
-    for (const b of bookings) {
-        const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
-        if (u) bot.telegram.sendMessage(u.telegramId, text, {parse_mode: 'HTML'}).catch(()=>{});
-    }
-    ctx.reply(`Отправлено ${bookings.length} игрокам.`);
+    if (!event) return ctx.reply(`❌ Нет игры.`);
+    await broadcastToEvent(event.id, text);
+    ctx.reply(`✅ Отправлено.`);
 };
-
 bot.action(/stock_send_q_(\d+)/, async (ctx) => {
     const i = parseInt(ctx.match[1]);
     await ctx.answerCbQuery();
@@ -413,6 +540,7 @@ bot.action(/stock_win_(\d+)/, async (ctx) => {
     const u = await db.query.users.findFirst({ where: eq(schema.users.telegramId, uid) });
     STOCK_STATE.isActive = false;
     await broadcastToPlayers(ctx, `🏆 <b>СТОП!</b> Победитель: <b>${u?.name}</b>!`, 'stock_know');
+    ctx.reply('✅ Победитель объявлен.');
 });
 
 // Пульт Fast Dates
@@ -464,7 +592,8 @@ bot.action(/fd_edit_user_(\d+)/, (ctx) => {
 bot.action('fd_calc_matches', (ctx) => {
     const m: string[] = [];
     FAST_DATES_STATE.participants.forEach(pA => {
-        (FAST_DATES_STATE.votes.get(pA.id)||[]).forEach(nB => {
+        const likesA = FAST_DATES_STATE.votes.get(pA.id) || [];
+        likesA.forEach(nB => {
             const pB = Array.from(FAST_DATES_STATE.participants.values()).find(p => p.num === nB);
             if (pB && (FAST_DATES_STATE.votes.get(pB.id)||[]).includes(pA.num) && pA.id < pB.id) {
                 m.push(`${pA.name} + ${pB.name}`);
@@ -495,7 +624,7 @@ bot.command('reply', (ctx) => {
     bot.telegram.sendMessage(uid, `👮‍♂️ ${txt.join(' ')}`);
 });
 
-// --- 10. ГЛАВНЫЙ ОБРАБОТЧИК СООБЩЕНИЙ ---
+// --- 11. ГЛАВНЫЙ ОБРАБОТЧИК СООБЩЕНИЙ ---
 
 bot.on('message', async (ctx, next) => {
     // 1. Рассылка
@@ -518,7 +647,6 @@ bot.on('message', async (ctx, next) => {
             FAST_DATES_STATE.votes.set(FAST_DATES_STATE.adminInputTargetId, nums);
             ctx.reply(`✅ Сохранено: ${nums}`);
             FAST_DATES_STATE.adminInputTargetId = 0;
-            // Вернуть меню
             const btns = Array.from(FAST_DATES_STATE.participants.values()).sort((a,b)=>a.num-b.num).map(p => [Markup.button.callback(`${FAST_DATES_STATE.votes.has(p.id)?'✅':''}№${p.num} ${p.name}`, `fd_edit_user_${p.id}`)]);
             return ctx.reply('Дальше:', Markup.inlineKeyboard([...btns, [Markup.button.callback('🏁 Расчет', 'fd_calc_matches')]]));
         }
@@ -532,7 +660,10 @@ bot.on('message', async (ctx, next) => {
     }
     // 4. Фото ваучера
     // @ts-ignore
-    if (ctx.session?.waitingForVoucher) return ctx.reply('Нужно фото.');
+    if (ctx.session?.waitingForVoucher) {
+        if (!ctx.message.photo) return ctx.reply('Нужно фото.');
+        return next();
+    }
     // 5. Поддержка
     // @ts-ignore
     if (ctx.session?.waitingForSupport && ctx.message.text) {
@@ -546,8 +677,7 @@ bot.on('message', async (ctx, next) => {
     next();
 });
 
-// --- 11. ЗАПУСК ---
-
+// --- 12. ЗАПУСК ---
 const PORT = Number(process.env.PORT) || 3000;
 const WEBHOOK_URL = process.env.TELEGRAM_WEBHOOK_URL;
 if (process.env.NODE_ENV === 'production' && WEBHOOK_URL) {
