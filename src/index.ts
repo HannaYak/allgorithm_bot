@@ -734,76 +734,78 @@ bot.action(/stock_toggle_active_(\d+)/, (ctx) => {
 });
 
 // 3. Функция рассылки (Вопрос или Подсказка)
-const broadcastToPlayers = async (ctx: any, text: string) => {
+// Исправленная функция рассылки с проверками
+const broadcastToPlayers = async (ctx: any, text: string, type: string) => {
     try {
-        // Ищем АКТИВНУЮ игру Stock & Know (на сегодня или ближайшую)
-        // Для простоты берем последнюю созданную активную Stock & Know
+        // Ищем активную игру
         const event = await db.query.events.findFirst({
-            where: (events, { and, eq }) => and(
-                eq(events.type, 'stock_know'),
-                eq(events.isActive, true)
-            ),
+            where: (events, { and, eq }) => and(eq(events.type, type), eq(events.isActive, true)),
             orderBy: (events, { desc }) => [desc(events.id)]
         });
 
-        if (!event) return ctx.reply('❌ Нет активной игры Stock & Know в базе!');
+        if (!event) return ctx.reply(`❌ Нет активной игры типа "${type}" в базе!`);
 
-        // Ищем всех, кто оплатил эту игру
+        // Ищем игроков
         const bookings = await db.query.bookings.findMany({
-            where: (bookings, { and, eq }) => and(
-                eq(bookings.eventId, event.id),
-                eq(bookings.paid, true)
-            )
+            where: (bookings, { and, eq }) => and(eq(bookings.eventId, event.id), eq(bookings.paid, true))
         });
 
-        if (bookings.length === 0) return ctx.reply('❌ Нет записанных игроков на эту игру.');
+        if (bookings.length === 0) return ctx.reply('❌ Нет записанных игроков на эту игру (список пуст).');
 
         let count = 0;
-        // Рассылаем каждому
         for (const booking of bookings) {
-            // Нам нужен telegramId пользователя. 
-            // В реальной базе лучше делать join, но пока сделаем доп запрос (это не страшно для 10 человек)
             const user = await db.query.users.findFirst({ where: eq(schema.users.id, booking.userId) });
             if (user) {
                 try {
                     await bot.telegram.sendMessage(user.telegramId, text, { parse_mode: 'HTML' });
                     count++;
                 } catch (e) {
-                    console.error(`Не удалось отправить юзеру ${user.telegramId}`, e);
+                    console.error(`Не удалось отправить ${user.telegramId}`);
                 }
             }
         }
-        ctx.reply(`✅ Отправлено ${count} игрокам.`);
-
+        
+        // Отчет админу, если хоть кому-то отправили
+        if (count > 0) ctx.reply(`✅ Отправлено ${count} игрокам.`);
+        
     } catch (e) {
         console.error(e);
         ctx.reply('Ошибка рассылки.');
     }
 };
 
-// 4. Обработчик кнопки "Отправить вопрос"
+// Отправка вопроса
 bot.action(/stock_send_q_(\d+)/, async (ctx) => {
-    const qIndex = parseInt(ctx.match[1]);
-    const question = STOCK_QUESTIONS[qIndex];
-    
-    await ctx.answerCbQuery('Отправка вопроса...');
-    await broadcastToPlayers(ctx, `❓ <b>ВОПРОС №${qIndex + 1}</b>\n\n${question.q}`);
+    const i = parseInt(ctx.match[1]);
+    await ctx.answerCbQuery('Отправка...'); // Сначала гасим часики
+    // Передаем ctx первым аргументом!
+    await broadcastToPlayers(ctx, `❓ <b>ВОПРОС:</b>\n${STOCK_QUESTIONS[i].q}`, 'stock_know');
 });
 
-// 5. Обработчик кнопок "Отправить подсказку"
+// Отправка подсказки
 bot.action(/stock_send_h_(\d+)_(\d+)/, async (ctx) => {
-    const qIndex = parseInt(ctx.match[1]);
-    const hIndex = parseInt(ctx.match[2]); // 1, 2 или 3
-    const question = STOCK_QUESTIONS[qIndex];
+    const [_, qI, hI] = ctx.match;
+    const q = STOCK_QUESTIONS[parseInt(qI)];
+    const hint = hI === '1' ? q.h1 : hI === '2' ? q.h2 : q.h3;
+    
+    await ctx.answerCbQuery('Отправка...');
+    await broadcastToPlayers(ctx, `💡 <b>ПОДСКАЗКА ${hI}:</b>\n${hint}`, 'stock_know');
+});
 
-    // Выбираем нужный текст подсказки
-    let hintText = '';
-    if (hIndex === 1) hintText = question.h1;
-    if (hIndex === 2) hintText = question.h2;
-    if (hIndex === 3) hintText = question.h3;
+// Объявление победителя
+bot.action(/stock_win_(\d+)/, async (ctx) => {
+    const winnerId = parseInt(ctx.match[1]);
+    const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, winnerId) });
+    const winnerName = user ? user.name : 'Игрок';
 
-    await ctx.answerCbQuery(`Отправка подсказки ${hIndex}...`);
-    await broadcastToPlayers(ctx, `💡 <b>Подсказка ${hIndex}:</b>\n\n${hintText}`);
+    STOCK_STATE.isActive = false;
+
+    await broadcastToPlayers(
+        ctx, // <--- Не забываем ctx
+        `🏆 <b>СТОП ИГРА!</b>\n\nПравильный ответ дал(а): <b>${winnerName}</b>! 🎉`, 
+        'stock_know'
+    );
+    ctx.reply(`✅ Победитель объявлен: ${winnerName}`);
 });
 
 // Обработчик кнопки "Список записей"
@@ -897,25 +899,6 @@ bot.command('reply', (ctx) => {
     ctx.reply('Отправлено.');
 });
 
-// Админ выбрал победителя
-bot.action(/stock_win_(\d+)/, async (ctx) => {
-    const winnerId = parseInt(ctx.match[1]);
-    
-    // Находим имя победителя
-    const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, winnerId) });
-    const winnerName = user ? user.name : 'Игрок';
-
-    // Выключаем прием ответов, чтобы не спамили
-    STOCK_STATE.isActive = false;
-
-    // Объявляем всем
-    await broadcastToPlayers(
-        `🏆 <b>СТОП ИГРА!</b>\n\nПравильный ответ дал(а): <b>${winnerName}</b>! 🎉`, 
-        'stock_know'
-    );
-
-    ctx.reply(`✅ Победитель объявлен: ${winnerName}`);
-});
 
 // --- ВОПРОСЫ ДЛЯ STOCK & KNOW ---
 const STOCK_QUESTIONS = [
