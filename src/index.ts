@@ -136,14 +136,10 @@ bot.hears('🎮 Игры', (ctx) => {
 });
 
 // --- МЕНЮ: ЛИЧНЫЙ КАБИНЕТ ---
-// --- МЕНЮ: ЛИЧНЫЙ КАБИНЕТ ---
 bot.hears('👤 Личный кабинет', async (ctx) => {
-  const user = await db.query.users.findFirst({
-    where: eq(schema.users.telegramId, ctx.from.id)
-  });
-
+  const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
   if (!user) return ctx.reply('Сначала пройдите регистрацию /start');
-
+  
   const gamesLeft = 5 - (user.gamesPlayed % 5);
   
   ctx.reply(
@@ -155,10 +151,52 @@ bot.hears('👤 Личный кабинет', async (ctx) => {
     { 
       parse_mode: 'Markdown',
       ...Markup.inlineKeyboard([
-        [Markup.button.callback('🎟 У меня есть ваучер', 'upload_voucher')] // <--- НОВАЯ КНОПКА
+        [Markup.button.callback('📅 Мои игры (Билеты)', 'my_games')], // <--- НОВАЯ КНОПКА
+        [Markup.button.callback('🎟 У меня есть ваучер', 'upload_voucher')] 
       ])
     }
   );
+});
+
+// Просмотр своих записей
+bot.action('my_games', async (ctx) => {
+    const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
+    if (!user) return;
+
+    // Ищем оплаченные бронирования будущих игр (или всех активных)
+    const myBookings = await db.select({
+        eventName: schema.events.type,
+        eventDate: schema.events.dateString,
+        eventDesc: schema.events.description
+    })
+    .from(schema.bookings)
+    .innerJoin(schema.events, eq(schema.bookings.eventId, schema.events.id))
+    .where(
+        // (bookings.userId == user.id) AND (bookings.paid == true) AND (events.isActive == true)
+        (bookings, { and, eq }) => and(
+            eq(bookings.userId, user.id),
+            eq(bookings.paid, true),
+            eq(schema.events.isActive, true)
+        )
+    );
+
+    if (myBookings.length === 0) {
+        return ctx.reply('📭 У вас пока нет активных записей на игры.');
+    }
+
+    let msg = '📅 <b>Ваши билеты:</b>\n\n';
+    myBookings.forEach(b => {
+        // Красивое название типа игры
+        let typeName = b.eventName;
+        if (typeName === 'talk_toast') typeName = '🥂 Talk & Toast';
+        if (typeName === 'stock_know') typeName = '🧠 Stock & Know';
+        if (typeName === 'speed_dating') typeName = '💘 Fast Dates';
+
+        msg += `🗓 <b>${b.eventDate}</b>\n🎮 ${typeName}\n📍 ${b.eventDesc}\n\n`;
+    });
+
+    ctx.reply(msg, { parse_mode: 'HTML' });
+    ctx.answerCbQuery();
 });
 
 // --- МЕНЮ: ПРАВИЛА ---
@@ -676,14 +714,70 @@ bot.action(/voucher_reject_(\d+)/, async (ctx) => {
 bot.command('panel', async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
   ctx.reply('🔒 Админ-панель', Markup.inlineKeyboard([
-    [Markup.button.callback('💘 Пульт Fast Dates', 'admin_fd_panel')], // <--- НОВОЕ
-    [Markup.button.callback('🧠 Пульт Stock & Know', 'admin_stock_list')],
-    [Markup.button.callback('📋 Кто записался?', 'admin_bookings')],
     [Markup.button.callback('➕ Добавить игру', 'admin_add_event')],
-  ]));
+    [Markup.button.callback('🏁 ЗАВЕРШИТЬ ИГРУ', 'admin_close_event')], // <--- НОВОЕ
+    [Markup.button.callback('📢 Рассылка', 'admin_broadcast_start')],
+    [Markup.button.callback('📋 Записи', 'admin_bookings')],
+    [Markup.button.callback('💘 Пульт FD', 'admin_fd_panel')],
+    [Markup.button.callback('🧠 Пульт Stock', 'admin_stock_list')],
+    [Markup.button.callback('📊 Статистика', 'admin_stats')]
+  ], { columns: 2 }));
+});
+// --- ЛОГИКА ВЕДУЩЕГО STOCK & KNOW ---
+
+// --- ЗАВЕРШЕНИЕ ИГРЫ (АРХИВАЦИЯ + БАЛЛЫ) ---
+
+// 1. Выбор игры для завершения
+bot.action('admin_close_event', async (ctx) => {
+    if (ctx.from?.id !== ADMIN_ID) return;
+
+    // Ищем только АКТИВНЫЕ игры
+    const activeEvents = await db.query.events.findMany({
+        where: eq(schema.events.isActive, true)
+    });
+
+    if (activeEvents.length === 0) return ctx.reply('Нет активных игр для завершения.');
+
+    const buttons = activeEvents.map(e => [
+        Markup.button.callback(`🏁 ${e.dateString} (${e.type})`, `close_event_confirm_${e.id}`)
+    ]);
+    buttons.push([Markup.button.callback('🔙 Отмена', 'panel')]);
+
+    ctx.editMessageText('Выберите игру, которая ПРОШЛА, чтобы начислить баллы и закрыть запись:', Markup.inlineKeyboard(buttons));
 });
 
-// --- ЛОГИКА ВЕДУЩЕГО STOCK & KNOW ---
+// 2. Подтверждение и начисление
+bot.action(/close_event_confirm_(\d+)/, async (ctx) => {
+    const eventId = parseInt(ctx.match[1]);
+    
+    // Получаем список участников
+    const bookings = await db.query.bookings.findMany({
+        where: (b, { and, eq }) => and(eq(b.eventId, eventId), eq(b.paid, true))
+    });
+
+    // 1. Закрываем игру (isActive = false)
+    await db.update(schema.events)
+        .set({ isActive: false })
+        .where(eq(schema.events.id, eventId));
+
+    let count = 0;
+    
+    // 2. Начисляем баллы каждому участнику
+    for (const booking of bookings) {
+        const user = await db.query.users.findFirst({ where: eq(schema.users.id, booking.userId) });
+        if (user) {
+            await db.update(schema.users)
+                .set({ gamesPlayed: (user.gamesPlayed || 0) + 1 })
+                .where(eq(schema.users.id, user.id));
+            
+            // Опционально: можно отправить сообщение "Спасибо за игру!"
+            // bot.telegram.sendMessage(user.telegramId, 'Спасибо, что пришли! Вам начислен +1 балл лояльности 🎁').catch(()=>{});
+            count++;
+        }
+    }
+
+    ctx.editMessageText(`✅ Игра закрыта!\n\nСтатус "Активна" снят.\nБаллы начислены ${count} игрокам.`);
+});
 
 // 1. Список вопросов
 bot.action('admin_stock_list', (ctx) => {
