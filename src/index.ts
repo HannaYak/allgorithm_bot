@@ -24,6 +24,12 @@ const FAST_DATES_STATE = {
     adminInputTargetId: 0 
 };
 
+// --- ХРАНИЛИЩЕ STOCK & KNOW ---
+const STOCK_STATE = {
+    isActive: false, // Принимаем ли ответы прямо сейчас
+    currentQuestionId: 0
+};
+
 // --- НАСТРОЙКА STRIPE ---
 // Важно: Убедись, что ключ в .env.local правильный (начинается на sk_live_ или sk_test_)
 if (!process.env.STRIPE_SECRET_KEY) throw new Error('STRIPE_SECRET_KEY is missing');
@@ -458,29 +464,53 @@ bot.hears('🆘 Помощь', (ctx) => {
   ctx.session = { waitingForSupport: true };
 });
 
-// --- ОБРАБОТКА СООБЩЕНИЙ (ПОДДЕРЖКА + ГОЛОСОВАНИЕ) ---
-// --- ОБРАБОТКА ТЕКСТА (АДМИН ВВОДИТ ЦИФРЫ + ПОДДЕРЖКА) ---
+// --- ГЛАВНЫЙ ОБРАБОТЧИК СООБЩЕНИЙ ---
 bot.on('message', async (ctx, next) => {
-    // 1. ПРОВЕРКА: Если Админ вводит цифры с карточки
-    if (ctx.from.id === ADMIN_ID && FAST_DATES_STATE.adminInputTargetId !== 0 && ctx.message && 'text' in ctx.message) {
-        const text = ctx.message.text;
-        const targetId = FAST_DATES_STATE.adminInputTargetId;
-        const player = FAST_DATES_STATE.participants.get(targetId);
+    
+    // 1. РАССЫЛКА (Только для админа)
+    // @ts-ignore
+    if (ctx.session?.waitingForBroadcast && ctx.from.id === ADMIN_ID) {
+        const users = await db.query.users.findMany();
+        let success = 0;
+        let blocked = 0;
 
-        // Парсим цифры
-        const numbers = text.match(/\d+/g)?.map(Number);
+        await ctx.reply(`🚀 Начинаю рассылку для ${users.length} пользователей...`);
+
+        for (const user of users) {
+            try {
+                // Копируем сообщение админа (текст, фото, видео - неважно)
+                await ctx.copyMessage(user.telegramId);
+                success++;
+            } catch (e) {
+                blocked++; // Скорее всего юзер заблочил бота
+            }
+            // Небольшая задержка, чтобы Телеграм не забанил за спам
+            await new Promise(r => setTimeout(r, 50)); 
+        }
+
+        // @ts-ignore
+        ctx.session.waitingForBroadcast = false;
+        return ctx.reply(`✅ Рассылка завершена!\n\nДоставлено: ${success}\nНедоставлено (блок): ${blocked}`);
+    }
+
+    // 2. ВВОД ЦИФР АДМИНОМ (FAST DATES)
+    // @ts-ignore
+    if (ctx.from.id === ADMIN_ID && FAST_DATES_STATE.adminInputTargetId !== 0 && ctx.message.text) {
+        // @ts-ignore
+        const numbers = ctx.message.text.match(/\d+/g)?.map(Number);
 
         if (numbers) {
             // Сохраняем выбор
-            FAST_DATES_STATE.votes.set(targetId, numbers);
+            FAST_DATES_STATE.votes.set(FAST_DATES_STATE.adminInputTargetId, numbers);
             
+            // Находим имя игрока для красоты
+            const player = FAST_DATES_STATE.participants.get(FAST_DATES_STATE.adminInputTargetId);
             await ctx.reply(`✅ Сохранено для ${player?.name}: [ ${numbers.join(', ')} ]`);
             
-            // Выключаем режим ввода и возвращаем меню
+            // Выключаем режим ввода
             FAST_DATES_STATE.adminInputTargetId = 0;
             
-            // Повторяем код показа меню, чтобы админ мог выбрать следующего
-            // (Дублируем логику 'fd_input_menu' чуть упрощенно для скорости)
+            // Показываем меню снова, чтобы выбрать следующего
             const buttons: any[] = [];
             const sorted = Array.from(FAST_DATES_STATE.participants.values()).sort((a, b) => a.num - b.num);
             sorted.forEach(p => {
@@ -495,11 +525,17 @@ bot.on('message', async (ctx, next) => {
         }
     }
 
-    // 2. ФОТО ВАУЧЕРА
+    // 3. ФОТО ВАУЧЕРА (Если ждем фото, текст игнорируем или просим фото)
     // @ts-ignore
-    if (ctx.session?.waitingForVoucher) return next();
+    if (ctx.session?.waitingForVoucher) {
+        // Если прислали текст вместо фото
+        if (ctx.message && 'text' in ctx.message) {
+             return ctx.reply('📸 Пожалуйста, отправьте именно ФОТОГРАФИЮ ваучера.');
+        }
+        return next();
+    }
 
-    // 3. ПОДДЕРЖКА (Вопросы от юзеров)
+    // 4. ПОДДЕРЖКА (Вопросы от юзеров)
     // @ts-ignore
     if (ctx.session?.waitingForSupport && ctx.message && 'text' in ctx.message) {
         await ctx.telegram.sendMessage(ADMIN_ID, `🆘 ВОПРОС от ID: ${ctx.from.id}\nИмя: ${ctx.from.first_name}\n\n"${ctx.message.text}"\n\n⬇️ Ответить: /reply ${ctx.from.id} Текст`);
@@ -507,6 +543,28 @@ bot.on('message', async (ctx, next) => {
         // @ts-ignore
         ctx.session.waitingForSupport = false;
         return;
+    }
+
+    // 5. [НОВОЕ] ОТВЕТЫ НА ВИКТОРИНУ (STOCK & KNOW)
+    // Если игра активна и пишет кто угодно (игрок)
+    // @ts-ignore
+    if (STOCK_STATE.isActive && ctx.message && 'text' in ctx.message) {
+        const text = ctx.message.text;
+        const user = ctx.from;
+
+        // Пересылаем ответ Админу с кнопкой "Это победа"
+        await bot.telegram.sendMessage(ADMIN_ID, 
+            `🧠 <b>Ответ от ${user.first_name}:</b>\n"${text}"`, 
+            {
+                parse_mode: 'HTML',
+                ...Markup.inlineKeyboard([
+                    [Markup.button.callback('🏆 Объявить победителем', `stock_win_${user.id}`)]
+                ])
+            }
+        );
+        
+        // Ничего не отвечаем игроку, чтобы не засорять чат, или можно реакцию кинуть
+        return; 
     }
     
     next();
@@ -647,22 +705,29 @@ bot.action('admin_stock_list', (ctx) => {
 bot.action('panel_back', (ctx) => ctx.deleteMessage()); 
 
 // 2. Меню управления конкретным вопросом
-bot.action(/stock_manage_(\d+)/, (ctx) => {
+// Обработчик переключателя (ВКЛ/ВЫКЛ прием ответов) - ПРОСТОЙ ВАРИАНТ
+bot.action(/stock_toggle_active_(\d+)/, (ctx) => {
+    STOCK_STATE.isActive = !STOCK_STATE.isActive;
     const qIndex = parseInt(ctx.match[1]);
     const question = STOCK_QUESTIONS[qIndex];
+    const statusIcon = STOCK_STATE.isActive ? '🟢' : '🔴';
+    const statusText = STOCK_STATE.isActive ? 'Ответы ПРИНИМАЮТСЯ' : 'Ответы НЕ принимаются';
 
     ctx.editMessageText(
         `❓ <b>Вопрос ${qIndex + 1}:</b>\n"${question.q}"\n\n` +
         `Ответ: <tg-spoiler>${question.a}</tg-spoiler>\n\n` +
-        `Выберите действие:`, 
+        `Статус: <b>${statusText}</b>`, 
         {
             parse_mode: 'HTML',
             ...Markup.inlineKeyboard([
-                [Markup.button.callback('📢 ОТПРАВИТЬ ВОПРОС ВСЕМ', `stock_send_q_${qIndex}`)],
-                [Markup.button.callback('💡 Подсказка 1', `stock_send_h_${qIndex}_1`)],
-                [Markup.button.callback('💡 Подсказка 2', `stock_send_h_${qIndex}_2`)],
-                [Markup.button.callback('💡 Подсказка 3', `stock_send_h_${qIndex}_3`)],
-                [Markup.button.callback('🔙 К списку вопросов', 'admin_stock_list')]
+                [Markup.button.callback(`${statusIcon} Переключить прием ответов`, `stock_toggle_active_${qIndex}`)],
+                [Markup.button.callback('📢 ОТПРАВИТЬ ВОПРОС', `stock_send_q_${qIndex}`)],
+                [
+                    Markup.button.callback('💡 1', `stock_send_h_${qIndex}_1`),
+                    Markup.button.callback('💡 2', `stock_send_h_${qIndex}_2`),
+                    Markup.button.callback('💡 3', `stock_send_h_${qIndex}_3`)
+                ],
+                [Markup.button.callback('🔙 К списку', 'admin_stock_list')]
             ])
         }
     );
@@ -830,6 +895,26 @@ bot.command('reply', (ctx) => {
     const text = args.slice(2).join(' ');
     bot.telegram.sendMessage(userId, `👮‍♂️ Ответ: ${text}`).catch(() => {});
     ctx.reply('Отправлено.');
+});
+
+// Админ выбрал победителя
+bot.action(/stock_win_(\d+)/, async (ctx) => {
+    const winnerId = parseInt(ctx.match[1]);
+    
+    // Находим имя победителя
+    const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, winnerId) });
+    const winnerName = user ? user.name : 'Игрок';
+
+    // Выключаем прием ответов, чтобы не спамили
+    STOCK_STATE.isActive = false;
+
+    // Объявляем всем
+    await broadcastToPlayers(
+        `🏆 <b>СТОП ИГРА!</b>\n\nПравильный ответ дал(а): <b>${winnerName}</b>! 🎉`, 
+        'stock_know'
+    );
+
+    ctx.reply(`✅ Победитель объявлен: ${winnerName}`);
 });
 
 // --- ВОПРОСЫ ДЛЯ STOCK & KNOW ---
