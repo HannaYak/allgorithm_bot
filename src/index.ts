@@ -319,7 +319,7 @@ const STOCK_QUESTIONS = [
   }
 ];
 
-// --- 3. СОСТОЯНИЕ ---
+// --- 3. СОСТОЯНИЕ (STATE) ---
 
 const FAST_DATES_STATE = {
     eventId: 0, round: 0, votes: new Map<number, number[]>(),
@@ -356,7 +356,7 @@ setInterval(async () => {
                 if (!PROCESSED_AUTO_ACTIONS.has(actionId)) {
                     PROCESSED_AUTO_ACTIONS.add(actionId);
                     await broadcastToEvent(event.id, 
-                        `📅 <b>Скоро игра!</b>\n\nНапоминаем, что через 3 дня (${start.toFormat('dd.MM')}) состоится игра "${event.description || event.type}".\n\nГотовьтесь к классному вечеру! 🥂`
+                        `📅 <b>Скоро игра!</b>\n\nНапоминаем, что через 3 дня (${start.toFormat('dd.MM')}) состоится игра "${event.type}".\n\nГотовьтесь к классному вечеру! 🥂`
                     );
                 }
             }
@@ -367,7 +367,7 @@ setInterval(async () => {
                 if (!PROCESSED_AUTO_ACTIONS.has(actionId)) {
                     PROCESSED_AUTO_ACTIONS.add(actionId);
                     await broadcastToEvent(event.id, 
-                        `🔔 <b>Уже завтра!</b>\n\nЖдем вас в ${start.toFormat('HH:mm')} на игре.\nЕсли планы изменились — напишите нам через кнопку "Помощь".`
+                        `🔔 <b>Уже завтра!</b>\n\nЖдем вас в ${start.toFormat('HH:mm')} на игре.\n📍 Адрес мы пришлем за 3 часа до начала.`
                     );
                 }
             }
@@ -424,7 +424,7 @@ async function broadcastToEvent(eventId: number, text: string) {
 async function runAutoQuiz(eventId: number) {
     const bookings = await db.query.bookings.findMany({ where: (b, {and, eq}) => and(eq(b.eventId, eventId), eq(b.paid, true)) });
     if (bookings.length < 2) return; 
-    await broadcastToEvent(eventId, `🔔 <b>Викторина!</b> Угадываем факты друг о друге.`);
+    await broadcastToEvent(eventId, `🔔 <b>Викторина для всех!</b> Угадываем факты друг о друге.`);
     await delay(5000);
     const shuffled = bookings.sort(() => 0.5 - Math.random()).slice(0, 3);
     for (const booking of shuffled) {
@@ -432,12 +432,12 @@ async function runAutoQuiz(eventId: number) {
         if (!user) continue;
         const fact = (user.fact && user.fact.length > 2) ? user.fact : user.strangeStory;
         if (!fact) continue;
-        await broadcastToEvent(eventId, `❓ <b>Чей это факт?</b>\n"${fact}"`);
+        await broadcastToEvent(eventId, `❓ <b>Как думаете, чей это факт?</b>\n"${fact}"`);
         await delay(30000); 
         await broadcastToEvent(eventId, `🔓 <b>Это:</b> ${user.name}!`);
         await delay(5000);
     }
-    await broadcastToEvent(eventId, `🏁 Игра окончена! Спасибо всем за вечер. Если желаете, можете обменяться контактами. Не бойтесь говорить нет, это нормально.`);
+    await broadcastToEvent(eventId, `🏁 Игра окончена! Спасибо всем, обменяйтесь контактами если хотите.`);
 }
 
 async function autoCloseEvent(eventId: number) {
@@ -456,7 +456,6 @@ async function autoCloseEvent(eventId: number) {
 
 const registerScene = new Scenes.WizardScene('REGISTER_SCENE',
   async (ctx) => { 
-      // Исправленный текст приветствия (обратные кавычки для многострочности)
       ctx.reply(`👋 Привет! Добро пожаловать в наш клуб знакомств, общения и интересных встреч.
 
 Здесь мы создаём пространство, где люди находят друзей, партнёров, единомышленников и просто приятно проводят время.
@@ -466,8 +465,6 @@ const registerScene = new Scenes.WizardScene('REGISTER_SCENE',
 Чтобы мы могли подобрать для тебя лучший опыт и корректно забронировать места, давай сначала немного познакомимся☺️
 
 ⏱️ Регистрация проходит один раз и навсегда — всего 5 коротких вопросов, это займёт около минуты.
-
-При отправлении имени вы автомотически соглашаетесь с Политикой конфиденциальности https://telegra.ph/POLITIKA-KONFIDENCIALNOSTI-I-OBRABOTKI-PERSONALNYH-DANNYH-12-19
 
 Готов начать?⚡️
 
@@ -527,7 +524,7 @@ bot.hears('👤 Личный кабинет', async (ctx) => {
   const gamesLeft = 5 - (user.gamesPlayed % 5);
   ctx.reply(
     `👤 *Личный кабинет*\n\n👤 Имя: ${user.name}\n🎂 ДР: ${user.birthDate}\n🎲 Игр сыграно: ${user.gamesPlayed}\n🎁 До бесплатной игры: ${gamesLeft}`,
-    { parse_mode: 'Markdown', ...Markup.inlineKeyboard([[Markup.button.callback('📅 Мои игры', 'my_games')], [Markup.button.callback('🎟 У меня есть ваучер', 'upload_voucher')]]) }
+    { parse_mode: 'Markdown', ...Markup.inlineKeyboard([[Markup.button.callback('📅 Мои билеты', 'my_games')], [Markup.button.callback('🎟 У меня есть ваучер', 'upload_voucher')]]) }
   );
 });
 
@@ -542,26 +539,23 @@ bot.hears('📜 Правила', (ctx) => {
         '4. <b>Оплата:</b> Нет оплаты — нет регистрации. Платеж — ваш входной билет.\n' +
         '5. <b>Администрация:</b> Слово ведущего — закон. Можем удалить за нарушение без возврата средств.\n\n' +
         '<b>🔻 ВОЗВРАТ СРЕДСТВ:</b>\n' +
-        '1. <b>За 36 часа:</b> Предупредите за сутки — вернем деньги.\n' +
+        '1. <b>За 36 часов:</b> Предупредите за 36 часов — вернем деньги.\n' +
         '2. <b>Менее 36 часов:</b> Деньги не возвращаются.\n' +
         '3. <b>Отмена игры:</b> Если отменим мы — вернем всем.\n\n' +
         '<b>🔻 ПРАВИЛА ПОВЕДЕНИЯ:</b>\n' +
-        '1. <b>Тайминг:</b> Приходите за 10 минут, чтобы заказать еду.\n' +
-        '2. <b>Тишина:</b> Не болтать во время объяснения правил.\n' +
-        '3. <b>Без советов:</b> Не перебивайте ведущих. Все жалобы и советы — в конце вечера.\n' +
-        '4. <b>Атмосфера:</b> Оставляем неуместные комментарии и душноту дома. Если вопрос не нравится — это часть игры.'+
-        'С Политикой конфиденциальности вы можете ознакомиться по ссылке https://telegra.ph/POLITIKA-KONFIDENCIALNOSTI-I-OBRABOTKI-PERSONALNYH-DANNYH-12-19',
+        '1. <b>Тайминг:</b> Приходите за 10 минут (в 16:00), чтобы заказать еду.\n' +
+        '2. <b>Еда и Напитки:</b> Оплата за заказы в ресторане производится на месте отдельно.\n' +
+        '3. <b>Тишина:</b> Не болтать во время объяснения правил.\n' +
+        '4. <b>Без советов:</b> Не перебивайте ведущих. Все жалобы и советы — в конце вечера.\n' +
+        '5. <b>Атмосфера:</b> Оставляем неуместные комментарии и душноту дома. Если вопрос не нравится — это часть игры.',
         { parse_mode: 'HTML' }
     );
 });
 
-bot.hears('🆘 Помощь', (ctx) => { ctx.reply('Напиши свой вопрос следующим сообщением, а мы ответим как можно скорее.'); 
+bot.hears('🆘 Помощь', (ctx) => { ctx.reply('Напиши свой вопрос следующим сообщением.'); 
 // @ts-ignore
 ctx.session = { waitingForSupport: true }; });
 
-// --- 7. ЛОГИКА ИГР ---
-
-// TALK & TOAST
 // --- 7. ЛОГИКА ИГР ---
 
 // 1. TALK & TOAST
@@ -662,7 +656,7 @@ bot.action('book_dating', async (ctx) => bookGame(ctx, 'speed_dating'));
 
 async function bookGame(ctx: any, type: string) {
   const events = await db.query.events.findMany({ where: (e, { eq, and }) => and(eq(e.type, type), eq(e.isActive, true)) });
-  if (events.length === 0) return ctx.reply('Игр пока нет на этой неделе 😔');
+  if (events.length === 0) return ctx.reply('Игр пока нет 😔');
   
   // В кнопке показываем дату, но НЕ показываем описание (там адрес)
   const buttons = events.map(e => [Markup.button.callback(`${e.dateString} (${e.currentPlayers}/${e.maxPlayers})`, `pay_event_${e.id}`)]);
@@ -682,7 +676,7 @@ bot.action('my_games', async (ctx) => {
     const myBookings = await db.select({ t: schema.events.type, d: schema.events.dateString, desc: schema.events.description }).from(schema.bookings).innerJoin(schema.events, eq(schema.bookings.eventId, schema.events.id)).where((b, { and, eq }) => and(eq(b.userId, user.id), eq(b.paid, true), eq(schema.events.isActive, true)));
     if (myBookings.length === 0) return ctx.reply('📭 У вас нет активных записей.');
     
-    let msg = '📅 <b>Ваши игры:</b>\n\n';
+    let msg = '📅 <b>Ваши билеты:</b>\n\n';
     myBookings.forEach(b => {
         // Проверяем время (скрываем адрес, если до игры > 3 часов)
         const start = DateTime.fromFormat(b.d, "dd.MM.yyyy HH:mm");
@@ -747,7 +741,7 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
     const session = await stripe.checkout.sessions.create(sessionConfig);
     if (!session.url) throw new Error('No URL');
 
-    const msg = activeVoucher ? `🎉 <b>Ваучер применен!</b> Скидка 10 PLN.` : `Оплата участия: 40 PLN`;
+    const msg = activeVoucher ? `🎉 <b>Ваучер применен!</b>\nСкидка -10 PLN.\n<b>К оплате: 40 PLN</b>` : `Оплата участия: 50 PLN`;
     ctx.reply(msg, { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.url('💸 Оплатить', session.url)], [Markup.button.callback('✅ Я оплатил', `confirm_pay_${eventId}`)]]) });
   } catch (e) {
     console.error(e);
@@ -796,7 +790,7 @@ bot.action(/confirm_pay_(\d+)/, async (ctx) => {
 // --- 9. ВАУЧЕРЫ ---
 
 bot.action('upload_voucher', (ctx) => {
-    ctx.reply('📸 Отправьте фото ваучера на проверку.');
+    ctx.reply('📸 Отправьте фото ваучера/чека.');
     // @ts-ignore
     ctx.session = { waitingForVoucher: true };
     ctx.answerCbQuery();
@@ -810,7 +804,7 @@ bot.on('photo', async (ctx, next) => {
     const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
     if (user) {
         const [v] = await db.insert(schema.vouchers).values({ userId: user.id, photoFileId: photo.file_id, status: 'pending' }).returning();
-        ctx.reply('✅ Отправлено на проверку, ожидайте ответа.');
+        ctx.reply('✅ Отправлено на проверку.');
         // @ts-ignore
         ctx.session.waitingForVoucher = false;
         
@@ -836,7 +830,7 @@ bot.action(/voucher_reject_(\d+)/, async (ctx) => {
     if (ctx.from?.id !== ADMIN_ID) return;
     const id = parseInt(ctx.match[1]);
     await db.update(schema.vouchers).set({ status: 'rejected' }).where(eq(schema.vouchers.id, id));
-    ctx.editMessageCaption('❌ Отклонено, ваучер недействителен.');
+    ctx.editMessageCaption('❌ Отклонено.');
 });
 
 // --- 10. АДМИНКА ---
@@ -845,6 +839,7 @@ bot.command('panel', async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
   ctx.reply('🔒 Админ-панель', Markup.inlineKeyboard([
     [Markup.button.callback('➕ Добавить игру', 'admin_add_event')],
+    [Markup.button.callback('🗑 Удалить игру', 'admin_delete_menu')],
     [Markup.button.callback('🏁 ЗАВЕРШИТЬ ИГРУ', 'admin_close_event')], 
     [Markup.button.callback('📢 Рассылка', 'admin_broadcast_start')],
     [Markup.button.callback('📋 Записи', 'admin_bookings')],
@@ -873,6 +868,19 @@ bot.action('admin_close_event', async (ctx) => {
 bot.action(/close_confirm_(\d+)/, async (ctx) => {
     await autoCloseEvent(parseInt(ctx.match[1])); 
     ctx.editMessageText(`✅ Закрыто.`);
+});
+
+// Удаление игры (новое)
+bot.action('admin_delete_menu', async (ctx) => {
+    if (ctx.from?.id !== ADMIN_ID) return;
+    const active = await db.query.events.findMany({ where: eq(schema.events.isActive, true) });
+    const btns = active.map(e => [Markup.button.callback(`❌ ${e.dateString} (${e.type})`, `delete_event_${e.id}`)]);
+    ctx.editMessageText('Какую игру удалить (отменить)?', Markup.inlineKeyboard([...btns, [Markup.button.callback('🔙', 'panel')]]));
+});
+bot.action(/delete_event_(\d+)/, async (ctx) => {
+    const eid = parseInt(ctx.match[1]);
+    await db.update(schema.events).set({ isActive: false }).where(eq(schema.events.id, eid));
+    ctx.editMessageText('✅ Игра удалена (скрыта).');
 });
 
 // Рассылка
@@ -1045,13 +1053,42 @@ bot.action('admin_bookings', async (ctx) => {
     const res = await db.select({ e: schema.events.type, d: schema.events.dateString, u: schema.users.name, nick: schema.users.username }).from(schema.bookings).innerJoin(schema.users, eq(schema.bookings.userId, schema.users.id)).innerJoin(schema.events, eq(schema.bookings.eventId, schema.events.id)).where(eq(schema.bookings.paid, true));
     let msg = '📋 Записи:\n'; res.forEach(r => msg += `${r.d} ${r.e}: ${r.u} (@${r.nick})\n`); ctx.reply(msg);
 });
-bot.action('admin_add_event', (ctx) => ctx.reply('/add talk_toast 20.12.2025_19:00 Desc 10'));
+bot.action('admin_add_event', (ctx) => {
+    ctx.reply(
+        '🗓 <b>Добавление игры:</b>\n' +
+        '/add [ТИП] [ДАТА_ВРЕМЯ] [МЕСТ] [ОПИСАНИЕ/АДРЕС]\n\n' +
+        'Примеры:\n' +
+        '1. /add talk_toast 20.12.2025_19:00 7 Итальянская кухня, Ресторан Mario\n' +
+        '2. /add stock_know 25.12.2025_18:00 8 Бар Библиотека\n' +
+        '3. /add speed_dating 14.02.2026_20:00 14 Лаунж-зона',
+        { parse_mode: 'HTML' }
+    );
+});
 bot.command('add', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
-    const [_, t, d, desc, m] = ctx.message.text.split(' ');
-    if (!m) return ctx.reply('/add type date desc max');
-    await db.insert(schema.events).values({ type: t, dateString: d.replace('_',' '), description: desc, maxPlayers: parseInt(m), isActive: true });
-    ctx.reply('✅');
+    // Парсим новую команду с учетом пробелов в описании
+    const parts = ctx.message.text.split(' ');
+    // parts[0] = /add
+    // parts[1] = type
+    // parts[2] = date_time
+    // parts[3] = max_players
+    // parts[4...] = description (адрес)
+    
+    if (parts.length < 5) return ctx.reply('❌ Ошибка! Формат: /add type date max desc...');
+    
+    const type = parts[1];
+    const dateString = parts[2].replace('_', ' '); // Возвращаем пробел в дату
+    const maxPlayers = parseInt(parts[3]);
+    const description = parts.slice(4).join(' '); // Собираем остальной текст в строку
+
+    await db.insert(schema.events).values({ 
+        type, 
+        dateString, 
+        description, 
+        maxPlayers, 
+        isActive: true 
+    });
+    ctx.reply(`✅ Игра "${description}" добавлена!`);
 });
 bot.command('reply', (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
