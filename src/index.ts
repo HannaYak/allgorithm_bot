@@ -6,7 +6,8 @@ import * as schema from '../drizzle/schema';
 import 'dotenv/config';
 import Stripe from 'stripe';
 import { DateTime } from 'luxon';
-
+import { inArray } from 'drizzle-orm';
+import { eq, or } from 'drizzle-orm';
 // --- 1. НАСТРОЙКИ ---
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is missing');
@@ -727,27 +728,46 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
     const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
     if (!user || !event) return ctx.reply('Ошибка данных.');
 
-    // 1. ПРОВЕРКА НА БЕСПЛАТНУЮ ИГРУ (Каждая 5-я)
+    // 1. ПРОВЕРКА НА 5-ю БЕСПЛАТНУЮ ИГРУ
     const gamesPlayed = user.gamesPlayed || 0;
-    // Если следующая игра (current + 1) делится на 5 без остатка
     if ((gamesPlayed + 1) % 5 === 0) {
-        // Проверяем, не записан ли уже
-        const existing = await db.query.bookings.findFirst({
-            where: (b, { and, eq }) => and(eq(b.userId, user.id), eq(b.eventId, eventId))
-        });
+        // ... (Тут твой старый код проверки на 5-ю игру, оставляем как было) ...
+        // Для краткости я его свернул, но ты его не удаляй, если он нужен
+        const existing = await db.query.bookings.findFirst({ where: (b, { and, eq }) => and(eq(b.userId, user.id), eq(b.eventId, eventId)) });
         if (existing) return ctx.reply('✅ Вы уже записаны!');
-
-        // Записываем бесплатно
         await db.insert(schema.bookings).values({ userId: user.id, eventId: eventId, paid: true });
         await db.update(schema.events).set({ currentPlayers: (event.currentPlayers || 0) + 1 }).where(eq(schema.events.id, eventId));
-
-        return ctx.reply('🎁 <b>Поздравляем!</b>\nЭто ваша 5-я игра, поэтому участие <b>БЕСПЛАТНО</b>! 🎉\n\nВы успешно записаны.', { parse_mode: 'HTML' });
+        return ctx.reply('🎁 <b>Поздравляем!</b>\nЭто ваша 5-я игра, бесплатно! 🎉', { parse_mode: 'HTML' });
     }
 
+    // 2. ПРОВЕРКА ВАУЧЕРОВ (ИЩЕМ И 10 PLN, И FREE)
+    // Ищем любой активный ваучер (approved_10 или approved_free)
+    const activeVoucher = await db.query.vouchers.findFirst({ 
+        where: (v, { and, eq, or }) => and(
+            eq(v.userId, user.id), 
+            or(eq(v.status, 'approved_10'), eq(v.status, 'approved_free'))
+        ) 
+    });
+
+    // СЦЕНАРИЙ А: ВАУЧЕР НА БЕСПЛАТНУЮ ИГРУ
+    if (activeVoucher && activeVoucher.status === 'approved_free') {
+         // Проверяем, не записан ли уже
+         const existing = await db.query.bookings.findFirst({ where: (b, { and, eq }) => and(eq(b.userId, user.id), eq(b.eventId, eventId)) });
+         if (existing) return ctx.reply('✅ Вы уже записаны!');
+
+         // Сразу записываем без Stripe
+         await db.insert(schema.bookings).values({ userId: user.id, eventId: eventId, paid: true });
+         await db.update(schema.events).set({ currentPlayers: (event.currentPlayers || 0) + 1 }).where(eq(schema.events.id, eventId));
+         
+         // Помечаем ваучер как использованный
+         await db.update(schema.vouchers).set({ status: 'used' }).where(eq(schema.vouchers.id, activeVoucher.id));
+
+         return ctx.reply('🎫 <b>Ваучер применен!</b>\nВаше участие полностью оплачено ваучером.\n\nВы успешно записаны! Ждем вас.', { parse_mode: 'HTML' });
+    }
+
+    // СЦЕНАРИЙ Б: ОБЫЧНАЯ ОПЛАТА ИЛИ СКИДКА 10 PLN
     const priceId = GAME_PRICES[event.type];
     if (!priceId) return ctx.reply('Ошибка: цена не настроена.');
-
-    const activeVoucher = await db.query.vouchers.findFirst({ where: (v, { and, eq }) => and(eq(v.userId, user.id), eq(v.status, 'approved')) });
 
     const sessionConfig: Stripe.Checkout.SessionCreateParams = {
       payment_method_types: ['card'],
@@ -755,20 +775,26 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
       mode: 'payment',
       success_url: `https://t.me/AllgorithmBot?start=success`,
       cancel_url: `https://t.me/AllgorithmBot?start=cancel`,
-      metadata: { telegramId: telegramId.toString(), eventId: eventId.toString(), voucherId: activeVoucher ? activeVoucher.id.toString() : '' },
+      metadata: { telegramId: telegramId.toString(), eventId: eventId.toString(), voucherId: '' },
     };
 
-    if (activeVoucher) sessionConfig.discounts = [{ coupon: STRIPE_COUPON_ID }];
+    let msg = `Оплата участия: 50 PLN`;
+
+    // Если есть ваучер на 10 PLN
+    if (activeVoucher && activeVoucher.status === 'approved_10') {
+        sessionConfig.discounts = [{ coupon: STRIPE_COUPON_ID }];
+        sessionConfig.metadata!.voucherId = activeVoucher.id.toString();
+        msg = `🎉 <b>Ваучер применен!</b>\nСкидка -10 PLN.\n<b>К оплате: 40 PLN</b>`;
+    }
 
     const session = await stripe.checkout.sessions.create(sessionConfig);
     if (!session.url) throw new Error('No URL');
 
-    const msg = activeVoucher ? `🎉 <b>Ваучер применен!</b>\nСкидка -10 PLN.\n<b>К оплате: 40 PLN</b>` : `Оплата участия: 50 PLN`;
     ctx.reply(msg, { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.url('💸 Оплатить', session.url)], [Markup.button.callback('✅ Я оплатил', `confirm_pay_${eventId}`)]]) });
+  
   } catch (e) {
     console.error(e);
-    const err = e instanceof Error ? e.message : String(e);
-    ctx.reply(`Ошибка Stripe: ${err}`);
+    ctx.reply(`Ошибка Stripe: ${e}`);
   }
 });
 
@@ -824,30 +850,65 @@ bot.on('photo', async (ctx, next) => {
     
     const photo = ctx.message.photo[ctx.message.photo.length - 1];
     const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
+    
     if (user) {
-        const [v] = await db.insert(schema.vouchers).values({ userId: user.id, photoFileId: photo.file_id, status: 'pending' }).returning();
-        ctx.reply('✅ Отправлено на проверку.');
+        // Создаем ваучер со статусом pending
+        const [v] = await db.insert(schema.vouchers).values({ 
+            userId: user.id, 
+            photoFileId: photo.file_id, 
+            status: 'pending' 
+        }).returning();
+
+        ctx.reply('✅ Ваучер отправлен на проверку администратору.');
         // @ts-ignore
         ctx.session.waitingForVoucher = false;
         
+        // Отправляем админу фото с тремя кнопками
         await bot.telegram.sendPhoto(ADMIN_ID, photo.file_id, {
-            caption: `🎟 Ваучер от ${user.name}`,
-            ...Markup.inlineKeyboard([[Markup.button.callback('✅ Принять', `voucher_approve_${v.id}`), Markup.button.callback('❌ Отклонить', `voucher_reject_${v.id}`)]])
+            caption: `🎟 Ваучер от ${user.name} (@${user.username})`,
+            ...Markup.inlineKeyboard([
+                [Markup.button.callback('💰 Скидка 10 PLN', `voucher_set_10_${v.id}`)],
+                [Markup.button.callback('🎁 Бесплатно (100%)', `voucher_set_free_${v.id}`)],
+                [Markup.button.callback('❌ Отклонить', `voucher_reject_${v.id}`)]
+            ])
         });
     }
 });
-
-bot.action(/voucher_approve_(\d+)/, async (ctx) => {
+// 1. Одобрить скидку 10 PLN
+bot.action(/voucher_set_10_(\d+)/, async (ctx) => {
     if (ctx.from?.id !== ADMIN_ID) return;
     const id = parseInt(ctx.match[1]);
-    await db.update(schema.vouchers).set({ status: 'approved' }).where(eq(schema.vouchers.id, id));
-    ctx.editMessageCaption('✅ Одобрено.');
+    
+    // Ставим статус 'approved_10'
+    await db.update(schema.vouchers).set({ status: 'approved_10' }).where(eq(schema.vouchers.id, id));
+    
+    ctx.editMessageCaption('✅ Одобрено: Скидка 10 PLN.');
+    
     const v = await db.query.vouchers.findFirst({ where: eq(schema.vouchers.id, id) });
     if(v) {
         const u = await db.query.users.findFirst({ where: eq(schema.users.id, v.userId) });
-        if(u) bot.telegram.sendMessage(u.telegramId, '🎉 Ваш ваучер одобрен! Скидка применится автоматически.').catch(()=>{});
+        if(u) bot.telegram.sendMessage(u.telegramId, '🎉 Ваш ваучер одобрен! Вам доступна скидка 10 PLN.').catch(()=>{});
     }
 });
+
+// 2. Одобрить БЕСПЛАТНОЕ участие
+bot.action(/voucher_set_free_(\d+)/, async (ctx) => {
+    if (ctx.from?.id !== ADMIN_ID) return;
+    const id = parseInt(ctx.match[1]);
+    
+    // Ставим статус 'approved_free'
+    await db.update(schema.vouchers).set({ status: 'approved_free' }).where(eq(schema.vouchers.id, id));
+    
+    ctx.editMessageCaption('🎁 Одобрено: Бесплатное участие.');
+    
+    const v = await db.query.vouchers.findFirst({ where: eq(schema.vouchers.id, id) });
+    if(v) {
+        const u = await db.query.users.findFirst({ where: eq(schema.users.id, v.userId) });
+        if(u) bot.telegram.sendMessage(u.telegramId, '🎉 Ваучер одобрен! Вы можете записаться на игру БЕСПЛАТНО.').catch(()=>{});
+    }
+});
+
+// 3. Отклонить (остается почти таким же)
 bot.action(/voucher_reject_(\d+)/, async (ctx) => {
     if (ctx.from?.id !== ADMIN_ID) return;
     const id = parseInt(ctx.match[1]);
