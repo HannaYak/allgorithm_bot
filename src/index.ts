@@ -516,8 +516,13 @@ bot.hears('🎮 Игры', (ctx) => {
   ctx.reply('Выберите игру:', Markup.inlineKeyboard([
     [Markup.button.callback('Talk & Toast 🥂', 'game_talk')],
     [Markup.button.callback('Stock & Know 🧠', 'game_stock')],
-    [Markup.button.callback('Быстрые свидания 💘', 'game_dating')]
+    [Markup.button.callback('Быстрые свидания 💘', 'game_dating')],
+    [Markup.button.callback('✖️ Скрыть меню', 'close_menu')] // <-- Добавили кнопку закрытия
   ]));
+});;
+
+bot.action('close_menu', (ctx) => {
+  ctx.deleteMessage(); // Просто удаляет сообщение с кнопками
 });
 
 bot.hears('👤 Личный кабинет', async (ctx) => {
@@ -660,8 +665,21 @@ bot.action('book_dating', async (ctx) => bookGame(ctx, 'speed_dating'));
 
 async function bookGame(ctx: any, type: string) {
   const events = await db.query.events.findMany({ where: (e, { eq, and }) => and(eq(e.type, type), eq(e.isActive, true)) });
-  if (events.length === 0) return ctx.reply('Игр пока нет 😔');
-  
+  if (events.length === 0) {
+    const text = `Расписание на этот формат сейчас формируется! 🗓
+
+Мы анонсируем новую дату совсем скоро в нашем Инстаграм.
+Нажми «Назад», чтобы посмотреть другие форматы.`;
+
+    return ctx.reply(text, {
+      parse_mode: 'HTML',
+      ...Markup.inlineKeyboard([
+        // ЗАМЕНИ ССЫЛКУ НИЖЕ НА СВОЙ ИНСТАГРАМ
+        [Markup.button.url('📸 Перейти в Инстаграм', 'https://instagram.com/allgorithm.warsaw')],
+        [Markup.button.callback('🔙 Назад к играм', 'back_to_games')]
+      ])
+    });
+  }
   // В кнопке показываем дату, но НЕ показываем описание (там адрес)
   const buttons = events.map(e => [Markup.button.callback(`${e.dateString} (${e.currentPlayers}/${e.maxPlayers})`, `pay_event_${e.id}`)]);
   buttons.push([Markup.button.callback('🔙 Назад', 'back_to_games')]);
