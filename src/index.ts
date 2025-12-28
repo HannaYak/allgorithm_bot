@@ -1,13 +1,12 @@
 import { Telegraf, Markup, session, Scenes } from 'telegraf';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
-import { eq } from 'drizzle-orm';
+import { eq, or, inArray } from 'drizzle-orm';
 import * as schema from '../drizzle/schema'; 
 import 'dotenv/config';
 import Stripe from 'stripe';
 import { DateTime } from 'luxon';
-import { inArray } from 'drizzle-orm';
-import { eq, or } from 'drizzle-orm';
+
 // --- 1. НАСТРОЙКИ ---
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is missing');
@@ -323,9 +322,9 @@ const STOCK_QUESTIONS = [
 // --- 3. СОСТОЯНИЕ (STATE) ---
 
 const FAST_DATES_STATE = {
-    eventId: 0, round: 0, votes: new Map<number, number[]>(),
-    participants: new Map<number, { id: number, name: string, username: string, num: number, gender: string }>(),
-    men: [] as number[], women: [] as number[], adminInputTargetId: 0 
+  eventId: 0, round: 0, votes: new Map<number, number[]>(),
+  participants: new Map<number, { id: number, name: string, username: string, num: number, gender: string }>(),
+  men: [] as number[], women: [] as number[], adminInputTargetId: 0 
 };
 
 const STOCK_STATE = { isActive: false, currentQuestionId: 0 };
@@ -340,117 +339,117 @@ bot.use(stage.middleware());
 
 // --- 5. АВТОПИЛОТ ---
 setInterval(async () => {
-    try {
-        const now = DateTime.now(); 
-        const activeEvents = await db.query.events.findMany({ where: eq(schema.events.isActive, true) });
+  try {
+    const now = DateTime.now(); 
+    const activeEvents = await db.query.events.findMany({ where: eq(schema.events.isActive, true) });
 
-        for (const event of activeEvents) {
-            const start = DateTime.fromFormat(event.dateString, "dd.MM.yyyy HH:mm");
-            if (!start.isValid) continue;
+    for (const event of activeEvents) {
+      const start = DateTime.fromFormat(event.dateString, "dd.MM.yyyy HH:mm");
+      if (!start.isValid) continue;
 
-            const diffHours = start.diff(now, 'hours').hours;
-            const diffMinutes = start.diff(now, 'minutes').minutes;
+      const diffHours = start.diff(now, 'hours').hours;
+      const diffMinutes = start.diff(now, 'minutes').minutes;
 
-            // 1. ЗА 3 ДНЯ (72 часа)
-            if (diffHours >= 71.5 && diffHours <= 72.5) {
-                const actionId = `remind_3d_${event.id}`;
-                if (!PROCESSED_AUTO_ACTIONS.has(actionId)) {
-                    PROCESSED_AUTO_ACTIONS.add(actionId);
-                    await broadcastToEvent(event.id, 
-                        `📅 <b>Скоро игра!</b>\n\nНапоминаем, что через 3 дня (${start.toFormat('dd.MM')}) состоится игра "${event.type}".\n\nГотовьтесь к классному вечеру! 🥂`
-                    );
-                }
-            }
-
-            // 2. ЗА 24 ЧАСА
-            if (diffHours >= 23.5 && diffHours <= 24.5) {
-                const actionId = `remind_24h_${event.id}`;
-                if (!PROCESSED_AUTO_ACTIONS.has(actionId)) {
-                    PROCESSED_AUTO_ACTIONS.add(actionId);
-                    await broadcastToEvent(event.id, 
-                        `🔔 <b>Уже завтра!</b>\n\nЖдем вас в ${start.toFormat('HH:mm')} на игре.\n📍 Адрес мы пришлем за 3 часа до начала.`
-                    );
-                }
-            }
-
-            // 3. РАСКРЫТИЕ МЕСТА (За 3 ЧАСА)
-            if (diffHours >= 2.8 && diffHours <= 3.2) {
-                const actionId = `reveal_place_${event.id}`;
-                if (!PROCESSED_AUTO_ACTIONS.has(actionId)) {
-                    PROCESSED_AUTO_ACTIONS.add(actionId);
-                    // Берем описание из базы (там должен быть адрес!)
-                    const location = event.description || 'Уточняется у администратора';
-                    
-                    await broadcastToEvent(event.id, 
-                        `📍 <b>Место встречи открыто!</b>\n\n` +
-                        `До игры осталось 3 часа.\n` +
-                        `Мы встречаемся здесь:\n<b>${location}</b>\n\n` +
-                        `Ждем вас! Пожалуйста, не опаздывайте (желательно прийти за 10-15 минут).`
-                    );
-                }
-            }
-
-            // 4. АВТО-ВИКТОРИНА (через 105 мин после старта)
-            const minutesSinceStart = now.diff(start, 'minutes').minutes;
-            if (event.type === 'talk_toast' && minutesSinceStart >= 105 && minutesSinceStart < 115) {
-                const actionId = `quiz_${event.id}`;
-                if (!PROCESSED_AUTO_ACTIONS.has(actionId)) {
-                    PROCESSED_AUTO_ACTIONS.add(actionId);
-                    runAutoQuiz(event.id); 
-                }
-            }
-
-            // 5. АВТО-ЗАВЕРШЕНИЕ (через 130 мин после старта)
-            if (minutesSinceStart >= 130) {
-                const actionId = `close_${event.id}`;
-                if (!PROCESSED_AUTO_ACTIONS.has(actionId)) {
-                    PROCESSED_AUTO_ACTIONS.add(actionId);
-                    autoCloseEvent(event.id); 
-                }
-            }
+      // 1. ЗА 3 ДНЯ (72 часа)
+      if (diffHours >= 71.5 && diffHours <= 72.5) {
+        const actionId = `remind_3d_${event.id}`;
+        if (!PROCESSED_AUTO_ACTIONS.has(actionId)) {
+          PROCESSED_AUTO_ACTIONS.add(actionId);
+          await broadcastToEvent(event.id, 
+            `📅 <b>Скоро игра!</b>\n\nНапоминаем, что через 3 дня (${start.toFormat('dd.MM')}) состоится игра "${event.type}".\n\nГотовьтесь к классному вечеру! 🥂`
+          );
         }
-    } catch (e) { console.error("Autopilot Error:", e); }
+      }
+
+      // 2. ЗА 24 ЧАСА
+      if (diffHours >= 23.5 && diffHours <= 24.5) {
+        const actionId = `remind_24h_${event.id}`;
+        if (!PROCESSED_AUTO_ACTIONS.has(actionId)) {
+          PROCESSED_AUTO_ACTIONS.add(actionId);
+          await broadcastToEvent(event.id, 
+            `🔔 <b>Уже завтра!</b>\n\nЖдем вас в ${start.toFormat('HH:mm')} на игре.\n📍 Адрес мы пришлем за 3 часа до начала.`
+          );
+        }
+      }
+
+      // 3. РАСКРЫТИЕ МЕСТА (За 3 ЧАСА)
+      if (diffHours >= 2.8 && diffHours <= 3.2) {
+        const actionId = `reveal_place_${event.id}`;
+        if (!PROCESSED_AUTO_ACTIONS.has(actionId)) {
+          PROCESSED_AUTO_ACTIONS.add(actionId);
+          // Берем описание из базы (там должен быть адрес!)
+          const location = event.description || 'Уточняется у администратора';
+           
+          await broadcastToEvent(event.id, 
+            `📍 <b>Место встречи открыто!</b>\n\n` +
+            `До игры осталось 3 часа.\n` +
+            `Мы встречаемся здесь:\n<b>${location}</b>\n\n` +
+            `Ждем вас! Пожалуйста, не опаздывайте (желательно прийти за 10-15 минут).`
+          );
+        }
+      }
+
+      // 4. АВТО-ВИКТОРИНА (через 105 мин после старта)
+      const minutesSinceStart = now.diff(start, 'minutes').minutes;
+      if (event.type === 'talk_toast' && minutesSinceStart >= 105 && minutesSinceStart < 115) {
+        const actionId = `quiz_${event.id}`;
+        if (!PROCESSED_AUTO_ACTIONS.has(actionId)) {
+          PROCESSED_AUTO_ACTIONS.add(actionId);
+          runAutoQuiz(event.id); 
+        }
+      }
+
+      // 5. АВТО-ЗАВЕРШЕНИЕ (через 130 мин после старта)
+      if (minutesSinceStart >= 130) {
+        const actionId = `close_${event.id}`;
+        if (!PROCESSED_AUTO_ACTIONS.has(actionId)) {
+          PROCESSED_AUTO_ACTIONS.add(actionId);
+          autoCloseEvent(event.id); 
+        }
+      }
+    }
+  } catch (e) { console.error("Autopilot Error:", e); }
 }, 60000); 
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function broadcastToEvent(eventId: number, text: string) {
-    const bookings = await db.query.bookings.findMany({ where: (b, {and, eq}) => and(eq(b.eventId, eventId), eq(b.paid, true)) });
-    for (const b of bookings) {
-        const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
-        if (u) bot.telegram.sendMessage(u.telegramId, text, { parse_mode: 'HTML' }).catch(()=>{});
-    }
+  const bookings = await db.query.bookings.findMany({ where: (b, {and, eq}) => and(eq(b.eventId, eventId), eq(b.paid, true)) });
+  for (const b of bookings) {
+    const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+    if (u) bot.telegram.sendMessage(u.telegramId, text, { parse_mode: 'HTML' }).catch(()=>{});
+  }
 }
 
 async function runAutoQuiz(eventId: number) {
-    const bookings = await db.query.bookings.findMany({ where: (b, {and, eq}) => and(eq(b.eventId, eventId), eq(b.paid, true)) });
-    if (bookings.length < 2) return; 
-    await broadcastToEvent(eventId, `🔔 <b>Викторина для всех!</b> Угадываем факты друг о друге.`);
+  const bookings = await db.query.bookings.findMany({ where: (b, {and, eq}) => and(eq(b.eventId, eventId), eq(b.paid, true)) });
+  if (bookings.length < 2) return; 
+  await broadcastToEvent(eventId, `🔔 <b>Викторина для всех!</b> Угадываем факты друг о друге.`);
+  await delay(5000);
+  const shuffled = bookings.sort(() => 0.5 - Math.random()).slice(0, 3);
+  for (const booking of shuffled) {
+    const user = await db.query.users.findFirst({ where: eq(schema.users.id, booking.userId) });
+    if (!user) continue;
+    const fact = (user.fact && user.fact.length > 2) ? user.fact : user.strangeStory;
+    if (!fact) continue;
+    await broadcastToEvent(eventId, `❓ <b>Как думаете, чей это факт?</b>\n"${fact}"`);
+    await delay(30000); 
+    await broadcastToEvent(eventId, `🔓 <b>Это:</b> ${user.name}!`);
     await delay(5000);
-    const shuffled = bookings.sort(() => 0.5 - Math.random()).slice(0, 3);
-    for (const booking of shuffled) {
-        const user = await db.query.users.findFirst({ where: eq(schema.users.id, booking.userId) });
-        if (!user) continue;
-        const fact = (user.fact && user.fact.length > 2) ? user.fact : user.strangeStory;
-        if (!fact) continue;
-        await broadcastToEvent(eventId, `❓ <b>Как думаете, чей это факт?</b>\n"${fact}"`);
-        await delay(30000); 
-        await broadcastToEvent(eventId, `🔓 <b>Это:</b> ${user.name}!`);
-        await delay(5000);
-    }
-    await broadcastToEvent(eventId, `🏁 Игра окончена! Спасибо всем, обменяйтесь контактами если хотите.`);
+  }
+  await broadcastToEvent(eventId, `🏁 Игра окончена! Спасибо всем, обменяйтесь контактами если хотите.`);
 }
 
 async function autoCloseEvent(eventId: number) {
-    await db.update(schema.events).set({ isActive: false }).where(eq(schema.events.id, eventId));
-    const bookings = await db.query.bookings.findMany({ where: (b, {and, eq}) => and(eq(b.eventId, eventId), eq(b.paid, true)) });
-    for (const b of bookings) {
-        const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
-        if (u) {
-             await db.update(schema.users).set({ gamesPlayed: (u.gamesPlayed||0)+1 }).where(eq(schema.users.id, u.id));
-             bot.telegram.sendMessage(u.telegramId, '🎁 Игра закрыта, мы добавили Вам +1 балл лояльности! (каждая 5-ая игра бесплатно)').catch(()=>{});
-        }
+  await db.update(schema.events).set({ isActive: false }).where(eq(schema.events.id, eventId));
+  const bookings = await db.query.bookings.findMany({ where: (b, {and, eq}) => and(eq(b.eventId, eventId), eq(b.paid, true)) });
+  for (const b of bookings) {
+    const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+    if (u) {
+       await db.update(schema.users).set({ gamesPlayed: (u.gamesPlayed||0)+1 }).where(eq(schema.users.id, u.id));
+       bot.telegram.sendMessage(u.telegramId, '🎁 Игра закрыта, мы добавили Вам +1 балл лояльности! (каждая 5-ая игра бесплатно)').catch(()=>{});
     }
+  }
 }
 
 // --- 6. РЕГИСТРАЦИЯ И МЕНЮ ---
@@ -495,10 +494,28 @@ const registerScene = new Scenes.WizardScene('REGISTER_SCENE',
     const gender = ctx.message.text;
     // @ts-ignore
     const data = ctx.wizard.state;
+    // @ts-ignore
+    const referrerId = ctx.wizard.state.referrerId || null; // <-- Достаем переданный ID
+
     await db.insert(schema.users).values({
-      telegramId: ctx.from.id, username: ctx.from.username, firstName: ctx.from.first_name,
-      name: data.name, birthDate: data.birthDate, fact: data.fact, strangeStory: data.story, gender: gender, isAdmin: ctx.from.id === ADMIN_ID 
+      telegramId: ctx.from.id, 
+      username: ctx.from.username, 
+      firstName: ctx.from.first_name,
+      name: data.name, 
+      birthDate: data.birthDate, 
+      fact: data.fact, 
+      strangeStory: data.story, 
+      gender: gender, 
+      isAdmin: ctx.from.id === ADMIN_ID,
+      invitedBy: referrerId // <-- ЗАПИСЫВАЕМ В БАЗУ
     });
+
+    // Опционально: Оповестим того, кто пригласил, что друг зарегистрировался
+    if (referrerId) {
+        // Ищем telegramId пригласившего по его ID в базе
+        bot.telegram.sendMessage(referrerId, `👋 По вашей ссылке зарегистрировался новый участник! Вы получите бонус, когда он купит первый билет.`).catch(()=>{});
+    }
+
     ctx.reply('✅ Регистрация завершена успешно! Добро пожаловать, выбирай игру и становись частью нашего Алгоритма.', getMainKeyboard());
     return ctx.scene.leave();
   }
@@ -509,8 +526,26 @@ function getMainKeyboard() { return Markup.keyboard([['🎮 Игры', '👤 Л�
 
 bot.start(async (ctx) => {
   const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
-  if (!user) ctx.scene.enter('REGISTER_SCENE');
-  else ctx.reply(`С возвращением, ${user.name}!`, getMainKeyboard());
+  
+  // Если пользователь уже есть — просто приветствуем
+  if (user) {
+      return ctx.reply(`С возвращением, ${user.name}!`, getMainKeyboard());
+  }
+
+  // Ловим реферальный код из старта (например: /start ref_5456905649)
+  const startPayload = ctx.message.text.split(' ')[1]; // Берем текст после пробела
+  let referrerId = 0;
+
+  if (startPayload && startPayload.startsWith('ref_')) {
+      const refId = parseInt(startPayload.replace('ref_', ''));
+      // Проверка: нельзя пригласить самого себя
+      if (!isNaN(refId) && refId !== ctx.from.id) {
+          referrerId = refId;
+      }
+  }
+
+  // Переходим в регистрацию и передаем ID пригласившего
+  ctx.scene.enter('REGISTER_SCENE', { referrerId });
 });
 
 bot.hears('🎮 Игры', (ctx) => {
@@ -518,9 +553,9 @@ bot.hears('🎮 Игры', (ctx) => {
     [Markup.button.callback('Talk & Toast 🥂', 'game_talk')],
     [Markup.button.callback('Stock & Know 🧠', 'game_stock')],
     [Markup.button.callback('Быстрые свидания 💘', 'game_dating')],
-    [Markup.button.callback('✖️ Скрыть меню', 'close_menu')] // <-- Добавили кнопку закрытия
+    [Markup.button.callback('✖️ Скрыть меню', 'close_menu')] 
   ]));
-});;
+});
 
 bot.action('close_menu', (ctx) => {
   ctx.deleteMessage(); // Просто удаляет сообщение с кнопками
@@ -529,11 +564,32 @@ bot.action('close_menu', (ctx) => {
 bot.hears('👤 Личный кабинет', async (ctx) => {
   const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
   if (!user) return ctx.reply('Пройдите регистрацию /start');
+  
   const gamesLeft = 5 - (user.gamesPlayed % 5);
+
   ctx.reply(
     `👤 *Личный кабинет*\n\n👤 Имя: ${user.name}\n🎂 ДР: ${user.birthDate}\n🎲 Игр сыграно: ${user.gamesPlayed}\n🎁 До бесплатной игры: ${gamesLeft}`,
-    { parse_mode: 'Markdown', ...Markup.inlineKeyboard([[Markup.button.callback('📅 Мои билеты', 'my_games')], [Markup.button.callback('🎟 У меня есть ваучер', 'upload_voucher')]]) }
+    { 
+        parse_mode: 'Markdown', 
+        ...Markup.inlineKeyboard([
+            [Markup.button.callback('🗣 Пригласить друга (+1 балл)', 'invite_friend')], 
+            [Markup.button.callback('📅 Мои билеты', 'my_games')], 
+            [Markup.button.callback('🎟 У меня есть ваучер', 'upload_voucher')]
+        ]) 
+    }
   );
+});
+
+// ОБРАБОТЧИК НАЖАТИЯ
+bot.action('invite_friend', async (ctx) => {
+    const botUser = await bot.telegram.getMe(); // Получаем имя бота
+    const refLink = `https://t.me/${botUser.username}?start=ref_${ctx.from.id}`;
+
+    ctx.reply(
+        `📢 *Ваша реферальная ссылка:*\n\n\`${refLink}\`\n\nОтправь эту ссылку другу. Если он зарегистрируется и купит билет, тебе засчитается +1 игра (как будто ты сходил)!`,
+        { parse_mode: 'Markdown' }
+    );
+    ctx.answerCbQuery();
 });
 
 // --- ПРАВИЛА (СГРУППИРОВАННЫЕ) ---
@@ -731,8 +787,6 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
     // 1. ПРОВЕРКА НА 5-ю БЕСПЛАТНУЮ ИГРУ
     const gamesPlayed = user.gamesPlayed || 0;
     if ((gamesPlayed + 1) % 5 === 0) {
-        // ... (Тут твой старый код проверки на 5-ю игру, оставляем как было) ...
-        // Для краткости я его свернул, но ты его не удаляй, если он нужен
         const existing = await db.query.bookings.findFirst({ where: (b, { and, eq }) => and(eq(b.userId, user.id), eq(b.eventId, eventId)) });
         if (existing) return ctx.reply('✅ Вы уже записаны!');
         await db.insert(schema.bookings).values({ userId: user.id, eventId: eventId, paid: true });
@@ -820,6 +874,27 @@ bot.action(/confirm_pay_(\d+)/, async (ctx) => {
         }
 
         await db.insert(schema.bookings).values({ userId: user.id, eventId: eventId, paid: true });
+
+        // --- НАЧАЛО БЛОКА РЕФЕРАЛКИ ---
+        // Проверяем, привел ли кто-то этого пользователя
+        if (user.invitedBy) {
+            const inviter = await db.query.users.findFirst({ where: eq(schema.users.telegramId, user.invitedBy) });
+            
+            if (inviter) {
+                // Начисляем +1 игру пригласившему
+                await db.update(schema.users)
+                    .set({ gamesPlayed: (inviter.gamesPlayed || 0) + 1 })
+                    .where(eq(schema.users.id, inviter.id));
+
+                // Оповещаем пригласившего
+                bot.telegram.sendMessage(inviter.telegramId, `🎉 <b>Реферальный бонус!</b>\n\nВаш друг ${user.name} купил билет на игру.\nВам начислен +1 балл лояльности! До бесплатной игры стало ближе.`, { parse_mode: 'HTML' }).catch(()=>{});
+                
+                // ВАЖНО: Очищаем поле invitedBy, чтобы не начислять бонусы вечно за одного и того же друга
+                await db.update(schema.users).set({ invitedBy: null }).where(eq(schema.users.id, user.id));
+            }
+        }
+        // --- КОНЕЦ БЛОКА РЕФЕРАЛКИ ---
+
         const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
         if (event) await db.update(schema.events).set({ currentPlayers: (event.currentPlayers || 0) + 1 }).where(eq(schema.events.id, eventId));
 
