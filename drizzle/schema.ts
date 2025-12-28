@@ -18,6 +18,7 @@ export const users = pgTable('users', {
   gamesPlayed: integer('games_played').default(0),
   loyaltyPoints: integer('loyalty_points').default(0), // Для 5-й бесплатной
   createdAt: timestamp('created_at').defaultNow(),
+  invitedBy: bigint('invited_by', { mode: 'number' }),
 });
 
 // Таблица событий (Игр)
