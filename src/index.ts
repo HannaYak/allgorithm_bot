@@ -833,7 +833,26 @@ bot.on('message', async (ctx, next) => {
 });
 
 // --- 12. ЗАПУСК ---
-bot.launch();
+// --- 12. ЗАПУСК ---
+const PORT = Number(process.env.PORT) || 3000;
+const WEBHOOK_URL = process.env.TELEGRAM_WEBHOOK_URL; // Например: https://allgorithm-bot-1.onrender.com
+
+if (WEBHOOK_URL) {
+  // Режим Webhook для Render
+  bot.launch({
+    webhook: {
+      domain: WEBHOOK_URL,
+      port: PORT,
+    },
+  }).then(() => {
+    console.log(`🚀 Bot is running on Webhook: ${WEBHOOK_URL}`);
+  });
+} else {
+  // Режим Polling для локальной разработки
+  bot.launch().then(() => {
+    console.log('🛠 Bot is running on Polling (local)');
+  });
+}
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
