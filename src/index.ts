@@ -783,19 +783,128 @@ bot.action(/voucher_reject_(\d+)/, async (ctx) => {
 
 // --- 10. АДМИНКА ---
 
+// --- 10. АДМИНКА ---
+
 bot.command('panel', async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
   ctx.reply('🔒 Админ-панель', Markup.inlineKeyboard([
     [Markup.button.callback('➕ Добавить игру', 'admin_add_event')],
     [Markup.button.callback('🗑 Удалить игру', 'admin_delete_menu')],
+    [Markup.button.callback('🏁 ЗАВЕРШИТЬ ИГРУ', 'admin_close_event')], 
     [Markup.button.callback('📢 Рассылка', 'admin_broadcast_start')],
+    [Markup.button.callback('📋 Записи', 'admin_bookings')],
+    [Markup.button.callback('💘 Пульт FD', 'admin_fd_panel')],
+    [Markup.button.callback('🧠 Пульт Stock', 'admin_stock_list')],
+    [Markup.button.callback('🥂 Пульт Talk', 'admin_talk_panel')],
     [Markup.button.callback('📊 Статистика', 'admin_stats')]
-  ]));
+  ], { columns: 2 }));
+});
+
+// 1. СТАТИСТИКА И ЗАПИСИ
+bot.action('admin_stats', async (ctx) => {
+    if (ctx.from?.id !== ADMIN_ID) return;
+    const users = await db.query.users.findMany();
+    const paid = await db.query.bookings.findMany({ where: eq(schema.bookings.paid, true) });
+    ctx.editMessageText(`📊 Пользователей: ${users.length}\n💰 Билетов продано: ${paid.length}`, 
+    Markup.inlineKeyboard([[Markup.button.callback('🔙 Назад', 'panel')]]));
+});
+
+bot.action('admin_bookings', async (ctx) => {
+    if (ctx.from?.id !== ADMIN_ID) return;
+    const res = await db.select({ 
+      e: schema.events.type, 
+      d: schema.events.dateString, 
+      u: schema.users.name, 
+      nick: schema.users.username 
+    }).from(schema.bookings)
+      .innerJoin(schema.users, eq(schema.bookings.userId, schema.users.id))
+      .innerJoin(schema.events, eq(schema.bookings.eventId, schema.events.id))
+      .where(eq(schema.bookings.paid, true));
+
+    let msg = '📋 <b>Список всех записей:</b>\n\n';
+    res.forEach(r => msg += `🔹 ${r.d} [${r.e}]: ${r.u} (@${r.nick})\n`);
+    ctx.reply(msg, { parse_mode: 'HTML' });
+    ctx.answerCbQuery();
+});
+
+// 2. УПРАВЛЕНИЕ ИГРАМИ (УДАЛЕНИЕ / ЗАВЕРШЕНИЕ)
+bot.action('admin_delete_menu', async (ctx) => {
+    if (ctx.from?.id !== ADMIN_ID) return;
+    const active = await db.query.events.findMany({ where: eq(schema.events.isActive, true) });
+    const btns = active.map(e => [Markup.button.callback(`❌ ${e.dateString} (${e.type})`, `delete_event_${e.id}`)]);
+    ctx.editMessageText('Какую игру отменить?', Markup.inlineKeyboard([...btns, [Markup.button.callback('🔙', 'panel')]]));
+});
+
+bot.action(/delete_event_(\d+)/, async (ctx) => {
+    const eid = parseInt(ctx.match[1]);
+    await db.update(schema.events).set({ isActive: false }).where(eq(schema.events.id, eid));
+    ctx.editMessageText('✅ Игра успешно удалена из расписания.');
+});
+
+bot.action('admin_close_event', async (ctx) => {
+    if (ctx.from?.id !== ADMIN_ID) return;
+    const active = await db.query.events.findMany({ where: eq(schema.events.isActive, true) });
+    const btns = active.map(e => [Markup.button.callback(`🏁 ${e.dateString} (${e.type})`, `close_confirm_${e.id}`)]);
+    ctx.editMessageText('Какую игру закрыть (начислить баллы)?', Markup.inlineKeyboard([...btns, [Markup.button.callback('🔙', 'panel')]]));
+});
+
+bot.action(/close_confirm_(\d+)/, async (ctx) => {
+    await autoCloseEvent(parseInt(ctx.match[1])); 
+    ctx.editMessageText(`✅ Игра закрыта. Баллы участникам начислены.`);
+});
+
+// 3. ПУЛЬТЫ УПРАВЛЕНИЯ (FD, STOCK, TALK)
+bot.action('admin_fd_panel', async (ctx) => {
+    if (ctx.from?.id !== ADMIN_ID) return;
+    const event = await db.query.events.findFirst({ where: (e, {and, eq}) => and(eq(e.type, 'speed_dating'), eq(e.isActive, true)) });
+    if (!event) return ctx.reply('Нет активной игры Speed Dating.');
+    ctx.editMessageText(`💘 <b>Speed Dating:</b> ${event.dateString}\nУчастников: ${FAST_DATES_STATE.participants.size}`, { 
+      parse_mode: 'HTML',
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback('1️⃣ Загрузить участников', `fd_load_${event.id}`)],
+        [Markup.button.callback('2️⃣ Следующий раунд 🔄', 'fd_next_round')],
+        [Markup.button.callback('3️⃣ Ввод карточек ✍️', 'fd_input_menu')],
+        [Markup.button.callback('4️⃣ Расчет мэтчей 🏁', 'fd_calc_matches')],
+        [Markup.button.callback('🔙 Назад', 'panel')]
+    ])});
+});
+
+bot.action('admin_talk_panel', async (ctx) => {
+    if (ctx.from?.id !== ADMIN_ID) return;
+    const event = await db.query.events.findFirst({ where: (e, {and, eq}) => and(eq(e.type, 'talk_toast'), eq(e.isActive, true)) });
+    if (!event) return ctx.reply('Нет активной игры Talk & Toast.');
+    ctx.editMessageText(`🥂 <b>Talk & Toast:</b> ${event.dateString}`, { parse_mode: 'HTML', ...Markup.inlineKeyboard([
+            [Markup.button.callback('🎲 Загадать факт', `talk_gen_fact_${event.id}`)],
+            [Markup.button.callback('🔙 Назад', 'panel')]
+        ])
+    });
+});
+
+bot.action('admin_stock_list', (ctx) => {
+    if (ctx.from?.id !== ADMIN_ID) return;
+    const btns = STOCK_QUESTIONS.map((_, i) => [Markup.button.callback(`Вопрос Q${i+1}`, `stock_manage_${i}`)]);
+    const rows = [];
+    for (let i = 0; i < btns.length; i += 3) rows.push(btns.slice(i, i + 3).flat());
+    rows.push([Markup.button.callback('🔙 Назад', 'panel')]);
+    ctx.editMessageText('🧠 <b>Выберите вопрос для игры:</b>', { parse_mode: 'HTML', ...Markup.inlineKeyboard(rows) });
+});
+
+// 4. ДОБАВЛЕНИЕ И РАССЫЛКА
+bot.action('admin_broadcast_start', (ctx) => {
+    if (ctx.from?.id !== ADMIN_ID) return;
+    ctx.reply('📢 Отправьте текст для общей рассылки (всем пользователям бота).');
+    // @ts-ignore
+    ctx.session = { waitingForBroadcast: true };
+    ctx.answerCbQuery();
 });
 
 bot.action('admin_add_event', (ctx) => {
   ctx.reply(
-    '🗓 <b>Добавление игры:</b>\n/add [тип] [дата] [мест] [Название ### Адрес]',
+    '🗓 <b>Инструкция по добавлению:</b>\n\n' +
+    'Используй команду:\n' +
+    '<code>/add [тип] [дата] [мест] [Название ### Адрес]</code>\n\n' +
+    'Пример:\n' +
+    '<code>/add talk_toast 20.01.2026_19:00 8 Азиатский ужин 🍣 ### Ресторан Uki Uki, Krucza 23</code>',
     { parse_mode: 'HTML' }
   );
 });
@@ -803,33 +912,19 @@ bot.action('admin_add_event', (ctx) => {
 bot.command('add', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     const parts = ctx.message.text.split(' ');
-    if (parts.length < 5) return ctx.reply('❌ Ошибка формата.');
+    if (parts.length < 5) return ctx.reply('❌ Ошибка формата. Используй пример из кнопки "Добавить игру".');
     const type = parts[1];
     const dateString = parts[2].replace('_', ' ');
     const maxPlayers = parseInt(parts[3]);
     const description = parts.slice(4).join(' ');
     await db.insert(schema.events).values({ type, dateString, description, maxPlayers, isActive: true });
-    ctx.reply(`✅ Игра добавлена!`);
+    ctx.reply(`✅ Игра на ${dateString} успешно добавлена в базу!`);
 });
 
-bot.on('message', async (ctx, next) => {
-    // @ts-ignore
-    if (ctx.session?.waitingForBroadcast && ctx.from.id === ADMIN_ID) {
-        const users = await db.query.users.findMany();
-        for (const u of users) { try { await ctx.copyMessage(u.telegramId); } catch {} }
-        // @ts-ignore
-        ctx.session.waitingForBroadcast = false;
-        return ctx.reply('✅ Рассылка завершена.');
-    }
-    // @ts-ignore
-    if (ctx.session?.waitingForSupport && ctx.message.text) {
-        await ctx.telegram.sendMessage(ADMIN_ID, `🆘 SOS от ${ctx.from.id}: ${ctx.message.text}`);
-        ctx.reply('Отправлено!');
-        // @ts-ignore
-        ctx.session.waitingForSupport = false;
-        return;
-    }
-    next();
+bot.command('reply', (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    const [_, uid, ...txt] = ctx.message.text.split(' ');
+    bot.telegram.sendMessage(uid, `👮‍♂️ <b>Ответ от администратора:</b>\n\n${txt.join(' ')}`, { parse_mode: 'HTML' });
 });
 
 // --- 12. ЗАПУСК ---
