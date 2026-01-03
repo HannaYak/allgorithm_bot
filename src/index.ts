@@ -319,6 +319,20 @@ const STOCK_QUESTIONS = [
   }
 ];
 
+// --- HELPER: Кодировка названий для кнопок ---
+// Превращает "Итальянский ужин 🍝" в безопасную строку Base64
+const encodeCat = (str: string) => Buffer.from(str).toString('base64').replace(/=/g, '');
+const decodeCat = (str: string) => Buffer.from(str, 'base64').toString('utf-8');
+
+// Парсер описания: [0] - Категория, [1] - Адрес
+const parseEventDesc = (desc: string | null) => {
+  if (!desc) return { title: 'Мероприятие', address: 'Уточняется' };
+  const parts = desc.split('###');
+  return { 
+    title: parts[0].trim(), 
+    address: parts[1] ? parts[1].trim() : 'Секретная локация 🔒' 
+  };
+};
 // --- 3. СОСТОЯНИЕ (STATE) ---
 
 const FAST_DATES_STATE = {
@@ -373,21 +387,22 @@ setInterval(async () => {
       }
 
       // 3. РАСКРЫТИЕ МЕСТА (За 3 ЧАСА)
-      if (diffHours >= 2.8 && diffHours <= 3.2) {
-        const actionId = `reveal_place_${event.id}`;
-        if (!PROCESSED_AUTO_ACTIONS.has(actionId)) {
-          PROCESSED_AUTO_ACTIONS.add(actionId);
-          // Берем описание из базы (там должен быть адрес!)
-          const location = event.description || 'Уточняется у администратора';
-           
-          await broadcastToEvent(event.id, 
-            `📍 <b>Место встречи открыто!</b>\n\n` +
-            `До игры осталось 3 часа.\n` +
-            `Мы встречаемся здесь:\n<b>${location}</b>\n\n` +
-            `Ждем вас! Пожалуйста, не опаздывайте (желательно прийти за 10-15 минут).`
-          );
-        }
-      }
+          if (diffHours >= 2.8 && diffHours <= 3.2) {
+            const actionId = `reveal_place_${event.id}`;
+            if (!PROCESSED_AUTO_ACTIONS.has(actionId)) {
+              PROCESSED_AUTO_ACTIONS.add(actionId);
+              
+              // ПАРСИНГ: Берем только часть ПОСЛЕ ###
+              const { address } = parseEventDesc(event.description);
+               
+              await broadcastToEvent(event.id, 
+                `📍 <b>Место встречи открыто!</b>\n\n` +
+                `До игры осталось 3 часа.\n` +
+                `Мы встречаемся здесь:\n<b>${address}</b>\n\n` +
+                `Ждем вас! Пожалуйста, не опаздывайте.`
+              );
+            }
+          }
 
       // 4. АВТО-ВИКТОРИНА (через 105 мин после старта)
       const minutesSinceStart = now.diff(start, 'minutes').minutes;
@@ -464,7 +479,7 @@ const registerScene = new Scenes.WizardScene('REGISTER_SCENE',
 
 Чтобы мы могли подобрать для тебя лучший опыт и корректно забронировать места, давай сначала немного познакомимся☺️
 
-⏱️ Регистрация проходит один раз и навсегда — всего 5 коротких вопросов, это займёт около минуты, всего будет 5 вопросов. 
+⏱️ Регистрация проходит один раз и навсегда — всего 5 коротких вопросов, это займёт около минуты. 
 
 Не задумывайся и отвечай быстро.
 
@@ -721,27 +736,56 @@ bot.action('game_dating', (ctx) => {
 bot.action('book_dating', async (ctx) => bookGame(ctx, 'speed_dating'));
 
 async function bookGame(ctx: any, type: string) {
-  const events = await db.query.events.findMany({ where: (e, { eq, and }) => and(eq(e.type, type), eq(e.isActive, true)) });
+  // 1. Берем все активные игры этого типа
+  const events = await db.query.events.findMany({ 
+    where: (e, { eq, and }) => and(eq(e.type, type), eq(e.isActive, true)) 
+  });
+
   if (events.length === 0) {
-    const text = `Расписание на этот формат сейчас формируется! 🗓
-
-Мы анонсируем новую дату совсем скоро в нашем Инстаграм.
-Нажми «Назад», чтобы посмотреть другие форматы.`;
-
+    const text = `Расписание на этот формат сейчас формируется! 🗓\n\nСледите за анонсами в Instagram.`;
     return ctx.reply(text, {
       parse_mode: 'HTML',
       ...Markup.inlineKeyboard([
-        // ЗАМЕНИ ССЫЛКУ НИЖЕ НА СВОЙ ИНСТАГРАМ
-        [Markup.button.url('📸 Перейти в Инстаграм', 'https://instagram.com/allgorithm.warsaw')],
+        [Markup.button.url('📸 Инстаграм', 'https://instagram.com/allgorithm.warsaw')],
         [Markup.button.callback('🔙 Назад к играм', 'back_to_games')]
       ])
     });
   }
-  // В кнопке показываем дату, но НЕ показываем описание (там адрес)
-  const buttons = events.map(e => [Markup.button.callback(`${e.dateString} (${e.currentPlayers}/${e.maxPlayers})`, `pay_event_${e.id}`)]);
+
+  // 2. Группируем по Названию (до ###)
+  // Используем Set, чтобы убрать дубликаты
+  const uniqueTitles = new Set<string>();
+  events.forEach(e => {
+    const { title } = parseEventDesc(e.description);
+    uniqueTitles.add(title);
+  });
+
+  // 3. Создаем кнопки категорий
+  const buttons: any[] = [];
+  uniqueTitles.forEach(title => {
+    // В callback кладем тип игры и закодированное название категории
+    buttons.push([Markup.button.callback(title, `cat_view_${type}_${encodeCat(title)}`)]);
+  });
+
   buttons.push([Markup.button.callback('🔙 Назад', 'back_to_games')]);
-  ctx.reply('Выберите дату:', Markup.inlineKeyboard(buttons));
+
+  ctx.editMessageText('👇 <b>Выберите формат/кухню:</b>', {
+    parse_mode: 'HTML',
+    ...Markup.inlineKeyboard(buttons)
+  });
 }
+
+
+
+// Кнопка "Назад к выбору кухни"
+
+bot.action(/back_to_cats_(.+)/, async (ctx) => {
+
+  const type = ctx.match[1];
+
+  await bookGame(ctx, type);
+
+});
 
 bot.action('back_to_games', (ctx) => {
   ctx.deleteMessage();
@@ -757,16 +801,19 @@ bot.action('my_games', async (ctx) => {
     
     let msg = '📅 <b>Ваши билеты:</b>\n\n';
     myBookings.forEach(b => {
-        // Проверяем время (скрываем адрес, если до игры > 3 часов)
         const start = DateTime.fromFormat(b.d, "dd.MM.yyyy HH:mm");
         const diffHours = start.diff(now, 'hours').hours;
         
-        let location = b.desc;
+        // Парсим описание
+        const { title, address } = parseEventDesc(b.desc);
+        
+        let locationDisplay = address;
+        // Если до игры больше 3 часов - скрываем адрес
         if (diffHours > 3.2) {
-            location = "🔒 <i>Секретная локация (откроется за 3 часа)</i>";
+            locationDisplay = "🔒 <i>Секретная локация (откроется за 3 часа)</i>";
         }
 
-        msg += `🗓 <b>${b.d}</b> | ${b.t}\n📍 ${location}\n\n`;
+        msg += `🗓 <b>${b.d}</b> | ${title}\n📍 ${locationDisplay}\n\n`;
     });
     ctx.reply(msg, { parse_mode: 'HTML' });
     ctx.answerCbQuery();
@@ -1212,15 +1259,16 @@ bot.action('admin_bookings', async (ctx) => {
     let msg = '📋 Записи:\n'; res.forEach(r => msg += `${r.d} ${r.e}: ${r.u} (@${r.nick})\n`); ctx.reply(msg);
 });
 bot.action('admin_add_event', (ctx) => {
-    ctx.reply(
-        '🗓 <b>Добавление игры:</b>\n' +
-        '/add [ТИП] [ДАТА_ВРЕМЯ] [МЕСТ] [ОПИСАНИЕ/АДРЕС]\n\n' +
-        'Примеры:\n' +
-        '1. /add talk_toast 20.12.2025_19:00 7 Итальянская кухня, Ресторан Mario\n' +
-        '2. /add stock_know 25.12.2025_18:00 8 Бар Библиотека\n' +
-        '3. /add speed_dating 14.02.2026_20:00 14 Лаунж-зона',
-        { parse_mode: 'HTML' }
-    );
+  ctx.reply(
+    '🗓 <b>Добавление игры (НОВЫЙ ФОРМАТ):</b>\n' +
+    '/add [ТИП] [ДАТА_ВРЕМЯ] [МЕСТ] [НАЗВАНИЕ ### АДРЕС]\n\n' +
+    '⚠️ <b>Используй "###" чтобы разделить категорию и адрес!</b>\n\n' +
+    'Примеры:\n' +
+    '1. /add talk_toast 20.01.2026_19:00 8 Итальянская паста 🍝 ### Ресторан Mario, Center\n' +
+    '2. /add talk_toast 22.01.2026_19:00 8 Азиатский вайб 🍣 ### Sushi Master, Wola\n' +
+    '3. /add speed_dating 14.02.2026_20:00 14 Романтика ### Лаунж-зона Hotel Nyx',
+    { parse_mode: 'HTML' }
+  );
 });
 bot.command('add', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
