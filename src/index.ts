@@ -1385,49 +1385,52 @@ bot.command('reply', async (ctx) => {
 
 bot.on('message', async (ctx, next) => {
     const userId = ctx.from?.id;
-    // @ts-ignore
-    const text = ctx.message?.text;
+    const text = (ctx.message as any).text;
     const sess = ctx.session as any;
 
-    if (!userId) return next();
+    if (!userId || !text) return next();
 
-    // 1. ЛОГИКА ПРИЕМА ОТВЕТОВ S&K (только если идет раунд и пришло число)
-    if (STOCK_STATE.currentQuestionIndex !== -1 && text && !isNaN(parseInt(text))) {
-        const answer = parseInt(text);
-        if (STOCK_STATE.playerAnswers.has(userId)) {
-            return ctx.reply('⚠️ Ваш ответ уже зафиксирован Крупье. Менять его нельзя!');
+    // ВАЖНО: Если админ пишет команду (начинается с /), 
+    // прекращаем эту проверку и идем к обработчику команд (к /reply)
+    if (text.startsWith('/')) return next();
+
+    // 1. ЛОГИКА ПРИЕМА ОТВЕТОВ S&K (игроки)
+    if (STOCK_STATE.currentQuestionIndex !== -1 && !isNaN(parseInt(text))) {
+        if (!STOCK_STATE.playerAnswers.has(userId)) {
+            STOCK_STATE.playerAnswers.set(userId, parseInt(text));
+            return ctx.reply(`✅ Число ${text} принято! Ждите подсказок Крупье.🎰`);
+        } else {
+            return ctx.reply('⚠️ Ваш ответ уже зафиксирован.');
         }
-        STOCK_STATE.playerAnswers.set(userId, answer);
-        return ctx.reply(`✅ Число ${answer} принято! Делайте ставки фишками. 🎰`);
     }
 
-    // 2. ЛОГИКА РАССЫЛКИ (Только для Админа)
-    if (sess?.waitingForBroadcast && userId === ADMIN_ID && text) {
+    // 2. ЛОГИКА РАССЫЛКИ (Админ)
+    if (sess?.waitingForBroadcast && userId === ADMIN_ID) {
         const users = await db.query.users.findMany();
         let ok = 0;
-        await ctx.reply(`📢 Начинаю рассылку на ${users.length} чел...`);
+        await ctx.reply(`📢 Начинаю рассылку...`);
         for (const u of users) {
             try { 
                 await ctx.telegram.copyMessage(u.telegramId, ctx.chat!.id, ctx.message.message_id); 
                 ok++; 
-            } catch(e) { /* игнорируем ошибки заблокированных */ }
-            await new Promise(r => setTimeout(r, 50)); // Защита от спам-фильтра
+            } catch(e){}
+            await new Promise(r => setTimeout(r, 50));
         }
         sess.waitingForBroadcast = false;
         return ctx.reply(`✅ Рассылка завершена! Получили: ${ok}`);
     }
 
-    // 3. ЛОГИКА ПОДДЕРЖКИ (Когда пишет пользователь)
-    if (sess?.waitingForSupport && text) {
+    // 3. ЛОГИКА ПОДДЕРЖКИ (Пользователь)
+    if (sess?.waitingForSupport) {
         await ctx.telegram.sendMessage(ADMIN_ID, 
-            `🆘 <b>НОВОЕ СООБЩЕНИЕ В ПОДДЕРЖКУ</b>\n\n` +
+            `🆘 <b>ВОПРОС В ПОДДЕРЖКУ</b>\n\n` +
             `От: ${ctx.from.first_name} (@${ctx.from.username || 'нет_ника'})\n` +
-            `ID: <code>${ctx.from.id}</code>\n` +
+            `ID: <code>${ctx.from.id}</code>\n\n` +
             `Текст: ${text}\n\n` +
-            `Чтобы ответить, введи команду:\n<code>/reply ${ctx.from.id} ТЕКСТ_ОТВЕТА</code>`,
+            `Чтобы ответить, скопируй эту строку целиком, вставь в чат и допиши текст:\n` +
+            `<code>/reply ${ctx.from.id} </code>`,
             { parse_mode: 'HTML' }
         );
-
         ctx.reply('✅ Ваше сообщение отправлено администратору. Вам ответят в ближайшее время.');
         sess.waitingForSupport = false; 
         return;
