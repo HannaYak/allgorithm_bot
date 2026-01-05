@@ -127,14 +127,53 @@ const parseEventDesc = (desc: string | null) => {
 
 // --- 3. СОСТОЯНИЕ (STATE) ---
 
+// --- 3. СОСТОЯНИЕ (STATE) ---
 const FAST_DATES_STATE = {
-  eventId: 0, round: 0, votes: new Map<number, number[]>(),
-  participants: new Map<number, { id: number, name: string, username: string, num: number, gender: string }>(),
-  men: [] as number[], women: [] as number[], adminInputTargetId: 0 
+  eventId: 0, 
+  round: 0, 
+  votes: new Map<number, number[]>(), 
+  participants: new Map<number, { id: number, num: number, gender: string, name: string, username: string }>(),
+  men: [] as number[], 
+  women: [] as number[]
 };
 
-const STOCK_STATE = { isActive: false, currentQuestionId: 0 };
+const STOCK_STATE = {
+  isActive: false,
+  currentQuestionIndex: -1,
+  currentPhase: 0, // 0-вопрос, 1-3 подсказки, 4-ответ
+  playerAnswers: new Map<number, number>() // Сюда будут падать ответы игроков
+};
 const TALK_STATE = { currentFact: '', currentUser: '', isActive: false };
+
+const STOCK_QUESTIONS = [
+  { question: "Назовите, сколько всего славянских народов выделяют в современной этнологии?", hints: ["1. Ровно столько городов и крепостей удостоены звания «Город-герой» или «Крепость-герой».", "2. Ровно столько лунных циклов проходит за один земной год.", "3. Это число фигурирует в названии хоррора, где главного злодея зовут Джейсон Вурхиз."], answer: "13", fact: "Интересный факт: все эти 13 славянских народов образуют самую большую языковую группу в Европе." },
+  { question: "Согласно Вавилонскому представлению о мире, он состоит именно из такого количества частей. Назовите число:", hints: ["1. Через столько столиц проходила пресловутая «Ось зла».", "2. Ровно столько кружек пива жестом заказал герой Фассбендера в «Бесславных ублюдках».", "3. Столько империй участвовало в трёх разделах Речи Посполитой."], answer: "3", fact: "Для вавилонян число 3 было сакральным: небо, земля и океан." },
+  { question: "Назовите модельный номер знаменитого самолёта «Летающая крепость», участвовавшего в ядерных бомбардировках.", hints: ["1. Расстояние между Землей и Плутоном при сближении (в а.е.).", "2. Последние две цифры года, когда в США началась Великая депрессия.", "3. Столько дней содержит в себе месяц февраль в високосный год."], answer: "29", fact: "Разработка B-29 стоила 3 млрд долларов — дороже, чем создание самой атомной бомбы!" },
+  { question: "Сколько всего династий правило в Китае за всю его историю?", hints: ["1. Число, от которого отталкивалась математика древних Майя.", "2. Ровно столько молочных зубов должно быть у здорового человека.", "3. Столько тысяч лье под водой упоминается в названии произведения Жюля Верна."], answer: "20", fact: "Китай — старейшая цивилизация. Династия Чжоу правила целых 800 лет!" },
+  { question: "В 2007 году человечество обновило список: назовите количество Новых чудес света.", hints: ["1. Именно столько звёзд образуют созвездие Большой Медведицы.", "2. День в январе, когда по православному календарю родился Иисус Христос.", "3. Столько футов под килем упоминается в популярном пожелании."], answer: "7", fact: "Пирамида Хеопса — единственное старое чудо, сохранившееся до наших дней." },
+  { question: "Назовите число, которое равно количеству лунных циклов между Олимпийскими играми.", hints: ["1. Через столько лет принято отмечать Золотую свадьбу.", "2. На данный момент именно столько штатов входят в состав США.", "3. Число из псевдонима рэпера 50 Cent."], answer: "50", fact: "50 штатов, 50 лет и 50 Cent — число 50 преследует нас повсюду!" },
+  { question: "Назовите, сколько родов войск обычно насчитывается в большинстве стран (ВДВ, ВВС и т.д.)?", hints: ["1. Столько базовых чувств человека выделил ещё Аристотель.", "2. Ровно столько стран являются постоянными членами Совбеза ООН.", "3. Число в названии фильма Люка Бессона с Миллой Йовович."], answer: "5", fact: "Пятый элемент — это любовь, а родов войск всего пять." },
+  { question: "Назовите, сколько всего человек побывало за всю историю на Лунной поверхности?", hints: ["1. Столько стоячих камней поставил Моисей у подножья Синайской горы.", "2. В гавайском алфавите насчитывается такое же количество букв.", "3. Столько разгневанных мужчин в классическом фильме."], answer: "12", fact: "12 человек. Один из них, Алан Шепард, даже играл на Луне в гольф!" },
+  { question: "Сколько недель простоял город Козельск против орды Батыя в 1238 году?", hints: ["1. Столько планет в Солнечной системе по современной классификации.", "2. Количество континентов на планете Земля.", "3. Именно столько основных нот в музыкальной гамме."], answer: "7", fact: "Козельск прозвали «злым городом», он продержался 49 дней против величайшей армии." },
+  { question: "Принято считать, что именно столько существует основных сортов чая.", hints: ["1. Столько игроков на поле в команде по волейболу одновременно.", "2. Среднее количество ног у насекомых.", "3. Столько букв в английском алфавите от буквы E до K включительно."], answer: "6", fact: "Зелёный, чёрный, белый, улун, пуэр и жёлтый. Все они с одного куста!" },
+  { question: "Гарнизон Брестской крепости держал оборону невероятное количество дней. Назовите это число.", hints: ["1. Атомный номер элемента Германий (Ge).", "2. Точка замерзания воды по шкале Фаренгейта.", "3. Именно столько зубов во рту взрослого здорового человека."], answer: "32", fact: "Крепость держалась 32 дня, став символом несгибаемого мужества." },
+  { question: "Какова была длина (в метрах) легендарного дирижабля «Гинденбург»?", hints: ["1. Телефонный код государства Гвинея-Бисау.", "2. Длительность режиссерской версии фильма «Возвращение короля».", "3. Столько лет назад (от 2021) закончилось Восстание США за независимость."], answer: "245", fact: "245 метров — это как три самолета Боинг 747, поставленных друг за другом!" },
+  { question: "Какое счастливое число присвоил Кристиан Диор своей самой продаваемой помаде?", hints: ["1. Три последние цифры года «Проблемы 2000».", "2. Номер вызова экстренных служб в Европе.", "3. Трехзначный палиндром между 900 и 1000."], answer: "999", fact: "Оттенок 999 — самый узнаваемый красный цвет в мире моды." },
+  { question: "В скольких тюрьмах побывал за свою жизнь рецидивист Чарльз Бронсон?", hints: ["1. Количество лет, которыми Бог ограничил жизнь людей перед Потопом.", "2. Столько тонн крови в год перекачивает сердце человека.", "3. Число CXX в римской системе."], answer: "120", fact: "Бронсон сменил 120 тюрем. Про него сняли фильм с Томом Харди." },
+  { question: "Сколько спутников у Юпитера официально подтверждено на текущий момент?", hints: ["1. Октановое число самого дорогого бензина в Европе.", "2. Последние две цифры года выхода «Истории игрушек» (19..).", "3. Количество тезисов Мартина Лютера."], answer: "95", fact: "Юпитер — настоящий король спутников. Но ученые думают, что их там больше 600." },
+  { question: "На сколько процентов по массе земной коры наша планета состоит из кислорода?", hints: ["1. Атомный номер элемента Индий.", "2. Год до н.э., когда началась война Цезаря с Помпеем.", "3. Число «смертных мук» (си-ку) в Японии."], answer: "49", fact: "Почти половина веса земли под твоими ногами — это кислород в камнях!" },
+  { question: "Какое число стоит в названии «Клуба музыкантов», умерших на пике славы (Кобейн, Хендрикс)?", hints: ["1. Столько костей в кисти руки человека.", "2. Столько поправок внесено в Конституцию США.", "3. Столько стран входит в состав Евросоюза."], answer: "27", fact: "Клуб 27 — печальная легенда рок-н-ролла." },
+  { question: "Сколько лет провёл в заточении главный герой фильма «Олдбой»?", hints: ["1. Номер аркана «Дьявол» в картах Таро.", "2. Возраст «Пятнадцатилетнего капитана» Жюля Верна.", "3. Количество фишек в игре «Пятнашки»."], answer: "15", fact: "15 лет полной изоляции без объяснения причин." },
+  { question: "Сколько Великих Домов Вестероса выделяют в каноне «Игры Престолов»?", hints: ["1. Номер симфонии Бетховена («Ода к радости»).", "2. Наибольшее однозначное число.", "3. Столько месяцев длится беременность."], answer: "9", fact: "Семь королевств, но Девять великих домов." },
+  { question: "Сколько гномов-спутников входило в отряд Торина Дубощита в «Хоббите»?", hints: ["1. Количество полос на флаге США.", "2. Столько карт одной масти в колоде.", "3. Это число называют «Чёртовой дюжиной»."], answer: "13", fact: "13 гномов. Именно поэтому им понадобился 14-й участник — Бильбо." },
+  { question: "Назовите номер правила интернета: «Если это существует, про это есть порнография».", hints: ["1. Телефонный код Испании.", "2. Номер легендарного танка Т-...", "3. Номер Шакила О’Нила в Лейкерс."], answer: "34", fact: "Правило 34 — закон интернета, не знающий исключений." },
+  { question: "Какой номер был у главного героя (последнего участника) в «Игре в кальмара»?", hints: ["1. Простая последовательность 4, 5, 6.", "2. Разница между 860 и кодом ошибки «Not Found».", "3. Название модели Ferrari."], answer: "456", fact: "Сон Ги Хун — игрок номер 456." },
+  { question: "Сколько официальных студийных альбомов выпустили The Beatles?", hints: ["1. Атомный номер Алюминия.", "2. Количество карт одной масти.", "3. Число, которое часто пропускают в рядах самолетов."], answer: "13", fact: "13 альбомов, которые изменили мир музыки навсегда." },
+  { question: "Сколько пиратских баронов входило в Совет Братства («Пираты Карибского моря»)?", hints: ["1. Столько кругов ада у Данте.", "2. Столько Назгулов у Саурона.", "3. Столько жизней у кошки."], answer: "9", fact: "Девять баронов, девять песо и одна освобожденная Калипсо." },
+  { question: "В каком году вышел хит «Wind of Change» группы Scorpions?", hints: ["1. Год выхода «Nevermind» Nirvana.", "2. Год-палиндром.", "3. Год распада СССР."], answer: "1991", fact: "Эта песня стала неофициальным гимном окончания Холодной войны." },
+  { question: "Какую цену в долларах называют за услуги в культовом меме Gachimuchi?", hints: ["1. Максимальный результат в боулинге.", "2. Число CCC в римской системе.", "3. Количество спартанцев Леонида."], answer: "300", fact: "Three hundred bucks! Классика интернет-культуры." },
+  { question: "БЛИЦ: Какова скорость эякулята в км/ч при естественном извержении?", hints: ["1. Номер Майкла Джордана (23) + 22.", "2. Последние две цифры года основания ООН (1945).", "3. Половина от прямого угла (90/2)."], answer: "45", fact: "45 км/ч. Природа — удивительный инженер!" }
+];
 
 // --- 4. БОТ И СЦЕНЫ ---
 
@@ -143,7 +182,9 @@ const stage = new Scenes.Stage([]);
 bot.use(session());
 bot.use(stage.middleware());
 
-// --- 5. АВТОПИЛОТ ---
+// --- 5. ЕДИНЫЙ АВТОПИЛОТ ---
+// --- 5. ПОЛНЫЙ АВТОПИЛОТ (БЕЗ СОКРАЩЕНИЙ) ---
+
 setInterval(async () => {
   try {
     const now = DateTime.now(); 
@@ -154,104 +195,150 @@ setInterval(async () => {
       if (!start.isValid) continue;
 
       const diffHours = start.diff(now, 'hours').hours;
+      const minutesSinceStart = now.diff(start, 'minutes').minutes;
 
-      // 1. ЗА 3 ДНЯ (72 часа)
+      // 1. НАПОМИНАНИЕ ЗА 3 ДНЯ (72 часа)
       if (diffHours >= 71.5 && diffHours <= 72.5) {
         const actionId = `remind_3d_${event.id}`;
         if (!PROCESSED_AUTO_ACTIONS.has(actionId)) {
           PROCESSED_AUTO_ACTIONS.add(actionId);
-          await broadcastToEvent(event.id, 
-            `📅 <b>Скоро игра!</b>\n\nНапоминаем, что через 3 дня (${start.toFormat('dd.MM')}) состоится игра "${event.type}".\n\nГотовьтесь к классному вечеру! 🥂`
-          );
+          await broadcastToEvent(event.id, `📅 <b>Скоро игра!</b>\n\nНапоминаем, что через 3 дня состоится игра "${event.type}". Готовьтесь!🥂`);
         }
       }
 
-      // 2. ЗА 24 ЧАСА
+      // 2. НАПОМИНАНИЕ ЗА 24 ЧАСА
       if (diffHours >= 23.5 && diffHours <= 24.5) {
         const actionId = `remind_24h_${event.id}`;
         if (!PROCESSED_AUTO_ACTIONS.has(actionId)) {
           PROCESSED_AUTO_ACTIONS.add(actionId);
-          await broadcastToEvent(event.id, 
-            `🔔 <b>Уже завтра!</b>\n\nЖдем вас в ${start.toFormat('HH:mm')} на игре.\n📍 Адрес мы пришлем за 3 часа до начала.`
-          );
+          await broadcastToEvent(event.id, `🔔 <b>Уже завтра!</b>\n\nЖдем вас в ${start.toFormat('HH:mm')}.\n📍 Адрес мы пришлем за 3 часа до начала.`);
         }
       }
 
-      // 3. РАСКРЫТИЕ МЕСТА (За 3 ЧАСА)
+      // 3. ЗА 3 ЧАСА: РАСКРЫТИЕ МЕСТА + НОМЕРА ДЛЯ FD
       if (diffHours >= 2.8 && diffHours <= 3.2) {
         const actionId = `reveal_place_${event.id}`;
         if (!PROCESSED_AUTO_ACTIONS.has(actionId)) {
           PROCESSED_AUTO_ACTIONS.add(actionId);
           const { address } = parseEventDesc(event.description);
-          await broadcastToEvent(event.id, 
-            `📍 <b>Место встречи открыто!</b>\n\nДо игры осталось 3 часа.\nМы встречаемся здесь:\n<b>${address}</b>\n\nЖдем вас! Пожалуйста, не опаздывайте.`
-          );
+          await broadcastToEvent(event.id, `📍 <b>Место встречи открыто!</b>\n\nВстречаемся здесь через 3 часа:\n<b>${address}</b>`);
+
+          // Если это быстрые свидания — раздаем номера (Ж-нечет, М-чет)
+          if (event.type === 'speed_dating') {
+            const bookings = await db.query.bookings.findMany({ where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true)) });
+            const m: any[] = [], w: any[] = [];
+            for (const b of bookings) {
+              const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+              if (u?.gender === 'Мужчина') m.push(u); else if (u?.gender === 'Женщина') w.push(u);
+            }
+            const count = Math.min(m.length, w.length);
+            for (let i = 0; i < count; i++) {
+              const wNum = (i * 2) + 1; const mNum = (i * 2) + 2;
+              FAST_DATES_STATE.participants.set(w[i].telegramId, { id: w[i].id, num: wNum, gender: 'Женщина', name: w[i].name, username: w[i].username || '' });
+              FAST_DATES_STATE.participants.set(m[i].telegramId, { id: m[i].id, num: mNum, gender: 'Мужчина', name: m[i].name, username: m[i].username || '' });
+              FAST_DATES_STATE.men.push(m[i].telegramId); FAST_DATES_STATE.women.push(w[i].telegramId);
+              bot.telegram.sendMessage(w[i].telegramId, `💘 <b>Ваш игровой номер: ${wNum}</b>`).catch(()=>{});
+              bot.telegram.sendMessage(m[i].telegramId, `💘 <b>Ваш игровой номер: ${mNum}</b>`).catch(()=>{});
+            }
+          }
         }
       }
 
-      // 4. АВТО-ВИКТОРИНА (через 105 мин после старта)
-      const minutesSinceStart = now.diff(start, 'minutes').minutes;
+      // 4. FD: ПЕРЕСАДКИ КАЖДЫЕ 10 МИНУТ (во время игры)
+      if (event.type === 'speed_dating' && minutesSinceStart > 0 && minutesSinceStart < 120) {
+        const round = Math.floor(minutesSinceStart / 10) + 1;
+        const actionId = `fd_round_msg_${event.id}_${round}`;
+        if (!PROCESSED_AUTO_ACTIONS.has(actionId)) {
+          PROCESSED_AUTO_ACTIONS.add(actionId);
+          const pairs = FAST_DATES_STATE.men.length;
+          if (pairs > 0) {
+            let msg = `🔄 <b>РАУНД №${round}</b>\n\n`;
+            for (let i = 0; i < pairs; i++) {
+                const wNum = (i * 2) + 1;
+                const mIdx = (i + (round - 1)) % pairs;
+                const mNum = (mIdx * 2) + 2;
+                msg += `📍 Стол №${i + 1}: №${wNum} ➕ №${mNum}\n`;
+            }
+            broadcastToEvent(event.id, msg + `\n⏳ У вас 10 минут на общение!`);
+          }
+        }
+      }
+
+      // 5. Talk & Toast: АВТО-ВИКТОРИНА ПО ФАКТАМ (через 105 мин)
       if (event.type === 'talk_toast' && minutesSinceStart >= 105 && minutesSinceStart < 115) {
         const actionId = `quiz_${event.id}`;
         if (!PROCESSED_AUTO_ACTIONS.has(actionId)) {
           PROCESSED_AUTO_ACTIONS.add(actionId);
-          runAutoQuiz(event.id); 
+          await runAutoQuiz(event.id); 
         }
       }
 
-      // 5. АВТО-ЗАВЕРШЕНИЕ (через 130 мин после старта)
-      if (minutesSinceStart >= 130) {
+      // 6. АВТО-ЗАВЕРШЕНИЕ И БАЛЛЫ (через 135 мин)
+      if (minutesSinceStart >= 135) {
         const actionId = `close_${event.id}`;
         if (!PROCESSED_AUTO_ACTIONS.has(actionId)) {
           PROCESSED_AUTO_ACTIONS.add(actionId);
-          autoCloseEvent(event.id); 
+          await autoCloseEvent(event.id); 
         }
       }
     }
-  } catch (e) { console.error("Autopilot Error:", e); }
-}, 60000); 
+  } catch (e) { console.error("Autopilot Interval Error:", e); }
+}, 60000);
 
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+// --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ АВТОПИЛОТА ---
 
-async function broadcastToEvent(eventId: number, text: string) {
-  const bookings = await db.query.bookings.findMany({ where: (b, {and, eq}) => and(eq(b.eventId, eventId), eq(b.paid, true)) });
-  for (const b of bookings) {
-    const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
-    if (u) bot.telegram.sendMessage(u.telegramId, text, { parse_mode: 'HTML' }).catch(()=>{});
-  }
-}
-
+/**
+ * Викторина для Talk & Toast: берет реальные данные участников
+ */
 async function runAutoQuiz(eventId: number) {
-  const bookings = await db.query.bookings.findMany({ where: (b, {and, eq}) => and(eq(b.eventId, eventId), eq(b.paid, true)) });
-  if (bookings.length < 2) return; 
-  await broadcastToEvent(eventId, `🔔 <b>Викторина для всех!</b> Угадываем факты друг о друге.`);
-  await delay(5000);
+  const bookings = await db.query.bookings.findMany({ 
+    where: and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true)) 
+  });
+
+  if (bookings.length < 2) return;
+
+  await broadcastToEvent(eventId, `🔔 <b>ВНИМАНИЕ! Финальная викторина!</b>\n\nСейчас я буду присылать факты, которые вы писали при регистрации. Угадайте, кто за столом этот человек!`);
+  await new Promise(r => setTimeout(r, 7000));
+
+  // Берем 3 случайных участников
   const shuffled = bookings.sort(() => 0.5 - Math.random()).slice(0, 3);
-  for (const booking of shuffled) {
-    const user = await db.query.users.findFirst({ where: eq(schema.users.id, booking.userId) });
-    if (!user) continue;
-    const fact = (user.fact && user.fact.length > 2) ? user.fact : user.strangeStory;
-    if (!fact) continue;
-    await broadcastToEvent(eventId, `❓ <b>Как думаете, чей это факт?</b>\n"${fact}"`);
-    await delay(30000); 
-    await broadcastToEvent(eventId, `🔓 <b>Это:</b> ${user.name}!`);
-    await delay(5000);
+
+  for (const b of shuffled) {
+    const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+    if (!u) continue;
+
+    // Выбираем факт (если нет скрытого факта, берем странную историю)
+    const factToGuess = u.fact || u.strangeStory;
+    if (!factToGuess || factToGuess.length < 3) continue;
+
+    await broadcastToEvent(eventId, `❓ <b>ЧЕЙ ЭТО ФАКТ?</b>\n\n«${factToGuess}»\n\n<i>У вас 30 секунд на обсуждение...</i>`);
+    await new Promise(r => setTimeout(r, 30000));
+
+    await broadcastToEvent(eventId, `🔓 <b>ПРАВИЛЬНЫЙ ОТВЕТ:</b>\nЭто — <b>${u.name}</b>! ✨`);
+    await new Promise(r => setTimeout(r, 7000));
   }
-  await broadcastToEvent(eventId, `🏁 Игра окончена! Спасибо всем, обменяйтесь контактами если того хотите, не бойтесь спрашивать, мы тут для знакомств!`);
+
+  await broadcastToEvent(eventId, `🏁 <b>Викторина окончена!</b>\n\nНадеемся, вы узнали друг друга лучше. Не стесняйтесь обмениваться контактами!🥂`);
 }
 
+/**
+ * Закрывает игру и начисляет баллы лояльности
+ */
 async function autoCloseEvent(eventId: number) {
   await db.update(schema.events).set({ isActive: false }).where(eq(schema.events.id, eventId));
-  const bookings = await db.query.bookings.findMany({ where: (b, {and, eq}) => and(eq(b.eventId, eventId), eq(b.paid, true)) });
+  
+  const bookings = await db.query.bookings.findMany({ 
+    where: and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true)) 
+  });
+
   for (const b of bookings) {
     const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
     if (u) {
-        await db.update(schema.users).set({ gamesPlayed: (u.gamesPlayed||0)+1 }).where(eq(schema.users.id, u.id));
-        bot.telegram.sendMessage(u.telegramId, '🎁 Игра закрыта, мы добавили Вам +1 балл лояльности! (каждая 5-ая игра бесплатно)').catch(()=>{});
+      await db.update(schema.users).set({ gamesPlayed: (u.gamesPlayed || 0) + 1 }).where(eq(schema.users.id, u.id));
+      bot.telegram.sendMessage(u.telegramId, '🎁 <b>Игра завершена!</b>\n\nМы добавили вам +1 балл лояльности. Каждая 5-я игра в нашем клубе — бесплатно! До новых встреч! ✨', { parse_mode: 'HTML' }).catch(() => {});
     }
   }
 }
-
 // --- 6. РЕГИСТРАЦИЯ И МЕНЮ ---
 
 const registerScene = new Scenes.WizardScene('REGISTER_SCENE',
@@ -320,7 +407,21 @@ const registerScene = new Scenes.WizardScene('REGISTER_SCENE',
 );
 stage.register(registerScene);
 
-function getMainKeyboard() { return Markup.keyboard([['🎮 Игры', '👤 Личный кабинет'], ['🆘 Помощь', '📜 Правила']]).resize(); }
+function getMainKeyboard(isAtEvent = false) {
+    const buttons = [
+        ['🎮 Игры', '👤 Личный кабинет'],
+        ['🆘 Помощь', '📜 Правила']
+    ];
+    if (isAtEvent) {
+        buttons.unshift(['🎲 Новая тема (для Talk & Toast)']);
+    }
+    return Markup.keyboard(buttons).resize();
+}
+
+bot.hears('🎲 Новая тема (для Talk & Toast)', async (ctx) => {
+    const topic = CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)];
+    await ctx.reply(`🎲 <b>Вопрос для вашего стола:</b>\n\n"${topic}"`, { parse_mode: 'HTML' });
+});
 
 bot.start(async (ctx) => {
   const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
@@ -545,6 +646,20 @@ async function bookGame(ctx: any, type: string) {
     ...Markup.inlineKeyboard(buttons)
   });
 }
+
+
+// Команда для вызова новой темы участниками
+bot.command('topic', async (ctx) => {
+    const topic = CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)];
+    await ctx.reply(`🎲 <b>Новая тема для вашего стола:</b>\n\n"${topic}"`, { parse_mode: 'HTML' });
+});
+
+// Обработчик кнопки, если они нажмут её в меню
+bot.action('talk_get_topic', async (ctx) => {
+    const topic = CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)];
+    await ctx.reply(`🎲 <b>Тема:</b>\n"${topic}"`, { parse_mode: 'HTML' });
+    await ctx.answerCbQuery();
+});
 
 // Обработчик выбора категории (вывод дат)
 bot.action(/cv_(.+)_(.+)/, async (ctx) => {
@@ -1009,19 +1124,105 @@ bot.action(/close_confirm_(\d+)/, async (ctx) => {
 });
 
 // 3. ПУЛЬТЫ УПРАВЛЕНИЯ (FD, STOCK, TALK)
-bot.action('admin_fd_panel', async (ctx) => {
+// ПУЛЬТ FD: Главное меню
+bot.action('admin_fd_panel', ctx => {
+    ctx.editMessageText(`💘 <b>Пульт Speed Dating</b>\nУчастников: ${FAST_DATES_STATE.participants.size}`, {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([
+            [Markup.button.callback('✍️ Ввести анкеты с бумаги', 'fd_input_start')],
+            [Markup.button.callback('🏁 Рассчитать мэтчи', 'fd_calc_matches')],
+            [Markup.button.callback('🔙 Назад', 'panel')]
+        ])
+    });
+});
+
+// Список анкет для ввода
+bot.action('fd_input_start', ctx => {
+    const btns = Array.from(FAST_DATES_STATE.participants.values())
+        .sort((a,b) => a.num - b.num)
+        .map(p => [Markup.button.callback(`Анкета №${p.num} (${p.gender[0]})`, `fd_edit_${p.id}`)]);
+    
+    ctx.editMessageText('Чью анкету сейчас вводим?', Markup.inlineKeyboard([...btns, [Markup.button.callback('🔙 Назад', 'admin_fd_panel')]]));
+});
+
+// Экран выбора симпатий для конкретной анкеты
+bot.action(/fd_edit_(\d+)/, async (ctx) => {
+    const uid = parseInt(ctx.match[1]);
+    const u = Array.from(FAST_DATES_STATE.participants.values()).find(p => p.id === uid);
+    if (!u) return ctx.answerCbQuery('Участник не найден');
+
+    // Показываем только противоположный пол
+    const targets = Array.from(FAST_DATES_STATE.participants.values())
+        .filter(p => p.gender !== u.gender)
+        .sort((a,b) => a.num - b.num);
+
+    const utid = Array.from(FAST_DATES_STATE.participants.entries()).find(([t,p]) => p.id === uid)?.[0] || 0;
+    const votes = FAST_DATES_STATE.votes.get(utid) || [];
+
+    const btns = targets.map(t => Markup.button.callback(`${votes.includes(t.id) ? '✅' : ''} №${t.num}`, `fd_tog_${uid}_${t.id}`));
+    
+    const rows = [];
+    while(btns.length) rows.push(btns.splice(0, 4));
+
+    ctx.editMessageText(`📝 <b>Анкета №${u.num} (${u.gender})</b>\nКого отметил этот участник?`, {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([...rows, [Markup.button.callback('💾 Сохранить и назад', 'fd_input_start')]])
+    });
+});
+
+// Переключатель «лайка»
+bot.action(/fd_tog_(\d+)_(\d+)/, async (ctx) => {
+    const voterId = parseInt(ctx.match[1]);
+    const targetId = parseInt(ctx.match[2]);
+    const voterTid = Array.from(FAST_DATES_STATE.participants.entries()).find(([t,p]) => p.id === voterId)?.[0] || 0;
+
+    if (!FAST_DATES_STATE.votes.has(voterTid)) FAST_DATES_STATE.votes.set(voterTid, []);
+    let votes = FAST_DATES_STATE.votes.get(voterTid)!;
+
+    if (votes.includes(targetId)) {
+        votes = votes.filter(id => id !== targetId);
+    } else {
+        votes.push(targetId);
+    }
+    FAST_DATES_STATE.votes.set(voterTid, votes);
+
+    // ВАЖНО: Мы не вызываем handleAction, а просто заново отрисовываем меню анкеты
+    const u = Array.from(FAST_DATES_STATE.participants.values()).find(p => p.id === voterId);
+    const targets = Array.from(FAST_DATES_STATE.participants.values()).filter(p => p.gender !== u!.gender).sort((a,b)=>a.num-b.num);
+    const btns = targets.map(t => Markup.button.callback(`${votes.includes(t.id)?'✅':''} №${t.num}`, `fd_tog_${voterId}_${t.id}`));
+    const rows = []; while(btns.length) rows.push(btns.splice(0,4));
+    
+    await ctx.editMessageText(`Анкета №${u!.num}`, Markup.inlineKeyboard([...rows, [Markup.button.callback('💾 Сохранить и Назад', 'fd_input_start')]]));
+    return ctx.answerCbQuery();
+});
+
+// Финальный расчет мэтчей
+bot.action('fd_calc_matches', async (ctx) => {
     if (ctx.from?.id !== ADMIN_ID) return;
-    const event = await db.query.events.findFirst({ where: (e, {and, eq}) => and(eq(e.type, 'speed_dating'), eq(e.isActive, true)) });
-    if (!event) return ctx.reply('Нет активной игры Speed Dating.');
-    ctx.editMessageText(`💘 <b>Speed Dating:</b> ${event.dateString}\nУчастников: ${FAST_DATES_STATE.participants.size}`, { 
-      parse_mode: 'HTML',
-      ...Markup.inlineKeyboard([
-        [Markup.button.callback('1️⃣ Загрузить участников', `fd_load_${event.id}`)],
-        [Markup.button.callback('2️⃣ Следующий раунд 🔄', 'fd_next_round')],
-        [Markup.button.callback('3️⃣ Ввод карточек ✍️', 'fd_input_menu')],
-        [Markup.button.callback('4️⃣ Расчет мэтчей 🏁', 'fd_calc_matches')],
-        [Markup.button.callback('🔙 Назад', 'panel')]
-    ])});
+    let matchCount = 0;
+
+    for (const [tid, p] of FAST_DATES_STATE.participants) {
+        const myLikes = FAST_DATES_STATE.votes.get(tid) || [];
+        
+        for (const targetId of myLikes) {
+            // Ищем Telegram ID того, кого мы лайкнули
+            const targetEntry = Array.from(FAST_DATES_STATE.participants.entries()).find(([t, tp]) => tp.id === targetId);
+            if (!targetEntry) continue;
+            
+            const [targetTid, targetInfo] = targetEntry;
+            const targetLikes = FAST_DATES_STATE.votes.get(targetTid) || [];
+
+            // Проверяем взаимность
+            if (targetLikes.includes(p.id)) {
+                matchCount++;
+                // Шлем контакты обоим
+                const text = `💖 <b>У вас МЭТЧ!</b>\n\nВы совпали с участником №${targetInfo.num} (${targetInfo.name}).\nСкорее напишите ему/ей: @${targetInfo.username}`;
+                bot.telegram.sendMessage(tid, text, { parse_mode: 'HTML' }).catch(()=>{});
+            }
+        }
+    }
+
+    ctx.reply(`🏁 <b>Расчет завершен!</b>\nНайдено совпадений: ${matchCount / 2}\nВсе участники получили уведомления.`, { parse_mode: 'HTML' });
 });
 
 bot.action('admin_talk_panel', async (ctx) => {
@@ -1035,13 +1236,88 @@ bot.action('admin_talk_panel', async (ctx) => {
     });
 });
 
-bot.action('admin_stock_list', (ctx) => {
-    if (ctx.from?.id !== ADMIN_ID) return;
-    const btns = STOCK_QUESTIONS.map((_, i) => [Markup.button.callback(`Вопрос Q${i+1}`, `stock_manage_${i}`)]);
-    const rows = [];
-    for (let i = 0; i < btns.length; i += 3) rows.push(btns.slice(i, i + 3).flat());
-    rows.push([Markup.button.callback('🔙 Назад', 'panel')]);
-    ctx.editMessageText('🧠 <b>Выберите вопрос для игры:</b>', { parse_mode: 'HTML', ...Markup.inlineKeyboard(rows) });
+bot.action(/stock_send_phase_(\d+)/, async (ctx) => {
+    const phase = parseInt(ctx.match[1]);
+    const q = STOCK_QUESTIONS[STOCK_STATE.currentQuestionIndex];
+    if (!q) return ctx.answerCbQuery('Выберите вопрос!');
+
+    let msg = '';
+    if (phase === 0) msg = `❓ <b>ВОПРОС:</b>\n${q.question}\n\n<i>Пишите число в бот и делайте ставки!</i>`;
+    else if (phase >= 1 && phase <= 3) msg = `💡 <b>ПОДСКАЗКА №${phase}:</b>\n${q.hints[phase-1]}`;
+    else msg = `🏁 <b>ОТВЕТ: ${q.answer}</b>\n\n${q.fact}`; // ТВОЙ ФАКТ
+
+    const activeEvent = await db.query.events.findFirst({ where: (e, {and, eq}) => and(eq(e.type, 'stock_know'), eq(e.isActive, true)) });
+    if (activeEvent) await broadcastToEvent(activeEvent.id, msg);
+
+    const buttons = [];
+    if (phase < 4) {
+        const nextLabel = phase === 3 ? '✅ ОТВЕТ' : `💡 Подсказка ${phase+1}`;
+        buttons.push([Markup.button.callback(nextLabel, `stock_send_phase_${phase + 1}`)]);
+    }
+    buttons.push([Markup.button.callback('📊 Ответы игроков', 'admin_stock_show_answers')]);
+    buttons.push([Markup.button.callback('🔙 К списку', 'admin_stock_list')]);
+
+    ctx.editMessageText(`Этап: ${phase === 4 ? 'Завершено' : 'Фаза ' + phase}\nПринято ответов: ${STOCK_STATE.playerAnswers.size}`, Markup.inlineKeyboard(buttons));
+});
+
+bot.action('admin_stock_show_answers', async (ctx) => {
+    if (STOCK_STATE.playerAnswers.size === 0) return ctx.answerCbQuery('Ответов пока нет!');
+    
+    let msg = '📋 <b>Кто победил в этом раунде?</b>\n<i>Нажми на кнопку под списком, чтобы объявить победителя:</i>\n\n';
+    const buttons = [];
+
+    for (const [tid, val] of STOCK_STATE.playerAnswers) {
+        const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, tid) });
+        const name = user?.name || tid;
+        msg += `👤 ${name}: <b>${val}</b>\n`;
+        // Добавляем кнопку для каждого игрока
+        buttons.push([Markup.button.callback(`🏆 Победил(а) ${name}`, `sk_winner_${tid}`)]);
+    }
+    
+    buttons.push([Markup.button.callback('🔙 Назад', 'sk_phase_4')]);
+
+    ctx.reply(msg, { 
+        parse_mode: 'HTML', 
+        ...Markup.inlineKeyboard(buttons) 
+    });
+    ctx.answerCbQuery();
+});
+
+bot.action(/sk_winner_(\d+)/, async (ctx) => {
+    const winnerTid = parseInt(ctx.match[1]);
+    const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, winnerTid) });
+    
+    if (!user) return ctx.answerCbQuery('Участник не найден!');
+
+    const victoryMsg = `🎊 <b>ЕСТЬ ПОБЕДИТЕЛЬ!</b> 🎊\n\nВ этом раунде банк забирает: <b>${user.name}</b>! \n\n💰 Крупье, передайте фишки счастливчику!`;
+
+    // Рассылаем всем участникам Stock & Know
+    const event = await db.query.events.findFirst({ where: and(eq(schema.events.type, 'stock_know'), eq(schema.events.isActive, true)) });
+    if (event) {
+        await broadcastToEvent(event.id, victoryMsg);
+    }
+
+    ctx.reply(`✅ Победитель ${user.name} объявлен!`);
+    ctx.answerCbQuery();
+});
+
+// ОБРАБОТЧИК ВЫБОРА КОНКРЕТНОГО ВОПРОСА
+bot.action(/sk_pick_(\d+)/, async (ctx) => {
+    const qIdx = parseInt(ctx.match[1]);
+    
+    // Подготовка данных для раунда
+    STOCK_STATE.currentQuestionIndex = qIdx;
+    STOCK_STATE.currentPhase = 0; // Начинаем с вопроса
+    STOCK_STATE.playerAnswers.clear(); // Стираем ответы старого раунда
+    STOCK_STATE.isActive = true; // Чтобы бот знал, что сейчас идет игра
+
+    ctx.editMessageText(`✅ <b>Вопрос №${qIdx + 1} выбран!</b>\n\nГотовы отправить его игрокам?`, {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([
+            [Markup.button.callback('🚀 ОТПРАВИТЬ ВОПРОС', 'stock_send_phase_0')],
+            [Markup.button.callback('🔙 Назад к списку', 'admin_stock_list')]
+        ])
+    });
 });
 
 // 4. ДОБАВЛЕНИЕ И РАССЫЛКА
@@ -1076,64 +1352,95 @@ bot.command('add', async (ctx) => {
     ctx.reply(`✅ Игра на ${dateString} успешно добавлена в базу!`);
 });
 
-bot.command('reply', (ctx) => {
+// КОМАНДА ДЛЯ ОТВЕТА АДМИНА
+bot.command('reply', async (ctx) => {
+    // Проверяем, что пишет именно админ
     if (ctx.from.id !== ADMIN_ID) return;
-    const [_, uid, ...txt] = ctx.message.text.split(' ');
-    bot.telegram.sendMessage(uid, `👮‍♂️ <b>Ответ от администратора:</b>\n\n${txt.join(' ')}`, { parse_mode: 'HTML' });
+
+    // Разбираем сообщение: /reply ID ТЕКСТ
+    const parts = ctx.message.text.split(' ');
+    if (parts.length < 3) {
+        return ctx.reply('❌ Ошибка! Формат: /reply [ID_пользователя] [текст]');
+    }
+
+    const targetUserId = parts[1]; // ID пользователя
+    const replyText = parts.slice(2).join(' '); // Текст ответа
+
+    try {
+        await bot.telegram.sendMessage(targetUserId, 
+            `👮‍♂️ <b>Ответ от администратора:</b>\n\n${replyText}`, 
+            { parse_mode: 'HTML' }
+        );
+        ctx.reply(`✅ Ответ успешно отправлен пользователю ${targetUserId}`);
+    } catch (e) {
+        console.error(e);
+        ctx.reply('❌ Не удалось отправить сообщение. Возможно, пользователь заблокировал бота.');
+    }
 });
 
 
 // --- 11. ГЛАВНЫЙ ОБРАБОТЧИК СООБЩЕНИЙ ---
 
+// --- 11. ГЛАВНЫЙ ОБРАБОТЧИК СООБЩЕНИЙ ---
+
 bot.on('message', async (ctx, next) => {
     const userId = ctx.from?.id;
-
-    // 1. ЛОГИКА РАССЫЛКИ
     // @ts-ignore
-    if (ctx.session?.waitingForBroadcast && userId === ADMIN_ID) {
-        console.log("🚀 Админ запустил рассылку...");
-        
-        const users = await db.query.users.findMany();
-        let successCount = 0;
-        let errorCount = 0;
+    const text = ctx.message?.text;
+    const sess = ctx.session as any;
 
-        await ctx.reply(`📢 Начинаю рассылку на ${users.length} пользователей...`);
+    if (!userId) return next();
 
-        for (const u of users) {
-            try {
-                // copyMessage позволяет пересылать текст, фото, видео и кружочки
-                await ctx.telegram.copyMessage(u.telegramId, ctx.chat!.id, ctx.message.message_id);
-                successCount++;
-            } catch (err) {
-                errorCount++;
-                console.error(`Ошибка отправки пользователю ${u.telegramId}:`, err);
-            }
-            // Важная пауза 50мс, чтобы Telegram не забанил бота за спам
-            await new Promise(r => setTimeout(r, 50));
+    // 1. ЛОГИКА ПРИЕМА ОТВЕТОВ S&K (только если идет раунд и пришло число)
+    if (STOCK_STATE.currentQuestionIndex !== -1 && text && !isNaN(parseInt(text))) {
+        const answer = parseInt(text);
+        if (STOCK_STATE.playerAnswers.has(userId)) {
+            return ctx.reply('⚠️ Ваш ответ уже зафиксирован Крупье. Менять его нельзя!');
         }
-
-        // @ts-ignore
-        ctx.session.waitingForBroadcast = false;
-        return ctx.reply(`✅ Рассылка завершена!\n\nУспешно: ${successCount}\nОшибок: ${errorCount}`);
+        STOCK_STATE.playerAnswers.set(userId, answer);
+        return ctx.reply(`✅ Число ${answer} принято! Делайте ставки фишками. 🎰`);
     }
 
-    // 2. ЛОГИКА ПОДДЕРЖКИ (ОТВЕТ АДМИНУ)
-    // @ts-ignore
-    if (ctx.session?.waitingForSupport && ctx.message.text) {
+    // 2. ЛОГИКА РАССЫЛКИ (Только для Админа)
+    if (sess?.waitingForBroadcast && userId === ADMIN_ID && text) {
+        const users = await db.query.users.findMany();
+        let ok = 0;
+        await ctx.reply(`📢 Начинаю рассылку на ${users.length} чел...`);
+        for (const u of users) {
+            try { 
+                await ctx.telegram.copyMessage(u.telegramId, ctx.chat!.id, ctx.message.message_id); 
+                ok++; 
+            } catch(e) { /* игнорируем ошибки заблокированных */ }
+            await new Promise(r => setTimeout(r, 50)); // Защита от спам-фильтра
+        }
+        sess.waitingForBroadcast = false;
+        return ctx.reply(`✅ Рассылка завершена! Получили: ${ok}`);
+    }
+
+    // 3. ЛОГИКА ПОДДЕРЖКИ (Когда пишет пользователь)
+    if (sess?.waitingForSupport && text) {
         await ctx.telegram.sendMessage(ADMIN_ID, 
             `🆘 <b>НОВОЕ СООБЩЕНИЕ В ПОДДЕРЖКУ</b>\n\n` +
-            `От: ${ctx.from.first_name} (ID: <code>${ctx.from.id}</code>)\n` +
-            `Текст: ${ctx.message.text}\n\n` +
-            `Чтобы ответить, используй: <code>/reply ${ctx.from.id} текст_ответа</code>`,
+            `От: ${ctx.from.first_name} (@${ctx.from.username || 'нет_ника'})\n` +
+            `ID: <code>${ctx.from.id}</code>\n` +
+            `Текст: ${text}\n\n` +
+            `Чтобы ответить, введи команду:\n<code>/reply ${ctx.from.id} ТЕКСТ_ОТВЕТА</code>`,
             { parse_mode: 'HTML' }
         );
+
         ctx.reply('✅ Ваше сообщение отправлено администратору. Вам ответят в ближайшее время.');
-        // @ts-ignore
-        ctx.session.waitingForSupport = false;
+        sess.waitingForSupport = false; 
         return;
     }
 
     return next();
+});
+
+// --- ДОПОЛНИТЕЛЬНАЯ КОМАНДА ДЛЯ ТЕМ TALK & TOAST ---
+// Позволяет участникам за столом самим вызывать темы
+bot.command('topic', async (ctx) => {
+    const topic = CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)];
+    await ctx.reply(`🎲 <b>Тема для вашего стола:</b>\n\n"${topic}"`, { parse_mode: 'HTML' });
 });
 // --- 12. ЗАПУСК ---
 // --- 12. ЗАПУСК ---
