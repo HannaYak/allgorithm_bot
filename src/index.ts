@@ -1082,6 +1082,59 @@ bot.command('reply', (ctx) => {
     bot.telegram.sendMessage(uid, `👮‍♂️ <b>Ответ от администратора:</b>\n\n${txt.join(' ')}`, { parse_mode: 'HTML' });
 });
 
+
+// --- 11. ГЛАВНЫЙ ОБРАБОТЧИК СООБЩЕНИЙ ---
+
+bot.on('message', async (ctx, next) => {
+    const userId = ctx.from?.id;
+
+    // 1. ЛОГИКА РАССЫЛКИ
+    // @ts-ignore
+    if (ctx.session?.waitingForBroadcast && userId === ADMIN_ID) {
+        console.log("🚀 Админ запустил рассылку...");
+        
+        const users = await db.query.users.findMany();
+        let successCount = 0;
+        let errorCount = 0;
+
+        await ctx.reply(`📢 Начинаю рассылку на ${users.length} пользователей...`);
+
+        for (const u of users) {
+            try {
+                // copyMessage позволяет пересылать текст, фото, видео и кружочки
+                await ctx.telegram.copyMessage(u.telegramId, ctx.chat!.id, ctx.message.message_id);
+                successCount++;
+            } catch (err) {
+                errorCount++;
+                console.error(`Ошибка отправки пользователю ${u.telegramId}:`, err);
+            }
+            // Важная пауза 50мс, чтобы Telegram не забанил бота за спам
+            await new Promise(r => setTimeout(r, 50));
+        }
+
+        // @ts-ignore
+        ctx.session.waitingForBroadcast = false;
+        return ctx.reply(`✅ Рассылка завершена!\n\nУспешно: ${successCount}\nОшибок: ${errorCount}`);
+    }
+
+    // 2. ЛОГИКА ПОДДЕРЖКИ (ОТВЕТ АДМИНУ)
+    // @ts-ignore
+    if (ctx.session?.waitingForSupport && ctx.message.text) {
+        await ctx.telegram.sendMessage(ADMIN_ID, 
+            `🆘 <b>НОВОЕ СООБЩЕНИЕ В ПОДДЕРЖКУ</b>\n\n` +
+            `От: ${ctx.from.first_name} (ID: <code>${ctx.from.id}</code>)\n` +
+            `Текст: ${ctx.message.text}\n\n` +
+            `Чтобы ответить, используй: <code>/reply ${ctx.from.id} текст_ответа</code>`,
+            { parse_mode: 'HTML' }
+        );
+        ctx.reply('✅ Ваше сообщение отправлено администратору. Вам ответят в ближайшее время.');
+        // @ts-ignore
+        ctx.session.waitingForSupport = false;
+        return;
+    }
+
+    return next();
+});
 // --- 12. ЗАПУСК ---
 // --- 12. ЗАПУСК ---
 const PORT = Number(process.env.PORT) || 3000;
