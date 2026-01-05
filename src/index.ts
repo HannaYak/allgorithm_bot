@@ -521,7 +521,7 @@ async function bookGame(ctx: any, type: string) {
     return ctx.reply(text, {
       parse_mode: 'HTML',
       ...Markup.inlineKeyboard([
-        [Markup.button.url('📸 Инстаграм', 'hhttps://www.instagram.com/algorythm.pl/')],
+        [Markup.button.url('📸 Инстаграм', 'https://www.instagram.com/algorythm.pl/')],
         [Markup.button.callback('🔙 Назад к играм', 'back_to_games')]
       ])
     });
