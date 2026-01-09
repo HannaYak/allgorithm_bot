@@ -456,7 +456,7 @@ bot.start(async (ctx) => {
 
       // 1. ОТПРАВЛЯЕМ ТВОЙ КРУЖОЧЕК
       try {
-          await ctx.replyWithVideoNote('DQACAgIAAxkBAAEJsjhpYVoE6Ekf4ZjVsquwiw_Vl2VwQQADlQACzm8ISyuHvmxD0cwxOAQ');
+          await ctx.replyWithVideoNote('DQACAgIAAxkBAAIXmmlhXKgfGvDcFAIUjjeYhHTOYcQoAAOVAALObwhL-Vc6lUJYTQk4BA');
       } catch (e) {
           console.error('Ошибка отправки видео:', e);
       }
@@ -1549,17 +1549,6 @@ bot.on('message', async (ctx, next) => {
 });
 
 
-bot.on('video_note', (ctx) => {
-  // Когда вы отправите кружок боту, он выведет новый ID в консоль
-  console.log('Новый ID кружка:', ctx.message.video_note.file_id);
-  ctx.reply('ID получен и выведен в консоль!');
-});
-
-bot.on('video', (ctx) => {
-  // Если это обычное видео
-  console.log('Новый ID видео:', ctx.message.video.file_id);
-  ctx.reply('ID видео получен!');
-});
 // --- ДОПОЛНИТЕЛЬНАЯ КОМАНДА ДЛЯ ТЕМ TALK & TOAST ---
 // Позволяет участникам за столом самим вызывать темы
 bot.command('topic', async (ctx) => {
