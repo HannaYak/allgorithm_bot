@@ -706,10 +706,12 @@ bot.action('book_dating', async (ctx) => bookGame(ctx, 'speed_dating'));
 
 // Функция отображения категорий (Группировка)
 async function bookGame(ctx: any, type: string) {
+  // 1. Получаем все активные события этого типа
   const events = await db.query.events.findMany({ 
     where: (e, { eq, and }) => and(eq(e.type, type), eq(e.isActive, true)) 
   });
 
+  // Если игр нет — показываем заглушку
   if (events.length === 0) {
     const text = `Расписание на этот формат сейчас формируется! 🗓\n\nСледите за анонсами в Instagram.`;
     return ctx.reply(text, {
@@ -721,23 +723,44 @@ async function bookGame(ctx: any, type: string) {
     });
   }
 
-  const uniqueTitles = new Set<string>();
-  events.forEach(e => {
-    const { title } = parseEventDesc(e.description);
-    uniqueTitles.add(title);
-  });
+  // --- ЛОГИКА РАЗДЕЛЕНИЯ ---
 
-  const buttons: any[] = [];
-  uniqueTitles.forEach(title => {
-    buttons.push([Markup.button.callback(title, `cv_${TYPE_MAP[type]}_${encodeCat(title)}`)]);
-  });
+  if (type === 'talk_toast') {
+    // ДЛЯ TALK & TOAST: Оставляем выбор ресторана (кухни)
+    const uniqueTitles = new Set<string>();
+    events.forEach(e => {
+      const { title } = parseEventDesc(e.description);
+      uniqueTitles.add(title);
+    });
 
-  buttons.push([Markup.button.callback('🔙 Назад', 'back_to_games')]);
+    const buttons: any[] = [];
+    uniqueTitles.forEach(title => {
+      buttons.push([Markup.button.callback(title, `cv_${TYPE_MAP[type]}_${encodeCat(title)}`)]);
+    });
 
-  ctx.editMessageText('👇 <b>Выберите формат/кухню:</b>', {
-    parse_mode: 'HTML',
-    ...Markup.inlineKeyboard(buttons)
-  });
+    buttons.push([Markup.button.callback('🔙 Назад', 'back_to_games')]);
+
+    ctx.editMessageText('👇 <b>Выберите направление ужина (ресторан):</b>', {
+      parse_mode: 'HTML',
+      ...Markup.inlineKeyboard(buttons)
+    });
+
+  } else {
+    // ДЛЯ ВСЕХ ОСТАЛЬНЫХ (Stock & Know, Fast Dates): Сразу выводим список дат
+    const buttons = events.map(e => [
+      Markup.button.callback(
+        `📅 ${e.dateString} (${e.currentPlayers}/${e.maxPlayers})`, 
+        `pay_event_${e.id}`
+      )
+    ]);
+
+    buttons.push([Markup.button.callback('🔙 Назад', 'back_to_games')]);
+
+    ctx.editMessageText('👇 <b>Выберите удобную дату:</b>', {
+      parse_mode: 'HTML',
+      ...Markup.inlineKeyboard(buttons)
+    });
+  }
 }
 
 
