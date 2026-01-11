@@ -1,4 +1,5 @@
 import { Telegraf, Markup, session, Scenes } from 'telegraf';
+import express from 'express';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { eq, or, inArray, and, desc } from 'drizzle-orm';
@@ -538,30 +539,26 @@ bot.action('start_registration', (ctx) => { ctx.deleteMessage(); ctx.scene.enter
 
 // --- ЗАПУСК ЧЕРЕЗ ВЕБХУК (СТРОГО В КОНЦЕ ФАЙЛА) ---
 
-const app = express(); // Здесь создается сервер
+// --- СТРОГО В КОНЦЕ ФАЙЛА ---
+
+const app = express();
 const PORT = process.env.PORT || 3000;
-const WEBHOOK_URL = process.env.TELEGRAM_WEBHOOK_URL; 
+const WEBHOOK_URL = process.env.TELEGRAM_WEBHOOK_URL;
 
 app.use(express.json());
-
-// Путь для приема сообщений от Telegram
 app.use(bot.webhookCallback('/telegraf-webhook'));
 
-// Ответ для Render (Health Check)
 app.get('/', (req, res) => res.send('Allgorithm Bot is Live! ✅'));
 
 app.listen(PORT, async () => {
-  console.log(`🚀 Server is running on port ${PORT}`);
-  
+  console.log(`🚀 Сервер запущен на порту ${PORT}`);
   if (WEBHOOK_URL) {
     try {
       await bot.telegram.setWebhook(`${WEBHOOK_URL}/telegraf-webhook`);
-      console.log(`📡 Webhook set to: ${WEBHOOK_URL}/telegraf-webhook`);
+      console.log(`📡 Вебхук установлен: ${WEBHOOK_URL}/telegraf-webhook`);
     } catch (e) {
-      console.error('❌ Webhook error:', e);
+      console.error('❌ Ошибка вебхука:', e);
     }
-  } else {
-    console.log('⚠️ Warning: TELEGRAM_WEBHOOK_URL is not set!');
   }
 });
 
