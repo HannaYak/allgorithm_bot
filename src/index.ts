@@ -1065,12 +1065,14 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
         }
 
         // 5. Создание сессии Stripe (используем stripeSession, чтобы не было конфликта с импортом)
+        // 5. Создание сессии оплаты
         const stripeSession = await stripe.checkout.sessions.create({
-            payment_method_types: [
-                'card', 'link', 'bancontact', 'blik', 'eps', 'klarna', 'revolut_pay'
-            ],
+            // Вместо payment_method_types используем автоматику:
+            automatic_payment_methods: {
+                enabled: true,
+            },
             line_items: [{
-                price: priceId,
+                price: priceId, // Убедитесь, что цена в Stripe создана в PLN
                 quantity: 1,
             }],
             metadata: sessionMetadata,
