@@ -163,13 +163,10 @@ const addEventWizard = new Scenes.WizardScene(
 
 
 
-const stage = new Scenes.Stage<any>([registerWizard, addEventWizard]);
+const stage = new Scenes.Stage<any>([registerWizard, addEventWizard, msgEventWizard]);
 bot.use(session()); 
 bot.use(stage.middleware());
 
-
-// Должно стать:
-const stage = new Scenes.Stage<any>([registerWizard, addEventWizard, msgEventWizard]);
 
 function getMainKeyboard(isAtEvent = false) {
     const buttons = [['🎮 Игры', '👤 Личный кабинет'], ['🆘 Помощь', '📜 Правила']];
