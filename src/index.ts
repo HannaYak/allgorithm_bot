@@ -1033,14 +1033,33 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
     const priceId = GAME_PRICES[event.type];
     if (!priceId) return ctx.reply('Ошибка: цена не настроена.');
 
-    const sessionConfig: Stripe.Checkout.SessionCreateParams = {
-      payment_method_types: ['card'],
-      line_items: [{ price: priceId, quantity: 1 }],
-      mode: 'payment',
-      success_url: `https://t.me/AllgorithmBot?start=success`,
-      cancel_url: `https://t.me/AllgorithmBot?start=cancel`,
-      metadata: { telegramId: telegramId.toString(), eventId: eventId.toString(), voucherId: '' },
-    };
+    const stripe = require('stripe')('ваш_секретный_ключ');
+
+const session = await stripe.checkout.sessions.create({
+  payment_method_types: [
+    // --- Активные на вашем скрине ---
+    'card',            // Карты
+    'link',            // Link
+    'bancontact',      // Бельгия
+    'blik',            // Польша
+    'eps',             // Австрия
+    'klarna',          // Рассрочка
+    'revolut_pay',     // Revolut
+  ],
+  line_items: [{
+    price_data: {
+      currency: 'eur', // Важно: некоторые методы работают только с EUR или PLN
+      product_data: {
+        name: 'Оплата заказа',
+      },
+      unit_amount: 2000, // Сумма в копейках (20.00)
+    },
+    quantity: 1,
+  }],
+  mode: 'payment',
+  success_url: 'https://example.com/success',
+  cancel_url: 'https://example.com/cancel',
+});
 
     let msg = `Оплата участия: 50 PLN`;
     if (activeVoucher && activeVoucher.status === 'approved_10') {
