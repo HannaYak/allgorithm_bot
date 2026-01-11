@@ -121,7 +121,47 @@ const registerWizard = new Scenes.WizardScene(
   }
 );
 
-const stage = new Scenes.Stage<any>([registerWizard]);
+const addEventWizard = new Scenes.WizardScene(
+  'ADD_EVENT_SCENE',
+  async (ctx) => {
+    await ctx.reply('Введите тип игры (talk_toast, stock_know, speed_dating):');
+    return ctx.wizard.next();
+  },
+  async (ctx) => {
+    (ctx.wizard.state as any).type = ctx.message.text;
+    await ctx.reply('Введите дату и время (например: 15.01.2026 19:00):');
+    return ctx.wizard.next();
+  },
+  async (ctx) => {
+    (ctx.wizard.state as any).date = ctx.message.text;
+    await ctx.reply('Введите описание в формате: Название ### Адрес');
+    return ctx.wizard.next();
+  },
+  async (ctx) => {
+    (ctx.wizard.state as any).desc = ctx.message.text;
+    await ctx.reply('Введите максимальное количество участников:');
+    return ctx.wizard.next();
+  },
+  async (ctx) => {
+    const state = ctx.wizard.state as any;
+    const max = parseInt(ctx.message.text);
+    if (isNaN(max)) return ctx.reply('Ошибка: введите число.');
+    
+    await db.insert(schema.events).values({
+      type: state.type,
+      dateString: state.date,
+      description: state.desc,
+      maxPlayers: max,
+      currentPlayers: 0,
+      isActive: true
+    });
+    
+    await ctx.reply('✅ Игра успешно добавлена в расписание!');
+    return ctx.scene.leave();
+  }
+);
+
+const stage = new Scenes.Stage<any>([registerWizard, addEventWizard]);
 bot.use(session()); 
 bot.use(stage.middleware());
 
@@ -253,6 +293,14 @@ bot.hears('🎮 Игры', (ctx) => {
   ]));
 });
 
+// Обработчик кнопки "🎲 Новая тема"
+bot.hears('🎲 Новая тема (для Talk & Toast)', (ctx) => {
+  const randomTopic = CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)];
+  return ctx.replyWithHTML(
+    `🎲 <b>Случайная тема для обсуждения:</b>\n\n${randomTopic}`,
+    getMainKeyboard(true)
+  );
+});
 
 // Кнопка "📜 Правила"
 bot.hears('📜 Правила', (ctx) => {
@@ -458,14 +506,92 @@ bot.action(/v_set_(10|free)_(\d+)/, async (ctx) => {
 
 bot.command('panel', async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
-  ctx.reply('🔒 Админ-панель', Markup.inlineKeyboard([
-    [Markup.button.callback('➕ Добавить игру', 'admin_add_event')],
-    [Markup.button.callback('📋 Записи', 'admin_bookings')],
-    [Markup.button.callback('💘 Пульт FD', 'admin_fd_panel')],
-    [Markup.button.callback('🧠 Пульт Stock', 'admin_stock_list')],
-    [Markup.button.callback('🏁 ЗАВЕРШИТЬ ИГРУ', 'admin_close_event')],
-    [Markup.button.callback('📢 Рассылка', 'admin_broadcast_start')]
-  ], { columns: 2 }));
+
+  // Считаем общее число юзеров
+  const allUsers = await db.query.users.findMany();
+  // Считаем "активных" (тех, у кого есть хотя бы одна оплаченная игра)
+  const activeBookings = await db.query.bookings.findMany({ where: eq(schema.bookings.paid, true) });
+  const activeUsersIds = new Set(activeBookings.map(b => b.userId));
+
+  ctx.replyWithHTML(
+    `🔒 <b>Админ-панель</b>\n\n` +
+    `👥 Всего пользователей: <b>${allUsers.length}</b>\n` +
+    `✅ Активных (с покупками): <b>${activeUsersIds.size}</b>`,
+    Markup.inlineKeyboard([
+      [Markup.button.callback('➕ Добавить игру', 'admin_add_event')],
+      [Markup.button.callback('📋 Записи', 'admin_bookings')],
+      [Markup.button.callback('📊 Выручка', 'admin_stats')],
+      [Markup.button.callback('💘 Пульт FD', 'admin_fd_panel')],
+      [Markup.button.callback('🧠 Пульт Stock', 'admin_stock_list')],
+      [Markup.button.callback('🏁 ЗАВЕРШИТЬ ИГРУ', 'admin_close_event')],
+      [Markup.button.callback('📢 Рассылка', 'admin_broadcast_start')]
+    ], { columns: 2 })
+  );
+});
+
+// Обработчик для кнопки подробной статистики (выручка)
+bot.action('admin_stats', async (ctx) => {
+  const paidBookings = await db.query.bookings.findMany({ where: eq(schema.bookings.paid, true) });
+  // Примерный расчет выручки (считаем по 50 PLN, если нет точной суммы в базе)
+  const totalRevenue = paidBookings.length * 50; 
+
+  await ctx.editMessageText(
+    `📊 <b>Финансовая статистика:</b>\n\n` +
+    `🎟 Всего оплачено билетов: <b>${paidBookings.length}</b>\n` +
+    `💰 Примерная выручка: <b>${totalRevenue} PLN</b>\n\n` +
+    `<i>*Расчет без учета скидок по ваучерам</i>`,
+    { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Назад', 'admin_back_to_panel')]]) }
+  );
+});
+
+bot.action('admin_back_to_panel', (ctx) => {
+    ctx.deleteMessage();
+    return ctx.scene.leave(); // Или просто вызвать команду /panel заново
+});
+
+// --- ЛОГИКА ГЛАВНОЙ АДМИН-ПАНЕЛИ ---
+
+// 1. Добавить игру
+bot.action('admin_add_event', (ctx) => ctx.scene.enter('ADD_EVENT_SCENE'));
+
+// 2. Рассылка
+bot.action('admin_broadcast_start', (ctx) => {
+  (ctx.session as any).waitingForBroadcast = true;
+  ctx.reply('Введите сообщение для рассылки всем пользователям (можно прикрепить фото):');
+});
+
+// 3. Просмотр записей (Bookings)
+bot.action('admin_bookings', async (ctx) => {
+  const events = await db.query.events.findMany({ where: eq(schema.events.isActive, true) });
+  if (events.length === 0) return ctx.reply('Нет активных игр.');
+  const btns = events.map(e => [Markup.button.callback(`${e.dateString} | ${e.type}`, `view_ev_bks_${e.id}`)]);
+  ctx.editMessageText('Выберите игру для просмотра участников:', Markup.inlineKeyboard(btns));
+});
+
+bot.action(/view_ev_bks_(\d+)/, async (ctx) => {
+  const eid = parseInt(ctx.match[1]);
+  const bookings = await db.query.bookings.findMany({ 
+    where: and(eq(schema.bookings.eventId, eid), eq(schema.bookings.paid, true)) 
+  });
+  let msg = `📋 <b>Участники:</b>\n\n`;
+  for (const b of bookings) {
+    const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+    msg += `• ${u?.name} (@${u?.username || 'нет'}) ID: <code>${u?.telegramId}</code>\n`;
+  }
+  ctx.replyWithHTML(msg || 'Нет оплаченных записей.');
+});
+
+// 4. Завершение игры (Лояльность + Закрытие)
+bot.action('admin_close_event', async (ctx) => {
+  const events = await db.query.events.findMany({ where: eq(schema.events.isActive, true) });
+  const btns = events.map(e => [Markup.button.callback(`🛑 Закрыть: ${e.dateString}`, `exec_close_${e.id}`)]);
+  ctx.editMessageText('Какую игру завершить? (Начислит баллы и скроет из меню)', Markup.inlineKeyboard(btns));
+});
+
+bot.action(/exec_close_(\d+)/, async (ctx) => {
+  const eid = parseInt(ctx.match[1]);
+  await autoCloseEvent(eid); // Используем вашу готовую функцию из кода
+  ctx.reply('✅ Игра завершена, баллы начислены!');
 });
 
 // ПУЛЬТ FD
