@@ -16,8 +16,8 @@
     "luxon": "^3.4.4",
     "stripe": "^14.10.0",
     "express": "^4.19.2",
-    "tsx": "^4.7.2",
-    "drizzle-kit": "^0.20.17"
+    "tsx": "^4.21.0",
+    "drizzle-kit": "^0.20.18"
   },
   "devDependencies": {
     "typescript": "^5.4.5",
