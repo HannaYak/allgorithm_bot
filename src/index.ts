@@ -161,9 +161,15 @@ const addEventWizard = new Scenes.WizardScene(
   }
 );
 
+
+
 const stage = new Scenes.Stage<any>([registerWizard, addEventWizard]);
 bot.use(session()); 
 bot.use(stage.middleware());
+
+
+// Должно стать:
+const stage = new Scenes.Stage<any>([registerWizard, addEventWizard, msgEventWizard]);
 
 function getMainKeyboard(isAtEvent = false) {
     const buttons = [['🎮 Игры', '👤 Личный кабинет'], ['🆘 Помощь', '📜 Правила']];
@@ -171,6 +177,46 @@ function getMainKeyboard(isAtEvent = false) {
     return Markup.keyboard(buttons).resize();
 }
 
+const msgEventWizard = new Scenes.WizardScene(
+  'MSG_EVENT_SCENE',
+  async (ctx) => {
+    // Получаем список только активных игр
+    const events = await db.query.events.findMany({ where: eq(schema.events.isActive, true) });
+    if (events.length === 0) {
+      await ctx.reply('Активных игр пока нет.');
+      return ctx.scene.leave();
+    }
+    
+    // Создаем кнопки для выбора конкретной игры
+    const btns = events.map(e => [
+      Markup.button.callback(`${e.dateString} | ${e.type}`, `select_msg_ev_${e.id}`)
+    ]);
+    
+    await ctx.reply('Выберите игру, участникам которой нужно отправить сообщение:', Markup.inlineKeyboard(btns));
+    return ctx.wizard.next();
+  },
+  async (ctx) => {
+    // Этот шаг сработает после того, как вы введете текст сообщения
+    if (!ctx.message || !('text' in ctx.message)) {
+      await ctx.reply('Пожалуйста, отправьте текстовое сообщение.');
+      return;
+    }
+    
+    const eventId = (ctx.wizard.state as any).selectedEventId;
+    const textMessage = ctx.message.text;
+
+    if (!eventId) {
+      await ctx.reply('Ошибка: игра не выбрана. Попробуйте снова.');
+      return ctx.scene.leave();
+    }
+
+    // Используем существующую функцию рассылки по участникам события
+    await broadcastToEvent(eventId, `📢 <b>Сообщение от организаторов:</b>\n\n${textMessage}`);
+    
+    await ctx.reply('✅ Рассылка по участникам игры успешно завершена!');
+    return ctx.scene.leave();
+  }
+);
 // --- 6. АВТОПИЛОТ (Вторичный интервал) ---
 setInterval(async () => {
   try {
@@ -507,26 +553,44 @@ bot.action(/v_set_(10|free)_(\d+)/, async (ctx) => {
 bot.command('panel', async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
-  // Считаем общее число юзеров
-  const allUsers = await db.query.users.findMany();
-  // Считаем "активных" (тех, у кого есть хотя бы одна оплаченная игра)
-  const activeBookings = await db.query.bookings.findMany({ where: eq(schema.bookings.paid, true) });
-  const activeUsersIds = new Set(activeBookings.map(b => b.userId));
+  try {
+    // 1. Считаем статистику
+    const allUsers = await db.query.users.findMany();
+    const activeBookings = await db.query.bookings.findMany({ where: eq(schema.bookings.paid, true) });
+    const activeUsersIds = new Set(activeBookings.map(b => b.userId));
 
-  ctx.replyWithHTML(
-    `🔒 <b>Админ-панель</b>\n\n` +
-    `👥 Всего пользователей: <b>${allUsers.length}</b>\n` +
-    `✅ Активных (с покупками): <b>${activeUsersIds.size}</b>`,
-    Markup.inlineKeyboard([
+    // 2. Формируем текст с данными
+    const statsText = 
+      `🔒 <b>Админ-панель</b>\n\n` +
+      `👥 Всего пользователей в базе: <b>${allUsers.length}</b>\n` +
+      `✅ Активных (кто хоть раз платил): <b>${activeUsersIds.size}</b>\n` +
+      `🎟 Всего продано билетов: <b>${activeBookings.length}</b>`;
+
+    // 3. Отправляем ответ с клавиатурой
+    return ctx.replyWithHTML(statsText, Markup.inlineKeyboard([
       [Markup.button.callback('➕ Добавить игру', 'admin_add_event')],
-      [Markup.button.callback('📋 Записи', 'admin_bookings')],
-      [Markup.button.callback('📊 Выручка', 'admin_stats')],
+      [Markup.button.callback('📋 Записи участников', 'admin_bookings')],
+      [Markup.button.callback('📢 Написать участникам игры', 'admin_msg_event')], // ТА САМАЯ КНОПКА
+      [Markup.button.callback('📊 Выручка (Stripe)', 'admin_stats')],
       [Markup.button.callback('💘 Пульт FD', 'admin_fd_panel')],
       [Markup.button.callback('🧠 Пульт Stock', 'admin_stock_list')],
       [Markup.button.callback('🏁 ЗАВЕРШИТЬ ИГРУ', 'admin_close_event')],
-      [Markup.button.callback('📢 Рассылка', 'admin_broadcast_start')]
-    ], { columns: 2 })
-  );
+      [Markup.button.callback('📢 Общая рассылка (всем)', 'admin_broadcast_start')]
+    ], { columns: 2 }));
+  } catch (error) {
+    console.error('Ошибка в админ-панели:', error);
+    ctx.reply('❌ Ошибка при загрузке статистики.');
+  }
+});
+
+// Запуск сцены при нажатии кнопки в панели
+bot.action('admin_msg_event', (ctx) => ctx.scene.enter('MSG_EVENT_SCENE'));
+
+// Логика выбора ID игры внутри сцены
+bot.action(/select_msg_ev_(\d+)/, async (ctx) => {
+  const eid = parseInt(ctx.match[1]);
+  (ctx.wizard.state as any).selectedEventId = eid; // Сохраняем ID в состояние сцены
+  await ctx.editMessageText('Игра выбрана. Теперь введите текст сообщения, который получат все оплатившие участники:');
 });
 
 // Обработчик для кнопки подробной статистики (выручка)
