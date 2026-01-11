@@ -536,8 +536,30 @@ bot.command('reply', async (ctx) => {
 bot.action('start_registration', (ctx) => { ctx.deleteMessage(); ctx.scene.enter('REGISTER_SCENE'); });
 
 // --- 13. ЗАПУСК ---
-const PORT = Number(process.env.PORT) || 3000;
-bot.launch().then(() => console.log('🚀 Allgorithm Бот запущен!'));
+const app = express();
+const PORT = process.env.PORT || 3000;
+const WEBHOOK_URL = process.env.TELEGRAM_WEBHOOK_URL; // Например: https://your-app.onrender.com
 
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+// Middleware для обработки JSON от Telegram
+app.use(express.json());
+
+// Основной роут вебхука
+app.use(bot.webhookCallback('/telegraf'));
+
+// Хелсчек для Render, чтобы он видел, что порт открыт
+app.get('/', (req, res) => res.send('Allgorithm Bot is running!'));
+
+app.listen(PORT, async () => {
+  console.log(`🚀 Server started on port ${PORT}`);
+  
+  if (WEBHOOK_URL) {
+    try {
+      await bot.telegram.setWebhook(`${WEBHOOK_URL}/telegraf`);
+      console.log(`✅ Webhook set to: ${WEBHOOK_URL}/telegraf`);
+    } catch (e) {
+      console.error('❌ Error setting webhook:', e);
+    }
+  } else {
+    console.log('⚠️ TELEGRAM_WEBHOOK_URL is missing. Switch to Polling or add env var.');
+  }
+});;
