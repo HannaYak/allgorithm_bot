@@ -984,155 +984,194 @@ bot.action(/exec_canc_(\d+)/, async (ctx) => {
 
 // --- 8. ОПЛАТА ---
 
+// --- 8. ОПЛАТА ---
+
+// --- 8. ОПЛАТА ---
+
+// --- 8. ОПЛАТА ---
+
+// ЧАСТЬ 1: Создание ссылки на оплату Stripe
 bot.action(/pay_event_(\d+)/, async (ctx) => {
-  const eventId = parseInt(ctx.match[1]);
-  const telegramId = ctx.from?.id;
-  if (!telegramId) return;
+    const eventId = parseInt(ctx.match[1]);
+    const telegramId = ctx.from?.id;
+    if (!telegramId) return;
 
-  const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, telegramId) });
-  
-  // КРИТИЧЕСКАЯ ПРОВЕРКА:
-  if (!user?.name || !user?.gender) {
-      return ctx.reply('Чтобы записаться на игру, нужно сначала заполнить анкету (это займет 3 минуты). 😉', 
-          Markup.inlineKeyboard([
-              [Markup.button.callback('📝 Заполнить анкету', 'start_registration')]
-          ])
-      );
-  }
-
-  try {
+    // 1. Проверка пользователя и анкеты
     const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, telegramId) });
-    const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
-    if (!user || !event) return ctx.reply('Ошибка данных.');
 
-    const gamesPlayed = user.gamesPlayed || 0;
-    if ((gamesPlayed + 1) % 5 === 0) {
-        const existing = await db.query.bookings.findFirst({ where: (b, { and, eq }) => and(eq(b.userId, user.id), eq(b.eventId, eventId)) });
-        if (existing) return ctx.reply('✅ Вы уже записаны!');
-        await db.insert(schema.bookings).values({ userId: user.id, eventId: eventId, paid: true });
-        await db.update(schema.events).set({ currentPlayers: (event.currentPlayers || 0) + 1 }).where(eq(schema.events.id, eventId));
-        return ctx.reply('🎁 <b>Поздравляем!</b>\nЭто ваша 5-я игра, она бесплатная! 🎉', { parse_mode: 'HTML' });
+    if (!user?.name || !user?.gender) {
+        return ctx.reply('Чтобы записаться на игру, нужно сначала заполнить анкету (это займет 3 минуты). 😉', 
+            Markup.inlineKeyboard([
+                [Markup.button.callback('📝 Заполнить анкету', 'start_registration')]
+            ])
+        );
     }
 
-    const activeVoucher = await db.query.vouchers.findFirst({ 
-        where: (v, { and, eq, or }) => and(
-            eq(v.userId, user.id), 
-            or(eq(v.status, 'approved_10'), eq(v.status, 'approved_free'))
-        ) 
-    });
+    try {
+        const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
+        if (!user || !event) return ctx.reply('Ошибка данных.');
 
-    if (activeVoucher && activeVoucher.status === 'approved_free') {
-         const existing = await db.query.bookings.findFirst({ where: (b, { and, eq }) => and(eq(b.userId, user.id), eq(b.eventId, eventId)) });
-         if (existing) return ctx.reply('✅ Вы уже записаны!');
-         await db.insert(schema.bookings).values({ userId: user.id, eventId: eventId, paid: true });
-         await db.update(schema.events).set({ currentPlayers: (event.currentPlayers || 0) + 1 }).where(eq(schema.events.id, eventId));
-         await db.update(schema.vouchers).set({ status: 'used' }).where(eq(schema.vouchers.id, activeVoucher.id));
-         return ctx.reply('🎫 <b>Ваучер применен!</b>\nВаше участие полностью оплачено ваучером.\n\nВы успешно записаны! Я напомню Вам заранее о участии прямо тут.', { parse_mode: 'HTML' });
+        // 2. Логика 5-й бесплатной игры
+        const gamesPlayed = user.gamesPlayed || 0;
+        if ((gamesPlayed + 1) % 5 === 0) {
+            const existing = await db.query.bookings.findFirst({ 
+                where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.eventId, eventId)) 
+            });
+            if (existing) return ctx.reply('✅ Вы уже записаны!');
+            
+            await db.insert(schema.bookings).values({ userId: user.id, eventId: eventId, paid: true });
+            await db.update(schema.events).set({ currentPlayers: (event.currentPlayers || 0) + 1 }).where(eq(schema.events.id, eventId));
+            return ctx.reply('🎁 <b>Поздравляем!</b>\nЭто ваша 5-я игра, она бесплатная! 🎉', { parse_mode: 'HTML' });
+        }
+
+        // 3. Проверка активных ваучеров (Full Free или -10 PLN)
+        const activeVoucher = await db.query.vouchers.findFirst({ 
+            where: (v, { and, eq, or }) => and(
+                eq(v.userId, user.id), 
+                or(eq(v.status, 'approved_10'), eq(v.status, 'approved_free'))
+            ) 
+        });
+
+        // Если ваучер на 100% скидку (Full Free)
+        if (activeVoucher && activeVoucher.status === 'approved_free') {
+            const existing = await db.query.bookings.findFirst({ 
+                where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.eventId, eventId)) 
+            });
+            if (existing) return ctx.reply('✅ Вы уже записаны!');
+
+            await db.insert(schema.bookings).values({ userId: user.id, eventId: eventId, paid: true });
+            await db.update(schema.events).set({ currentPlayers: (event.currentPlayers || 0) + 1 }).where(eq(schema.events.id, eventId));
+            await db.update(schema.vouchers).set({ status: 'used' }).where(eq(schema.vouchers.id, activeVoucher.id));
+            return ctx.reply('🎫 <b>Ваучер применен!</b>\nВаше участие полностью оплачено ваучером.\n\nВы успешно записаны! Я напомню Вам заранее о участии прямо тут.', { parse_mode: 'HTML' });
+        }
+
+        // 4. Подготовка оплаты через Stripe
+        const priceId = GAME_PRICES[event.type];
+        if (!priceId) return ctx.reply('Ошибка: цена не настроена.');
+
+        const sessionMetadata: any = {
+            telegramId: telegramId.toString(),
+            eventId: eventId.toString()
+        };
+
+        let msg = `Оплата участия: 50 PLN`;
+        let discounts = [];
+
+        // Если есть ваучер на скидку 10 PLN
+        if (activeVoucher && activeVoucher.status === 'approved_10') {
+            discounts = [{ coupon: STRIPE_COUPON_ID }];
+            sessionMetadata.voucherId = activeVoucher.id.toString();
+            msg = `🎉 <b>Ваучер применен!</b>\nСкидка -10 PLN.\n<b>К оплате: 40 PLN</b>`;
+        }
+
+        // 5. Создание сессии Stripe (используем stripeSession, чтобы не было конфликта с импортом)
+        const stripeSession = await stripe.checkout.sessions.create({
+            payment_method_types: [
+                'card', 'link', 'bancontact', 'blik', 'eps', 'klarna', 'revolut_pay'
+            ],
+            line_items: [{
+                price: priceId,
+                quantity: 1,
+            }],
+            metadata: sessionMetadata,
+            discounts: discounts,
+            mode: 'payment',
+            success_url: `https://t.me/${ctx.botInfo.username}`,
+            cancel_url: `https://t.me/${ctx.botInfo.username}`,
+        });
+
+        if (!stripeSession.url) throw new Error('No URL');
+
+        await ctx.reply(msg, { 
+            parse_mode: 'HTML', 
+            ...Markup.inlineKeyboard([
+                [Markup.button.url('💸 Оплатить', stripeSession.url)], 
+                [Markup.button.callback('✅ Я оплатил', `confirm_pay_${eventId}`)]
+            ]) 
+        });
+
+    } catch (e) { 
+        console.error('Stripe Error:', e);
+        ctx.reply(`Ошибка платежной системы. Попробуйте позже.`); 
     }
-
-    const priceId = GAME_PRICES[event.type];
-    if (!priceId) return ctx.reply('Ошибка: цена не настроена.');
-
-    const stripe = require('stripe')('ваш_секретный_ключ');
-
-const session = await stripe.checkout.sessions.create({
-  payment_method_types: [
-    // --- Активные на вашем скрине ---
-    'card',            // Карты
-    'link',            // Link
-    'bancontact',      // Бельгия
-    'blik',            // Польша
-    'eps',             // Австрия
-    'klarna',          // Рассрочка
-    'revolut_pay',     // Revolut
-  ],
-  line_items: [{
-    price_data: {
-      currency: 'eur', // Важно: некоторые методы работают только с EUR или PLN
-      product_data: {
-        name: 'Оплата заказа',
-      },
-      unit_amount: 2000, // Сумма в копейках (20.00)
-    },
-    quantity: 1,
-  }],
-  mode: 'payment',
-  success_url: 'https://example.com/success',
-  cancel_url: 'https://example.com/cancel',
 });
 
-    let msg = `Оплата участия: 50 PLN`;
-    if (activeVoucher && activeVoucher.status === 'approved_10') {
-        sessionConfig.discounts = [{ coupon: STRIPE_COUPON_ID }];
-        sessionConfig.metadata!.voucherId = activeVoucher.id.toString();
-        msg = `🎉 <b>Ваучер применен!</b>\nСкидка -10 PLN.\n<b>К оплате: 40 PLN</b>`;
-    }
-
-    const session = await stripe.checkout.sessions.create(sessionConfig);
-    if (!session.url) throw new Error('No URL');
-    ctx.reply(msg, { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.url('💸 Оплатить', session.url)], [Markup.button.callback('✅ Я оплатил', `confirm_pay_${eventId}`)]]) });
-  } catch (e) { ctx.reply(`Ошибка Stripe: ${e}`); }
-});
-
+// Вспомогательная кнопка перехода к регистрации
 bot.action('start_registration', (ctx) => {
-    ctx.deleteMessage(); // Убираем сообщение с кнопкой
+    ctx.deleteMessage(); 
     ctx.scene.enter('REGISTER_SCENE');
 });
 
+// ЧАСТЬ 2: Подтверждение оплаты (обработчик кнопки «Я оплатил»)
 bot.action(/confirm_pay_(\d+)/, async (ctx) => {
     const eventId = parseInt(ctx.match[1]);
     const telegramId = ctx.from?.id.toString();
     if (!telegramId) return;
 
     try {
+        // Проверяем последние сессии в Stripe
         const sessions = await stripe.checkout.sessions.list({ limit: 10 });
-        const paidSession = sessions.data.find(s => s.metadata?.telegramId === telegramId && s.metadata?.eventId === eventId.toString() && s.payment_status === 'paid');
-        if (!paidSession) return ctx.reply('🔍 Оплата не найдена. Подождите 10 сек.');
+        const paidSession = sessions.data.find(s => 
+            s.metadata?.telegramId === telegramId && 
+            s.metadata?.eventId === eventId.toString() && 
+            s.payment_status === 'paid'
+        );
+
+        if (!paidSession) return ctx.reply('🔍 Оплата не найдена. Подождите 10 сек и попробуйте снова.');
 
         const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id)});
         if (!user) return;
 
-        const booking = await db.query.bookings.findFirst({ where: (b, { and, eq }) => and(eq(b.userId, user.id), eq(b.eventId, eventId)) });
+        // Проверяем, не записан ли уже (защита от двойного клика)
+        const booking = await db.query.bookings.findFirst({ 
+            where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.eventId, eventId)) 
+        });
         if (booking) return ctx.reply('✅ Вы уже записаны!');
 
+        // Если использовался ваучер — помечаем как использованный
         if (paidSession.metadata?.voucherId) {
-            await db.update(schema.vouchers).set({ status: 'used' }).where(eq(schema.vouchers.id, parseInt(paidSession.metadata.voucherId)));
+            await db.update(schema.vouchers)
+                .set({ status: 'used' })
+                .where(eq(schema.vouchers.id, parseInt(paidSession.metadata.voucherId)));
         }
 
+        // Создаем запись о бронировании
         await db.insert(schema.bookings).values({ userId: user.id, eventId: eventId, paid: true });
 
-        // Если пользователя кто-то пригласил
+        // Реферальная логика: бонус пригласившему
         if (user.invitedBy) {
-            // ОШИБКА БЫЛА ТУТ: Мы ищем по schema.users.id, а не по telegramId
-            const inviter = await db.query.users.findFirst({ 
-                where: eq(schema.users.id, user.invitedBy) 
-            });
-            
+            const inviter = await db.query.users.findFirst({ where: eq(schema.users.id, user.invitedBy) });
             if (inviter) {
-                // Создаем ваучер на -10 PLN для того, кто пригласил
                 await db.insert(schema.vouchers).values({
                     userId: inviter.id,
                     status: 'approved_10'
                 });
 
-                // Уведомляем пригласившего по его telegramId
                 bot.telegram.sendMessage(inviter.telegramId, 
-                    `🎉 <b>Ваш бонус за друга!</b>\n\nВаш друг ${user.name} оплатил первую игру. Вам начислен ваучер на <b>-10 PLN</b> на следующую игру! Скидка применится автоматически.`, 
+                    `🎉 <b>Ваш бонус за друга!</b>\n\nВаш друг ${user.name} оплатил первую игру. Вам начислен ваучер на <b>-10 PLN</b> на следующую игру!`,
                     { parse_mode: 'HTML' }
                 ).catch(()=>{});
 
-                // Очищаем связь, чтобы бонус был только за первую покупку
+                // Очищаем связь после первого бонуса
                 await db.update(schema.users).set({ invitedBy: null }).where(eq(schema.users.id, user.id));
             }
         }
 
+        // Обновляем количество игроков в событии
         const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
-        if (event) await db.update(schema.events).set({ currentPlayers: (event.currentPlayers || 0) + 1 }).where(eq(schema.events.id, eventId));
+        if (event) {
+            await db.update(schema.events)
+                .set({ currentPlayers: (event.currentPlayers || 0) + 1 })
+                .where(eq(schema.events.id, eventId));
+        }
 
         ctx.editMessageText('🎉 Оплата подтверждена!\nВы в игре! 😎\n\nМесто встречи откроется за 3 часа. Я напомню Вам заранее об участии. Не забывай о правилах', { parse_mode: 'HTML' });
-    } catch (e) { ctx.reply('Ошибка проверки.'); }
-});
 
+    } catch (e) { 
+        console.error('Confirm Pay Error:', e);
+        ctx.reply('Ошибка при проверке оплаты. Свяжитесь с поддержкой.'); 
+    }
+});
 // --- 9. ВАУЧЕРЫ ---
 
 bot.action('upload_voucher', (ctx) => {
