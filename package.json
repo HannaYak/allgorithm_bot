@@ -14,11 +14,12 @@
     "postgres": "^3.4.4",
     "dotenv": "^16.4.5",
     "luxon": "^3.4.4",
-    "stripe": "^14.10.0"
+    "stripe": "^14.10.0",
+    "express": "^4.19.2",
+    "tsx": "^4.7.2",
+    "drizzle-kit": "^0.20.17"
   },
   "devDependencies": {
-    "drizzle-kit": "^0.20.17",
-    "tsx": "^4.7.2",
     "typescript": "^5.4.5",
     "@types/node": "^20.12.7",
     "@types/luxon": "^3.4.2"
