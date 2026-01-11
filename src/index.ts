@@ -7,7 +7,7 @@ import * as schema from '../drizzle/schema';
 import 'dotenv/config';
 import Stripe from 'stripe';
 import { DateTime } from 'luxon';
-import express from 'express';
+
 
 // --- 1. НАСТРОЙКИ ---
 
