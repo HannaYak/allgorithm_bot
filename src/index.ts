@@ -105,6 +105,7 @@ const TALK_STATE = { currentFact: '', currentUser: '', isActive: false };
 // --- 5. БОТ И СЦЕНЫ ---
 const bot = new Telegraf<any>(process.env.TELEGRAM_BOT_TOKEN || '');
 
+// 1. Мастер регистрации
 const registerWizard = new Scenes.WizardScene(
   'REGISTER_SCENE',
   async (ctx) => { await ctx.replyWithHTML(`👋 <b>Почти готово!</b>\n\nНужно внести тебя в базу клуба.\n\n<b>1. Как тебя зовут?</b>`); return ctx.wizard.next(); },
@@ -121,6 +122,7 @@ const registerWizard = new Scenes.WizardScene(
   }
 );
 
+// 2. Мастер добавления игр
 const addEventWizard = new Scenes.WizardScene(
   'ADD_EVENT_SCENE',
   async (ctx) => {
@@ -161,59 +163,49 @@ const addEventWizard = new Scenes.WizardScene(
   }
 );
 
-
-
-const stage = new Scenes.Stage<any>([registerWizard, addEventWizard, msgEventWizard]);
-bot.use(session()); 
-bot.use(stage.middleware());
-
-
-function getMainKeyboard(isAtEvent = false) {
-    const buttons = [['🎮 Игры', '👤 Личный кабинет'], ['🆘 Помощь', '📜 Правила']];
-    if (isAtEvent) buttons.unshift(['🎲 Новая тема (для Talk & Toast)']);
-    return Markup.keyboard(buttons).resize();
-}
-
+// 3. Мастер рассылки участникам игры
 const msgEventWizard = new Scenes.WizardScene(
   'MSG_EVENT_SCENE',
   async (ctx) => {
-    // Получаем список только активных игр
     const events = await db.query.events.findMany({ where: eq(schema.events.isActive, true) });
     if (events.length === 0) {
       await ctx.reply('Активных игр пока нет.');
       return ctx.scene.leave();
     }
-    
-    // Создаем кнопки для выбора конкретной игры
     const btns = events.map(e => [
       Markup.button.callback(`${e.dateString} | ${e.type}`, `select_msg_ev_${e.id}`)
     ]);
-    
     await ctx.reply('Выберите игру, участникам которой нужно отправить сообщение:', Markup.inlineKeyboard(btns));
     return ctx.wizard.next();
   },
   async (ctx) => {
-    // Этот шаг сработает после того, как вы введете текст сообщения
     if (!ctx.message || !('text' in ctx.message)) {
       await ctx.reply('Пожалуйста, отправьте текстовое сообщение.');
       return;
     }
-    
     const eventId = (ctx.wizard.state as any).selectedEventId;
     const textMessage = ctx.message.text;
-
     if (!eventId) {
       await ctx.reply('Ошибка: игра не выбрана. Попробуйте снова.');
       return ctx.scene.leave();
     }
-
-    // Используем существующую функцию рассылки по участникам события
     await broadcastToEvent(eventId, `📢 <b>Сообщение от организаторов:</b>\n\n${textMessage}`);
-    
     await ctx.reply('✅ Рассылка по участникам игры успешно завершена!');
     return ctx.scene.leave();
   }
 );
+
+// Регистрация всех сцен и подключение сессий
+const stage = new Scenes.Stage<any>([registerWizard, addEventWizard, msgEventWizard]);
+bot.use(session()); 
+bot.use(stage.middleware());
+
+// Главная клавиатура
+function getMainKeyboard(isAtEvent = false) {
+    const buttons = [['🎮 Игры', '👤 Личный кабинет'], ['🆘 Помощь', '📜 Правила']];
+    if (isAtEvent) buttons.unshift(['🎲 Новая тема (для Talk & Toast)']);
+    return Markup.keyboard(buttons).resize();
+}
 // --- 6. АВТОПИЛОТ (Вторичный интервал) ---
 setInterval(async () => {
   try {
