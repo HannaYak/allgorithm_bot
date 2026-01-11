@@ -536,30 +536,37 @@ bot.command('reply', async (ctx) => {
 bot.action('start_registration', (ctx) => { ctx.deleteMessage(); ctx.scene.enter('REGISTER_SCENE'); });
 
 // --- 13. ЗАПУСК ---
+// --- 12. ЗАПУСК ЧЕРЕЗ ВЕБХУК (ДЛЯ RENDER) ---
+
 const app = express();
 const PORT = process.env.PORT || 3000;
-const WEBHOOK_URL = process.env.TELEGRAM_WEBHOOK_URL; // Например: https://your-app.onrender.com
+// URL твоего приложения на Render (например, https://allgorithm-bot.onrender.com)
+const WEBHOOK_URL = process.env.TELEGRAM_WEBHOOK_URL; 
 
-// Middleware для обработки JSON от Telegram
-app.use(express.json());
+app.use(express.json()); // Обязательно для чтения данных от Telegram
 
-// Основной роут вебхука
-app.use(bot.webhookCallback('/telegraf'));
+// Путь, по которому Telegram будет присылать обновления
+app.use(bot.webhookCallback('/telegraf-webhook'));
 
-// Хелсчек для Render, чтобы он видел, что порт открыт
-app.get('/', (req, res) => res.send('Allgorithm Bot is running!'));
+// Хелсчек-путь для Render (чтобы он видел, что сервис живой)
+app.get('/', (req, res) => res.send('Allgorithm Bot is online! ✅'));
 
 app.listen(PORT, async () => {
-  console.log(`🚀 Server started on port ${PORT}`);
+  console.log(`🚀 Сервер запущен на порту ${PORT}`);
   
   if (WEBHOOK_URL) {
     try {
-      await bot.telegram.setWebhook(`${WEBHOOK_URL}/telegraf`);
-      console.log(`✅ Webhook set to: ${WEBHOOK_URL}/telegraf`);
+      // Устанавливаем вебхук в самом Telegram
+      await bot.telegram.setWebhook(`${WEBHOOK_URL}/telegraf-webhook`);
+      console.log(`📡 Вебхук успешно установлен: ${WEBHOOK_URL}/telegraf-webhook`);
     } catch (e) {
-      console.error('❌ Error setting webhook:', e);
+      console.error('❌ Ошибка установки вебхука:', e);
     }
   } else {
-    console.log('⚠️ TELEGRAM_WEBHOOK_URL is missing. Switch to Polling or add env var.');
+    console.error('⚠️ ОШИБКА: TELEGRAM_WEBHOOK_URL не задан в настройках Render!');
   }
-});;
+});
+
+// Остановка бота при выключении сервера
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
