@@ -377,12 +377,15 @@ bot.hears('🎲 Новая тема (для Talk & Toast)', async (ctx) => {
   });
   if (!user) return;
 
-  // Ищем оплаченную запись на активную игру Talk & Toast
+  // Ищем оплаченную запись
   const myBookings = await db.query.bookings.findMany({
     where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.paid, true))
   });
 
   let currentEventId = null;
+  // Устанавливаем текущее время по ВАРШАВЕ
+  const nowWarsaw = DateTime.now().setZone('Europe/Warsaw');
+
   for (const b of myBookings) {
     const event = await db.query.events.findFirst({
       where: and(
@@ -393,11 +396,14 @@ bot.hears('🎲 Новая тема (для Talk & Toast)', async (ctx) => {
     });
     
     if (event) {
-      const start = DateTime.fromFormat(event.dateString, "dd.MM.yyyy HH:mm");
+      // Парсим время начала тоже по ВАРШАВЕ
+      const start = DateTime.fromFormat(event.dateString, "dd.MM.yyyy HH:mm", { zone: 'Europe/Warsaw' });
+      
       if (start.isValid) {
-        const diff = DateTime.now().diff(start, 'hours').hours;
-        // Кнопка работает только в интервале: за 15 минут до и 4 часа после начала
-        if (diff >= -0.25 && diff <= 4) {
+        const diffHours = nowWarsaw.diff(start, 'hours').hours;
+        
+        // Кнопка активна от 15 минут ДО начала и в течение 4 часов ПОСЛЕ
+        if (diffHours >= -0.25 && diffHours <= 4) {
           currentEventId = event.id;
           break;
         }
@@ -406,7 +412,7 @@ bot.hears('🎲 Новая тема (для Talk & Toast)', async (ctx) => {
   }
 
   if (!currentEventId) {
-    // Если игры нет или она еще не началась, убираем кнопку из меню
+    // Если игра не найдена по времени, возвращаем клавиатуру БЕЗ кнопки темы
     return ctx.reply("❌ Кнопка доступна только во время игры, на которую вы записаны.", getMainKeyboard(false));
   }
 
@@ -415,7 +421,6 @@ bot.hears('🎲 Новая тема (для Talk & Toast)', async (ctx) => {
   // Отправляем всем за столом
   await broadcastToEvent(currentEventId, `🎲 <b>Новая общая тема для стола:</b>\n\n${randomTopic}`);
   
-  // Подтверждаем нажавшему, что всё ок
   return ctx.reply("✅ Тема отправлена всем участникам!");
 });                
 
