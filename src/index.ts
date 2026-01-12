@@ -210,12 +210,12 @@ function getMainKeyboard(isAtEvent = false) {
 // --- 6. АВТОПИЛОТ (Вторичный интервал) ---
 setInterval(async () => {
   try {
-    const now = DateTime.now(); 
+    const now = DateTime.now().setZone('Europe/Warsaw'); 
     const activeEvents = await db.query.events.findMany({ where: eq(schema.events.isActive, true) });
     
     for (const event of activeEvents) {
       // 1. РАСЧЕТ ВРЕМЕНИ (Теперь в правильном месте)
-      const start = DateTime.fromFormat(event.dateString, "dd.MM.yyyy HH:mm");
+      const start = DateTime.fromFormat(event.dateString, "dd.MM.yyyy HH:mm", { zone: 'Europe/Warsaw' });
       if (!start.isValid) continue;
 
       const diffHours = start.diff(now, 'hours').hours;
@@ -632,26 +632,69 @@ bot.action('upload_voucher', (ctx) => { ctx.reply('📸 Отправь фото 
 
 bot.on('photo', async (ctx, next) => {
     if (!(ctx.session as any)?.waitingForVoucher) return next();
+    
     const photo = ctx.message.photo[ctx.message.photo.length - 1];
     const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
+    
     if (user) {
-        const [v] = await db.insert(schema.vouchers).values({ userId: user.id, photoFileId: photo.file_id, status: 'pending' }).returning();
-        ctx.reply('✅ Ваучер отправлен на проверку.'); (ctx.session as any).waitingForVoucher = false;
+        const [v] = await db.insert(schema.vouchers).values({ 
+            userId: user.id, 
+            photoFileId: photo.file_id, 
+            status: 'pending' 
+        }).returning();
+
+        ctx.reply('✅ Ваучер отправлен на проверку.'); 
+        (ctx.session as any).waitingForVoucher = false;
+
         await bot.telegram.sendPhoto(ADMIN_ID, photo.file_id, {
-            caption: `🎟 Ваучер от ${user.name}`,
-            ...Markup.inlineKeyboard([[Markup.button.callback('💰 -10 PLN', `v_set_10_${v.id}`)], [Markup.button.callback('🎁 FREE', `v_set_free_${v.id}`)]])
+            caption: `🎟 <b>Новый ваучер на проверку</b>\n\n<b>От:</b> ${user.name}\n<b>ID:</b> <code>${user.telegramId}</code>`,
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([
+                [
+                    Markup.button.callback('💰 -10 PLN', `v_set_10_${v.id}`),
+                    Markup.button.callback('🎁 FREE', `v_set_free_${v.id}`)
+                ],
+                [Markup.button.callback('❌ Отклонить', `v_set_reject_${v.id}`)]
+            ])
         });
     }
-});
+}); // <-- Важно закрыть функцию и обработчик
 
-bot.action(/v_set_(10|free)_(\d+)/, async (ctx) => {
-    const vId = parseInt(ctx.match[2]); const status = ctx.match[1] === '10' ? 'approved_10' : 'approved_free';
+bot.action(/v_set_(10|free|reject)_(\d+)/, async (ctx) => {
+    const action = ctx.match[1];
+    const vId = parseInt(ctx.match[2]);
+    let status = '';
+    let userMsg = '';
+
+    if (action === '10') { 
+        status = 'approved_10'; 
+        userMsg = '🎉 Твой ваучер одобрен! Скидка -10 PLN начислена.'; 
+    }
+    else if (action === 'free') { 
+        status = 'approved_free'; 
+        userMsg = '🔥 Твой ваучер одобрен! Следующая игра для тебя БЕСПЛАТНАЯ!'; 
+    }
+    else if (action === 'reject') { 
+        status = 'rejected'; 
+        userMsg = '❌ К сожалению, твой ваучер отклонен. Если это ошибка, напиши в 🆘 Помощь.'; 
+    }
+
+    // Обновляем статус в базе
     await db.update(schema.vouchers).set({ status }).where(eq(schema.vouchers.id, vId));
+    
+    // Ищем владельца ваучера для уведомления
     const v = await db.query.vouchers.findFirst({ where: eq(schema.vouchers.id, vId) });
-    if (v && v.userId) { const u = await db.query.users.findFirst({ where: eq(schema.users.id, v.userId) }); if (u) bot.telegram.sendMessage(u.telegramId, `🎉 Твой ваучер одобрен!`); }
-    await ctx.editMessageCaption(`✅ Готово: ${status}`);
+    if (v?.userId) {
+        const u = await db.query.users.findFirst({ where: eq(schema.users.id, v.userId) });
+        if (u) {
+            await bot.telegram.sendMessage(u.telegramId, userMsg).catch(() => {});
+        }
+    }
+    
+    // Красиво обновляем сообщение у админа
+    const finalLabel = action === 'reject' ? '❌ ОТКЛОНЕН' : `✅ ОДОБРЕН (${action})`;
+    await ctx.editMessageCaption(`<b>Статус: ${finalLabel}</b>`, { parse_mode: 'HTML' });
 });
-
 // --- 11. АДМИНКА (ВСЕ ПУЛЬТЫ) ---
 
 bot.command('panel', async (ctx) => {
