@@ -203,6 +203,7 @@ bot.use(stage.middleware());
 // Главная клавиатура
 function getMainKeyboard(isAtEvent = false) {
     const buttons = [['🎮 Игры', '👤 Личный кабинет'], ['🆘 Помощь', '📜 Правила']];
+    // Кнопка добавляется ТОЛЬКО если isAtEvent === true
     if (isAtEvent) buttons.unshift(['🎲 Новая тема (для Talk & Toast)']);
     return Markup.keyboard(buttons).resize();
 }
@@ -211,20 +212,54 @@ setInterval(async () => {
   try {
     const now = DateTime.now(); 
     const activeEvents = await db.query.events.findMany({ where: eq(schema.events.isActive, true) });
+    
     for (const event of activeEvents) {
+      // 1. РАСЧЕТ ВРЕМЕНИ (Теперь в правильном месте)
       const start = DateTime.fromFormat(event.dateString, "dd.MM.yyyy HH:mm");
       if (!start.isValid) continue;
+
       const diffHours = start.diff(now, 'hours').hours;
       const minutesSinceStart = now.diff(start, 'minutes').minutes;
 
+      // 2. ПРИВЕТСТВИЕ И ТЕМА №1 (В МОМЕНТ СТАРТА)
+      if (Math.abs(minutesSinceStart) <= 1 && !PROCESSED_AUTO_ACTIONS.has(`start_greet_${event.id}`)) {
+        PROCESSED_AUTO_ACTIONS.add(`start_greet_${event.id}`);
+        
+        const { title } = parseEventDesc(event.description);
+        const welcomeMsg = `🥂 <b>Игра "${title}" начинается!</b>\n\nРады всех видеть за столом! В следующем сообщении придет ваша первая тема для обсуждения.\n\n✨ Чтобы получить следующую тему, нажимайте кнопку <b>"🎲 Новая тема"</b>. Для начала представьтесь друг другу!`;
+        
+        const bookings = await db.query.bookings.findMany({
+          where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true))
+        });
+
+        for (const b of bookings) {
+          const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+          if (u) {
+            await bot.telegram.sendMessage(u.telegramId, welcomeMsg, { 
+              parse_mode: 'HTML',
+              ...getMainKeyboard(true) 
+            }).catch(() => {});
+          }
+        }
+
+        setTimeout(async () => {
+          const firstTopic = CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)];
+          await broadcastToEvent(event.id, `🎲 <b>Тема №1:</b>\n\n${firstTopic}`);
+        }, 10000);
+      }
+
+      // 3. НАПОМИНАНИЕ ЗА 3 ДНЯ
       if (diffHours >= 71.5 && diffHours <= 72.5 && !PROCESSED_AUTO_ACTIONS.has(`remind_3d_${event.id}`)) {
         PROCESSED_AUTO_ACTIONS.add(`remind_3d_${event.id}`);
         await broadcastToEvent(event.id, `📅 <b>Скоро игра!</b>\n\nНапоминаем, что через 3 дня состоится игра "${event.type}". Готовьтесь!🥂`);
       }
+
+      // 4. РАСКРЫТИЕ АДРЕСА И НОМЕРОВ ЗА 3 ЧАСА
       if (diffHours >= 2.8 && diffHours <= 3.2 && !PROCESSED_AUTO_ACTIONS.has(`reveal_${event.id}`)) {
         PROCESSED_AUTO_ACTIONS.add(`reveal_${event.id}`);
         const { address } = parseEventDesc(event.description);
         await broadcastToEvent(event.id, `📍 <b>Место встречи открыто!</b>\n\nВстречаемся здесь через 3 часа:\n<b>${address}</b>`);
+        
         if (event.type === 'speed_dating') {
           const bookings = await db.query.bookings.findMany({ where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true)) });
           const m: any[] = [], w: any[] = [];
@@ -241,15 +276,23 @@ setInterval(async () => {
           }
         }
       }
+
+      // 5. ВИКТОРИНА (105 МИНУТ)
       if (minutesSinceStart >= 105 && event.type === 'talk_toast' && !PROCESSED_AUTO_ACTIONS.has(`quiz_${event.id}`)) {
-        PROCESSED_AUTO_ACTIONS.add(`quiz_${event.id}`); await runAutoQuiz(event.id);
+        PROCESSED_AUTO_ACTIONS.add(`quiz_${event.id}`); 
+        await runAutoQuiz(event.id);
       }
+
+      // 6. ЗАВЕРШЕНИЕ (135 МИНУТ)
       if (minutesSinceStart >= 135 && !PROCESSED_AUTO_ACTIONS.has(`close_${event.id}`)) {
-        PROCESSED_AUTO_ACTIONS.add(`close_${event.id}`); await autoCloseEvent(event.id);
+        PROCESSED_AUTO_ACTIONS.add(`close_${event.id}`); 
+        await autoCloseEvent(event.id);
       }
     }
-  } catch (e) { console.error(e); }
+  } catch (e) { console.error("Ошибка автопилота:", e); }
 }, 60000);
+
+// --- ФУНКЦИИ АВТОПИЛОТА ---
 
 async function runAutoQuiz(eventId: number) {
   const bks = await db.query.bookings.findMany({ where: and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true)) });
@@ -278,7 +321,6 @@ async function autoCloseEvent(eventId: number) {
     }
   }
 }
-
 // --- 7. ОБРАБОТЧИКИ ---
 
 bot.start(async (ctx) => {
@@ -329,12 +371,52 @@ bot.hears('🎮 Игры', (ctx) => {
 });
 
 // Обработчик кнопки "🎲 Новая тема"
-bot.hears('🎲 Новая тема (для Talk & Toast)', (ctx) => {
+bot.hears('🎲 Новая тема (для Talk & Toast)', async (ctx) => {
+  const user = await db.query.users.findFirst({
+    where: eq(schema.users.telegramId, ctx.from.id)
+  });
+  if (!user) return;
+
+  // Ищем оплаченную запись на активную игру Talk & Toast
+  const myBookings = await db.query.bookings.findMany({
+    where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.paid, true))
+  });
+
+  let currentEventId = null;
+  for (const b of myBookings) {
+    const event = await db.query.events.findFirst({
+      where: and(
+        eq(schema.events.id, b.eventId),
+        eq(schema.events.type, 'talk_toast'),
+        eq(schema.events.isActive, true)
+      )
+    });
+    
+    if (event) {
+      const start = DateTime.fromFormat(event.dateString, "dd.MM.yyyy HH:mm");
+      if (start.isValid) {
+        const diff = DateTime.now().diff(start, 'hours').hours;
+        // Кнопка работает только в интервале: за 15 минут до и 4 часа после начала
+        if (diff >= -0.25 && diff <= 4) {
+          currentEventId = event.id;
+          break;
+        }
+      }
+    }
+  }
+
+  if (!currentEventId) {
+    // Если игры нет или она еще не началась, убираем кнопку из меню
+    return ctx.reply("❌ Кнопка доступна только во время игры, на которую вы записаны.", getMainKeyboard(false));
+  }
+
   const randomTopic = CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)];
-  return ctx.replyWithHTML(
-    `🎲 <b>Случайная тема для обсуждения:</b>\n\n${randomTopic}`,
-    getMainKeyboard(true)
-  );
+  
+  // Отправляем всем за столом
+  await broadcastToEvent(currentEventId, `🎲 <b>Новая общая тема для стола:</b>\n\n${randomTopic}`);
+  
+  // Подтверждаем нажавшему, что всё ок
+  return ctx.reply("✅ Тема отправлена всем участникам!");
 });                
 
 // Кнопка "📜 Правила"
