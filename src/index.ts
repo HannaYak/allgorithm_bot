@@ -539,7 +539,7 @@ bot.action(/exec_canc_(\d+)/, async (ctx) => {
     if (!booking) return;
     const event = await db.query.events.findFirst({ where: eq(schema.events.id, booking.eventId) });
     if (!event) return;
-    if (DateTime.fromFormat(event.dateString, "dd.MM.yyyy HH:mm").diffNow('hours').hours < 36) return ctx.reply('⚠️ Поздновато для отмены.');
+    if (DateTime.fromFormat(event.dateString, "dd.MM.yyyy HH:mm").diffNow('hours').hours < 36) return ctx.reply('⚠️ Поздновато для отмены, обратитесь в "Помощь"');
     
     // МЕЛОЧЬ: Возврат ваучера (Full Free vs 10 PLN)
     const usedVoucher = await db.query.vouchers.findFirst({ where: and(eq(schema.vouchers.userId, booking.userId), eq(schema.vouchers.status, 'used')), orderBy: [desc(schema.vouchers.id)] });
