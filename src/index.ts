@@ -112,7 +112,7 @@ const registerWizard = new Scenes.WizardScene(
   async (ctx) => { if (!ctx.message || !('text' in ctx.message)) return; (ctx.wizard.state as any).name = ctx.message.text; ctx.reply('2. Твоя дата рождения? (ДД.ММ.ГГГГ)'); return ctx.wizard.next(); },
   async (ctx) => { if (!ctx.message || !('text' in ctx.message)) return; (ctx.wizard.state as any).birthDate = ctx.message.text; ctx.reply('3. Факт о себе, который никто не знает:'); return ctx.wizard.next(); },
   async (ctx) => { if (!ctx.message || !('text' in ctx.message)) return; (ctx.wizard.state as any).fact = ctx.message.text; ctx.reply('4. Самая странная история из жизни:'); return ctx.wizard.next(); },
-  async (ctx) => { if (!ctx.message || !('text' in ctx.message)) return; (ctx.wizard.state as any).story = ctx.message.text; ctx.reply('5. Твой пол (для баланса пар):', Markup.keyboard([['Мужчина', 'Женщина']]).oneTime().resize()); return ctx.wizard.next(); },
+  async (ctx) => { if (!ctx.message || !('text' in ctx.message)) return; (ctx.wizard.state as any).story = ctx.message.text; ctx.reply('5. Твой пол (для баланса пар): После этого вопроса возрощайся в меню "Игры" и можешь покупать билет на игру!', Markup.keyboard([['Мужчина', 'Женщина']]).oneTime().resize()); return ctx.wizard.next(); },
   async (ctx) => {
     if (!ctx.message || !('text' in ctx.message)) return;
     const gender = ctx.message.text; const data = ctx.wizard.state as any;
