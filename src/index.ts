@@ -125,7 +125,6 @@ const registerWizard = new Scenes.WizardScene(
   }
 );
 
-// 2. Мастер добавления игр (ИСПРАВЛЕННАЯ СТРУКТУРА)
 // 2. Мастер добавления игр (ИСПРАВЛЕНО)
 const addEventWizard = new Scenes.WizardScene(
   'ADD_EVENT_SCENE',
