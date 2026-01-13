@@ -788,6 +788,15 @@ bot.command('book', async (ctx) => {
     }
 });
 
+// Обработчик кнопки "Записи" - показывает список игр
+bot.action('admin_bookings', async (ctx) => {
+    const events = await db.query.events.findMany({ where: eq(schema.events.isActive, true) });
+    if (events.length === 0) return ctx.reply('Активных игр нет.');
+    
+    const btns = events.map(e => [Markup.button.callback(`${e.dateString} | ${e.type}`, `view_ev_bks_${e.id}`)]);
+    ctx.editMessageText('Выберите игру, чтобы посмотреть список участников:', Markup.inlineKeyboard(btns));
+});
+
 // 3. Просмотр участников (Оптимизированный вариант, показывает ВСЕХ)
 bot.action(/view_ev_bks_(\d+)/, async (ctx) => {
     const eid = parseInt(ctx.match[1]);
