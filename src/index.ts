@@ -89,6 +89,9 @@ const parseEventDesc = (desc: string | null) => {
 };
 
 // --- 4. STATE ---
+
+const PENDING_PAYMENTS = new Map<string, { time: DateTime, notified: boolean }>();
+
 const FAST_DATES_STATE = {
   eventId: 0, round: 0, 
   votes: new Map<number, number[]>(), 
@@ -122,7 +125,8 @@ const registerWizard = new Scenes.WizardScene(
   }
 );
 
-// 2. Мастер добавления игр
+// 2. Мастер добавления игр (ИСПРАВЛЕННАЯ СТРУКТУРА)
+// 2. Мастер добавления игр (ИСПРАВЛЕНО)
 const addEventWizard = new Scenes.WizardScene(
   'ADD_EVENT_SCENE',
   async (ctx) => {
@@ -130,21 +134,32 @@ const addEventWizard = new Scenes.WizardScene(
     return ctx.wizard.next();
   },
   async (ctx) => {
+    if (!ctx.message || !('text' in ctx.message)) return;
     (ctx.wizard.state as any).type = ctx.message.text;
     await ctx.reply('Введите дату и время (например: 15.01.2026 19:00):');
     return ctx.wizard.next();
   },
   async (ctx) => {
-    (ctx.wizard.state as any).date = ctx.message.text;
+    if (!ctx.message || !('text' in ctx.message)) return;
+    const dateStr = ctx.message.text;
+    const checkDate = DateTime.fromFormat(dateStr, "dd.MM.yyyy HH:mm", { zone: 'Europe/Warsaw' });
+    
+    if (!checkDate.isValid) {
+      return ctx.reply("❌ Ошибка формата! Введи дату строго по образцу: 15.01.2026 19:00");
+    }
+    
+    (ctx.wizard.state as any).date = dateStr;
     await ctx.reply('Введите описание в формате: Название ### Адрес');
     return ctx.wizard.next();
   },
   async (ctx) => {
+    if (!ctx.message || !('text' in ctx.message)) return;
     (ctx.wizard.state as any).desc = ctx.message.text;
-    await ctx.reply('Введите максимальное количество участников:');
+    await ctx.reply('Введите макс. количество участников:');
     return ctx.wizard.next();
   },
   async (ctx) => {
+    if (!ctx.message || !('text' in ctx.message)) return;
     const state = ctx.wizard.state as any;
     const max = parseInt(ctx.message.text);
     if (isNaN(max)) return ctx.reply('Ошибка: введите число.');
@@ -154,11 +169,10 @@ const addEventWizard = new Scenes.WizardScene(
       dateString: state.date,
       description: state.desc,
       maxPlayers: max,
-      currentPlayers: 0,
       isActive: true
     });
     
-    await ctx.reply('✅ Игра успешно добавлена в расписание!');
+    await ctx.reply('✅ Игра успешно добавлена!');
     return ctx.scene.leave();
   }
 );
@@ -291,6 +305,21 @@ setInterval(async () => {
         await autoCloseEvent(event.id);
       }
     }
+    // --- НАПОМИНАНИЕ О НЕЗАВЕРШЕННОЙ ОПЛАТЕ ---
+      for (const [uId, data] of PENDING_PAYMENTS.entries()) {
+        const minutesPassed = now.diff(data.time, 'minutes').minutes;
+        if (minutesPassed >= 30 && !data.notified) {
+          const user = await db.query.users.findFirst({ where: eq(schema.users.id, parseInt(uId)) });
+          if (user) {
+            await bot.telegram.sendMessage(user.telegramId, 
+              `🔔 <b>Вы не завершили оплату!</b>\n\nВижу, что вы начали запись на игру, но оплата не подтверждена. Места разлетаются быстро! Нужна помощь? Напишите в 🆘 Помощь.`, 
+              { parse_mode: 'HTML' }
+            ).catch(() => {});
+          }
+          PENDING_PAYMENTS.set(uId, { ...data, notified: true });
+        }
+        if (minutesPassed > 120) PENDING_PAYMENTS.delete(uId);
+      }
   } catch (e) { console.error("Ошибка автопилота:", e); }
 }, 60000);
 
@@ -604,6 +633,7 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
         await ctx.reply(`К оплате: ${activeVoucher ? '40' : '50'} PLN`, Markup.inlineKeyboard([[Markup.button.url('💸 Оплатить (BLIK, Revolut...)', stripeSession.url!)], [Markup.button.callback('✅ Я оплатил', `confirm_pay_${eid}`)]]));
 
     } catch (e) { console.error(e); ctx.reply('Ошибка Stripe. Проверь валюту в Dashboard!'); }
+  PENDING_PAYMENTS.set(`${user.id}`, { time: DateTime.now(), notified: false });
 });
 
 bot.action(/confirm_pay_(\d+)/, async (ctx) => {
@@ -612,6 +642,7 @@ bot.action(/confirm_pay_(\d+)/, async (ctx) => {
         const sessions = await stripe.checkout.sessions.list({ limit: 15 });
         const paid = sessions.data.find(s => s.metadata?.telegramId === ctx.from!.id.toString() && s.metadata?.eventId === eid.toString() && s.payment_status === 'paid');
         if (!paid) return ctx.reply('🔍 Оплата не найдена. Подождите 10 сек.');
+        PENDING_PAYMENTS.delete(`${user.id}`);
 
         const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
         if (!user) return;
@@ -704,7 +735,7 @@ bot.action(/v_set_(10|free|reject)_(\d+)/, async (ctx) => {
 });
 // --- 11. АДМИНКА (ПОЛНАЯ ИСПРАВЛЕННАЯ ВЕРСИЯ БЕЗ ОШИБОК) ---
 
-// 1. Команда просмотра списка ID (Исправлено: добавлены кавычки)
+// --- Исправленные команды админа ---
 bot.command('list_ids', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     try {
@@ -715,35 +746,24 @@ bot.command('list_ids', async (ctx) => {
             msg += `🔹 ID: <code>${e.id}</code> | ${e.dateString} | ${e.type}\n`;
         });
         await ctx.replyWithHTML(msg);
-    } catch (e) {
-        ctx.reply('Ошибка при получении списка ID.');
-    }
+    } catch (e) { ctx.reply('Ошибка получения ID.'); }
 });
 
-// 2. Ручное добавление игрока (Исправлено: убрана вложенная команда)
 bot.command('book', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     const parts = ctx.message.text.split(' ');
     if (parts.length < 3) return ctx.reply('Используй: /book [TG_ID] [EVENT_ID]');
-
     const targetTgId = parseInt(parts[1]);
     const eventId = parseInt(parts[2]);
-
     try {
         const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, targetTgId) });
         const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
-
-        if (!user) return ctx.reply('❌ Пользователь не найден в базе.');
-        if (!event) return ctx.reply('❌ Игра не найдена.');
-
+        if (!user || !event) return ctx.reply('❌ Юзер или игра не найдены.');
         await db.insert(schema.bookings).values({ userId: user.id, eventId: eventId, paid: true });
         await db.update(schema.events).set({ currentPlayers: (event.currentPlayers || 0) + 1 }).where(eq(schema.events.id, eventId));
-
-        await ctx.reply(`✅ Пользователь ${user.name || targetTgId} успешно добавлен!`);
-        await bot.telegram.sendMessage(targetTgId, '🎉 Организатор подтвердил вашу запись! Вы в игре! ✨').catch(() => {});
-    } catch (e) {
-        ctx.reply('❌ Ошибка. Возможно, уже записан.');
-    }
+        await ctx.reply(`✅ Пользователь ${user.name} добавлен!`);
+        await bot.telegram.sendMessage(targetTgId, '🎉 Организатор подтвердил вашу запись! До встречи! ✨').catch(() => {});
+    } catch (e) { ctx.reply('❌ Ошибка (возможно, уже записан).'); }
 });
 
 // 3. Просмотр участников (Оптимизированный вариант, показывает ВСЕХ)
@@ -761,15 +781,6 @@ bot.action(/view_ev_bks_(\d+)/, async (ctx) => {
     ctx.replyWithHTML(msg);
 });
 
-// 4. Финансовая статистика
-bot.action('admin_stats', async (ctx) => {
-    const paidBookings = await db.query.bookings.findMany({ where: eq(schema.bookings.paid, true) });
-    const totalRevenue = paidBookings.length * 50; 
-    await ctx.editMessageText(
-        `📊 <b>Статистика (по БД):</b>\n\n🎟 Оплачено билетов: <b>${paidBookings.length}</b>\n💰 Выручка: <b>${totalRevenue} PLN</b>`,
-        { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Назад', 'admin_back_to_panel')]]) }
-    );
-});
 
 // 5. Управление Speed Dating и Stock
 bot.action('admin_fd_panel', ctx => { ctx.editMessageText(`💘 <b>Пульт Speed Dating</b>`, { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('✍️ Ввести анкеты', 'fd_input_start')], [Markup.button.callback('🏁 Рассчитать мэтчи', 'fd_calc_matches')]]) }); });
@@ -792,6 +803,26 @@ bot.action(/exec_close_(\d+)/, async (ctx) => {
 bot.action('admin_back_to_panel', (ctx) => {
     ctx.deleteMessage();
     return ctx.reply('Возврат в панель...', Markup.inlineKeyboard([[Markup.button.callback('Открыть панель', 'panel')]]));
+});
+
+// --- ВОЗВРАТ ФУНКЦИЙ ПУЛЬТА ---
+bot.action('fd_input_start', ctx => { 
+  const btns = Array.from(FAST_DATES_STATE.participants.values()).sort((a,b)=>a.num-b.num).map(p => [Markup.button.callback(`№${p.num} (${p.gender[0]})`, `fd_edit_${p.id}`)]); 
+  ctx.editMessageText('Чью анкету вводим?', Markup.inlineKeyboard([...btns, [Markup.button.callback('🔙', 'admin_fd_panel')]])); 
+});
+
+bot.action(/sk_pick_(\d+)/, (ctx) => {
+  STOCK_STATE.currentQuestionIndex = parseInt(ctx.match[1]); STOCK_STATE.playerAnswers.clear();
+  ctx.editMessageText(`Вопрос выбран.`, Markup.inlineKeyboard([[Markup.button.callback('🚀 ОТПРАВИТЬ', 'stock_send_phase_0')]]));
+});
+
+bot.action(/stock_send_phase_(\d+)/, async (ctx) => {
+  const phase = parseInt(ctx.match[1]); const q = STOCK_QUESTIONS[STOCK_STATE.currentQuestionIndex];
+  let msg = phase === 0 ? `❓ <b>ВОПРОС:</b>\n${q.question}` : phase <= 3 ? `💡 <b>ПОДСКАЗКА №${phase}:</b>\n${q.hints[phase-1]}` : `🏁 <b>ОТВЕТ: ${q.answer}</b>\n${q.fact}`;
+  const active = await db.query.events.findFirst({ where: and(eq(schema.events.type, 'stock_know'), eq(schema.events.isActive, true)) });
+  if (active) await broadcastToEvent(active.id, msg);
+  const buttons = []; if (phase < 4) buttons.push([Markup.button.callback(phase === 3 ? '✅ ОТВЕТ' : `💡 Подсказка ${phase+1}`, `stock_send_phase_${phase+1}`)]);
+  ctx.editMessageText(`Фаза ${phase} отправлена.`, Markup.inlineKeyboard(buttons));
 });
 
 // --- 12. ГЛАВНЫЙ ОБРАБОТЧИК СООБЩЕНИЙ ---
