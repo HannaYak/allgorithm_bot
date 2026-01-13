@@ -734,8 +734,13 @@ bot.command('panel', async (ctx) => {
         [Markup.button.callback('➕ Игру', 'admin_add_event'), Markup.button.callback('📋 Записи', 'admin_bookings')],
         [Markup.button.callback('📢 Рассылка', 'admin_msg_event'), Markup.button.callback('🏁 ЗАВЕРШИТЬ', 'admin_close_event')],
         [Markup.button.callback('💘 Пульт FD', 'admin_fd_panel'), Markup.button.callback('🧠 Пульт Stock', 'admin_stock_list')],
-        [Markup.button.callback('📊 Статистика', 'admin_stats')]
+        [Markup.button.callback('📊 Статистика', 'admin_stats'), Markup.button.callback('📢 Рассылка (ВСЕМ)', 'admin_global_broadcast')],
     ], { columns: 2 }));
+});
+
+bot.action('admin_global_broadcast', (ctx) => {
+  ctx.reply('Введите текст сообщения для ВСЕХ пользователей бота:');
+  (ctx.session as any).waitingForGlobalBroadcast = true;
 });
 
 // Кнопки для запуска сцен из панели
@@ -759,18 +764,28 @@ bot.command('list_ids', async (ctx) => {
 bot.command('book', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     const parts = ctx.message.text.split(' ');
-    if (parts.length < 3) return ctx.reply('Используй: /book [TG_ID] [EVENT_ID]');
+    if (parts.length < 3) return ctx.reply('Используй: /book [ID_Юзера] [ID_Игры]');
+
     const targetTgId = parseInt(parts[1]);
     const eventId = parseInt(parts[2]);
+
     try {
         const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, targetTgId) });
         const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
-        if (!user || !event) return ctx.reply('❌ Юзер или игра не найдены.');
-        await db.insert(schema.bookings).values({ userId: user.id, eventId: eventId, paid: true });
+
+        if (!user || !event) return ctx.reply('❌ Ошибка: Юзер или Игра не найдены в базе.');
+
+        // Создаем запись
+        await db.insert(schema.bookings).values({ userId: user.id, eventId: event.id, paid: true });
+        
+        // Обновляем количество игроков в игре
         await db.update(schema.events).set({ currentPlayers: (event.currentPlayers || 0) + 1 }).where(eq(schema.events.id, eventId));
-        await ctx.reply(`✅ Пользователь ${user.name} добавлен!`);
-        await bot.telegram.sendMessage(targetTgId, '🎉 Организатор подтвердил вашу запись! До встречи! ✨').catch(() => {});
-    } catch (e) { ctx.reply('❌ Ошибка записи.'); }
+
+        await ctx.reply(`✅ Пользователь ${user.name} успешно добавлен на игру №${eventId}!`);
+        await bot.telegram.sendMessage(targetTgId, '🎉 Организатор подтвердил вашу запись на игру! До встречи! ✨');
+    } catch (e) {
+        ctx.reply('❌ Ошибка: Скорее всего, этот пользователь уже записан на эту игру.');
+    }
 });
 
 // 3. Просмотр участников (Оптимизированный вариант, показывает ВСЕХ)
@@ -814,8 +829,19 @@ bot.action('admin_back_to_panel', (ctx) => {
 
 // --- ЛОГИКА СТАТИСТИКИ И МЭТЧЕЙ ---
 bot.action('admin_stats', async (ctx) => {
-  const paid = await db.query.bookings.findMany({ where: eq(schema.bookings.paid, true) });
-  await ctx.reply(`📊 <b>Всего оплат:</b> ${paid.length}\n💰 <b>Выручка:</b> ${paid.length * 50} PLN`);
+  const allUsers = await db.query.users.findMany();
+  const allPaidBookings = await db.query.bookings.findMany({ where: eq(schema.bookings.paid, true) });
+  const totalRevenue = allPaidBookings.length * 50; // Считаем общую выручку
+
+  const statsMsg = `📊 <b>ОБЩАЯ СТАТИСТИКА КЛУБА</b>\n\n` +
+    `👥 Всего пользователей в базе: <b>${allUsers.length}</b>\n` +
+    `🎟 Всего продано билетов: <b>${allPaidBookings.length}</b>\n` +
+    `💰 Общая выручка: <b>${totalRevenue} PLN</b>`;
+
+  await ctx.editMessageText(statsMsg, { 
+    parse_mode: 'HTML', 
+    ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Назад', 'admin_back_to_panel')]]) 
+  });
 });
 
 bot.action(/fd_edit_(\d+)/, async (ctx) => {
@@ -890,6 +916,18 @@ bot.on('message', async (ctx, next) => {
         sess.waitingForBroadcast = false;
         return ctx.reply(`✅ Рассылка окончена!`);
     }
+    if (sess?.waitingForGlobalBroadcast && userId === ADMIN_ID) {
+    const allUsers = await db.query.users.findMany();
+    let count = 0;
+    for (const u of allUsers) {
+        try {
+            await ctx.telegram.sendMessage(u.telegramId, `📢 <b>Объявление клуба:</b>\n\n${text}`, { parse_mode: 'HTML' });
+            count++;
+        } catch (e) { /* Игнорируем заблокировавших бота */ }
+    }
+    sess.waitingForGlobalBroadcast = false;
+    return ctx.reply(`✅ Рассылка завершена! Отправлено: ${count} чел.`);
+}
 
     // Ставки Stock & Know
     if (STOCK_STATE.currentQuestionIndex !== -1 && !isNaN(parseInt(text)) && !text.startsWith('/')) {
