@@ -172,25 +172,29 @@ const msgEventWizard = new Scenes.WizardScene(
       await ctx.reply('Активных игр пока нет.');
       return ctx.scene.leave();
     }
-    const btns = events.map(e => [
-      Markup.button.callback(`${e.dateString} | ${e.type}`, `select_msg_ev_${e.id}`)
-    ]);
-    await ctx.reply('Выберите игру, участникам которой нужно отправить сообщение:', Markup.inlineKeyboard(btns));
+    const btns = events.map(e => [Markup.button.callback(`${e.dateString} | ${e.type}`, `select_msg_ev_${e.id}`)]);
+    await ctx.reply('Выберите игру для рассылки:', Markup.inlineKeyboard(btns));
     return ctx.wizard.next();
   },
   async (ctx) => {
-    if (!ctx.message || !('text' in ctx.message)) {
-      await ctx.reply('Пожалуйста, отправьте текстовое сообщение.');
-      return;
+    // Обрабатываем нажатие кнопки прямо тут
+    if (ctx.callbackQuery && 'data' in ctx.callbackQuery) {
+      const data = ctx.callbackQuery.data;
+      if (data.startsWith('select_msg_ev_')) {
+        const eid = parseInt(data.replace('select_msg_ev_', ''));
+        (ctx.wizard.state as any).selectedEventId = eid;
+        await ctx.answerCbQuery();
+        await ctx.editMessageText('✅ Игра выбрана. Теперь напишите ТЕКСТ сообщения для участников:');
+        return ctx.wizard.next();
+      }
     }
+    return ctx.reply('Пожалуйста, выберите игру, нажав на кнопку.');
+  },
+  async (ctx) => {
+    if (!ctx.message || !('text' in ctx.message)) return ctx.reply('Отправьте текстовое сообщение.');
     const eventId = (ctx.wizard.state as any).selectedEventId;
-    const textMessage = ctx.message.text;
-    if (!eventId) {
-      await ctx.reply('Ошибка: игра не выбрана. Попробуйте снова.');
-      return ctx.scene.leave();
-    }
-    await broadcastToEvent(eventId, `📢 <b>Сообщение от организаторов:</b>\n\n${textMessage}`);
-    await ctx.reply('✅ Рассылка по участникам игры успешно завершена!');
+    await broadcastToEvent(eventId, `📢 <b>Сообщение от организаторов:</b>\n\n${(ctx.message as any).text}`);
+    await ctx.reply('✅ Рассылка успешно завершена!');
     return ctx.scene.leave();
   }
 );
@@ -738,12 +742,7 @@ bot.command('panel', async (ctx) => {
 // Запуск сцены при нажатии кнопки в панели
 bot.action('admin_msg_event', (ctx) => ctx.scene.enter('MSG_EVENT_SCENE'));
 
-// Логика выбора ID игры внутри сцены
-bot.action(/select_msg_ev_(\d+)/, async (ctx) => {
-  const eid = parseInt(ctx.match[1]);
-  (ctx.wizard.state as any).selectedEventId = eid; // Сохраняем ID в состояние сцены
-  await ctx.editMessageText('Игра выбрана. Теперь введите текст сообщения, который получат все оплатившие участники:');
-});
+
 
 // Обработчик для кнопки подробной статистики (выручка)
 bot.action('admin_stats', async (ctx) => {
@@ -782,6 +781,47 @@ bot.action('admin_bookings', async (ctx) => {
   if (events.length === 0) return ctx.reply('Нет активных игр.');
   const btns = events.map(e => [Markup.button.callback(`${e.dateString} | ${e.type}`, `view_ev_bks_${e.id}`)]);
   ctx.editMessageText('Выберите игру для просмотра участников:', Markup.inlineKeyboard(btns));
+});
+
+// --- КОМАНДА ДЛЯ РУЧНОГО ДОБАВЛЕНИЯ ИГРОКА ---
+// Формат: /book 1345268877 32 (где 32 — это ID игры из твоих логов)
+bot.command('book', async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return;
+
+  const parts = ctx.message.text.split(' ');
+  if (parts.length < 3) return ctx.reply('Используй: /book [ID_пользователя] [ID_игры]');
+
+  const targetTgId = parseInt(parts[1]);
+  const eventId = parseInt(parts[2]);
+
+  try {
+    const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, targetTgId) });
+    const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
+
+    if (!user) return ctx.reply('❌ Пользователь не найден в базе. Он должен хотя бы раз нажать /start');
+    if (!event) return ctx.reply('❌ Игра с таким ID не найдена.');
+
+    // Добавляем запись об оплате
+    await db.insert(schema.bookings).values({
+      userId: user.id,
+      eventId: eventId,
+      paid: true
+    });
+
+    // Обновляем счетчик игроков в игре
+    await db.update(schema.events)
+      .set({ currentPlayers: (event.currentPlayers || 0) + 1 })
+      .where(eq(schema.events.id, eventId));
+
+    await ctx.reply(`✅ Пользователь ${user.name || targetTgId} успешно добавлен на игру №${eventId}!`);
+    
+    // Уведомляем её
+    await bot.telegram.sendMessage(targetTgId, '🎉 Организатор подтвердил вашу оплату вручную! Вы записаны на игру. До встречи! ✨');
+
+  } catch (e) {
+    console.error(e);
+    ctx.reply('❌ Ошибка при добавлении. Возможно, она уже записана.');
+  }
 });
 
 bot.action(/view_ev_bks_(\d+)/, async (ctx) => {
