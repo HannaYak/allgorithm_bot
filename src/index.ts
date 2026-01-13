@@ -728,6 +728,20 @@ bot.action(/v_set_(10|free|reject)_(\d+)/, async (ctx) => {
 });
 // --- 11. АДМИНКА (ПОЛНАЯ ИСПРАВЛЕННАЯ ВЕРСИЯ БЕЗ ОШИБОК) ---
 
+bot.command('panel', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    return ctx.replyWithHTML(`🔒 <b>Админ-панель</b>`, Markup.inlineKeyboard([
+        [Markup.button.callback('➕ Игру', 'admin_add_event'), Markup.button.callback('📋 Записи', 'admin_bookings')],
+        [Markup.button.callback('📢 Рассылка', 'admin_msg_event'), Markup.button.callback('🏁 ЗАВЕРШИТЬ', 'admin_close_event')],
+        [Markup.button.callback('💘 Пульт FD', 'admin_fd_panel'), Markup.button.callback('🧠 Пульт Stock', 'admin_stock_list')],
+        [Markup.button.callback('📊 Статистика', 'admin_stats')]
+    ], { columns: 2 }));
+});
+
+// Кнопки для запуска сцен из панели
+bot.action('admin_add_event', (ctx) => ctx.scene.enter('ADD_EVENT_SCENE'));
+bot.action('admin_msg_event', (ctx) => ctx.scene.enter('MSG_EVENT_SCENE'));
+
 // --- Исправленные команды админа ---
 bot.command('list_ids', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
@@ -903,7 +917,23 @@ bot.command('reply', async (ctx) => {
     bot.telegram.sendMessage(p[1], `👮‍♂️ <b>Ответ админа:</b>\n\n${p.slice(2).join(' ')}`, { parse_mode: 'HTML' }).catch(()=>{});
 });
 
+
+
+// Обработчики кнопок кабинета
 bot.action('start_registration', (ctx) => { ctx.deleteMessage(); ctx.scene.enter('REGISTER_SCENE'); });
+
+bot.action('upload_voucher', (ctx) => { 
+    ctx.reply('📸 Отправь фото ваучера прямо сюда.'); 
+    (ctx.session as any).waitingForVoucher = true; 
+});
+bot.action('my_games', async (ctx) => {
+    const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
+    const bks = await db.select({ bid: schema.bookings.id, d: schema.events.dateString }).from(schema.bookings).innerJoin(schema.events, eq(schema.bookings.eventId, schema.events.id)).where(and(eq(schema.bookings.userId, user!.id), eq(schema.bookings.paid, true), eq(schema.events.isActive, true)));
+    if (bks.length === 0) return ctx.reply('📭 Активных записей нет.');
+    for (const b of bks) {
+        await ctx.reply(`🗓 <b>${b.d}</b>`, { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('❌ Отменить', `conf_canc_${b.bid}`)]]) });
+    }
+});
 
 // --- ЗАПУСК СЕРВЕРА ---
 const app = express();
