@@ -808,6 +808,29 @@ bot.command('book', async (ctx) => {
       paid: true
     });
 
+    // --- КОМАНДА ДЛЯ ПРОСМОТРА ID ВСЕХ ИГР ---
+bot.command('list_ids', async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return;
+
+  try {
+    const events = await db.query.events.findMany({ 
+      where: eq(schema.events.isActive, true) 
+    });
+
+    if (events.length === 0) return ctx.reply('Нет активных игр.');
+
+    let msg = 🆔 <b>Список ID активных игр:</b>\n\n;
+    events.forEach(e => {
+      msg += 🔹 ID: <code>${e.id}</code> | ${e.dateString} | ${e.type}\n;
+    });
+
+    await ctx.replyWithHTML(msg);
+  } catch (e) {
+    console.error(e);
+    ctx.reply('Ошибка при получении списка ID.');
+  }
+});
+
     // Обновляем счетчик игроков в игре
     await db.update(schema.events)
       .set({ currentPlayers: (event.currentPlayers || 0) + 1 })
