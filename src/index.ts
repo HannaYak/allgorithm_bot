@@ -909,7 +909,7 @@ bot.action(/view_ev_bks_(\d+)/, async (ctx) => {
     for (const b of bookings) {
         const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
         const status = b.paid ? '✅ Оплачено' : '⏳ Ждет оплаты';
-        msg += `• ${u?.name || 'Аноним'} (@${u?.username || 'нет'}) — <b>${status}</b>\n`;
+        msg += `• ${u?.name || 'Аноним'} (@${u?.username || 'нет'}) \n   ID: <code>${u?.telegramId}</code> — <b>${status}</b>\n\n`;
     }
     ctx.replyWithHTML(msg);
 });
