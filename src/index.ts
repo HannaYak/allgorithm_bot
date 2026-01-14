@@ -366,16 +366,19 @@ bot.hears('👤 Личный кабинет', async (ctx) => {
   const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
   if (!user) return;
 
-  // Ищем ВСЕ активные ваучеры (и -10, и БЕСПЛАТНЫЕ)
-  const allVouchers = await db.query.vouchers.findMany({ 
+  // Внутри bot.hears('👤 Личный кабинет', ...)
+  const vouchers = await db.query.vouchers.findMany({ 
     where: and(
-      eq(schema.vouchers.userId, user.id), 
-      or(eq(schema.vouchers.status, 'approved_10'), eq(schema.vouchers.status, 'approved_free'))
+        eq(schema.vouchers.userId, user.id), 
+        or(
+            eq(schema.vouchers.status, 'approved_10'), 
+            eq(schema.vouchers.status, 'approved_free')
+        )
     ) 
   });
 
-  const count10 = allVouchers.filter(v => v.status === 'approved_10').length;
-  const countFree = allVouchers.filter(v => v.status === 'approved_free').length;
+  const count10 = vouchers.filter(v => v.status === 'approved_10').length;
+  const countFree = vouchers.filter(v => v.status === 'approved_free').length;
 
   let msg = `👤 <b>Имя:</b> ${user.name || 'Не заполнено'}\n`;
   msg += `🎫 <b>Скидки (-10 PLN):</b> ${count10} шт.\n`;
@@ -662,7 +665,7 @@ bot.action(/confirm_pay_(\d+)/, async (ctx) => {
             const inviter = await db.query.users.findFirst({ where: eq(schema.users.id, user.invitedBy) });
             if (inviter) {
                 await db.insert(schema.vouchers).values({ userId: inviter.id, status: 'approved_10' });
-                bot.telegram.sendMessage(inviter.telegramId, `🎉 Твой друг оплатил игру! Тебе начислена скидка -10 PLN!Скорее записывай для получение поных эмоций🎉`).catch(()=>{});
+                bot.telegram.sendMessage(inviter.telegramId, `🎉 Твой друг оплатил игру! Тебе начислена скидка -10 PLN!Скорее записывай для получение ноных эмоций🎉`).catch(()=>{});
                 await db.update(schema.users).set({ invitedBy: null }).where(eq(schema.users.id, user.id));
             }
         }
@@ -869,10 +872,11 @@ bot.command('cancel_with_voucher', async (ctx) => {
             .where(eq(schema.events.id, event.id));
 
         // 4. Начисляем FREE ваучер в таблицу vouchers
+        // 4. Начисляем FREE ваучер в таблицу vouchers
         await db.insert(schema.vouchers).values({
             userId: user.id,
             status: 'approved_free',
-            photoFileId: null // Если в базе это поле обязательно, пустая строка или null спасет от ошибки
+            photoFileId: 'MANUAL' // <--- ЗАМЕНИ null НА 'MANUAL'
         });
 
         // 5. Уведомляем человека
