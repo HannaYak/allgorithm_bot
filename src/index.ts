@@ -825,6 +825,55 @@ bot.command('reschedule', async (ctx) => {
     }
 });
 
+bot.command('cancel_with_voucher', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    const parts = ctx.message.text.split(' ');
+    // Формат: /cancel_with_voucher [TG_ID_Участника] [ID_Игры]
+    if (parts.length < 3) return ctx.reply('Используй: /cancel_with_voucher [TG_ID] [ID_Игры]');
+
+    const targetTgId = parseInt(parts[1]);
+    const eventId = parseInt(parts[2]);
+
+    try {
+        // 1. Ищем юзера и игру
+        const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, targetTgId) });
+        const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
+        if (!user || !event) return ctx.reply('❌ Юзер или игра не найдены.');
+
+        const booking = await db.query.bookings.findFirst({ 
+            where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.eventId, event.id)) 
+        });
+        if (!booking) return ctx.reply('❌ Запись на эту игру не найдена.');
+
+        // 2. Удаляем запись из таблицы bookings
+        await db.delete(schema.bookings).where(eq(schema.bookings.id, booking.id));
+
+        // 3. Возвращаем 1 свободное место в игре
+        await db.update(schema.events)
+            .set({ currentPlayers: Math.max(0, (event.currentPlayers || 0) - 1) })
+            .where(eq(schema.events.id, event.id));
+
+        // 4. Начисляем FREE ваучер в таблицу vouchers
+        await db.insert(schema.vouchers).values({
+            userId: user.id,
+            status: 'approved_free' // Этот статус уже есть в твоей логике оплаты
+        });
+
+        // 5. Уведомляем человека
+        const userNotice = `🚫 <b>Ваша запись на игру отменена</b>\n\n` +
+            `Организатор изменил список участников игры "${event.type}".\n\n` +
+            `🎁 Не переживайте! Вам начислен ваучер на <b>БЕСПЛАТНУЮ ИГРУ</b>. Вы сможете использовать его при записи на любое следующее мероприятие!`;
+
+        await bot.telegram.sendMessage(targetTgId, userNotice, { parse_mode: 'HTML' }).catch(()=>{});
+
+        await ctx.reply(`✅ Участник ${user.name} удален. Место №${eventId} освобождено, юзеру выдан FREE ваучер.`);
+
+    } catch (e) {
+        console.error(e);
+        ctx.reply('❌ Произошла ошибка. Проверь ID участников и игры.');
+    }
+});
+
 // Обработчик кнопки "Записи" - показывает список игр
 bot.action('admin_bookings', async (ctx) => {
     const events = await db.query.events.findMany({ where: eq(schema.events.isActive, true) });
