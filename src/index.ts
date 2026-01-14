@@ -589,7 +589,7 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {  //Gemini  если ты это �
         if (((user.gamesPlayed || 0) + 1) % 5 === 0) {
             await db.insert(schema.bookings).values({ userId: user.id, eventId: eid, paid: true });
             await db.update(schema.events).set({ currentPlayers: (event.currentPlayers || 0) + 1 }).where(eq(schema.events.id, eid));
-            return ctx.reply('🎁 Поздравляем! Это твоя 5-я игра, она БЕСПЛАТНАЯ! Скорее записывай дл получение поных эмоций🎉');
+            return ctx.reply('🎁 Поздравляем! Это твоя 5-я игра, она БЕСПЛАТНАЯ! Скорее записывайся для получение поных эмоций🎉');
         }
 
         // 2. МЕЛОЧЬ: Проверка активных ваучеров
@@ -1019,18 +1019,86 @@ bot.action('my_games', async (ctx) => {
     }
 });
 
+// --- АВТОМАТИЧЕСКАЯ ЗАПИСЬ ПОСЛЕ ОПЛАТЫ (WEBHOOK) ---
+async function handleSuccessfulPayment(session: any) {
+  const { telegramId, eventId, voucherId } = session.metadata;
+  
+  // 1. Ищем юзера и игру
+  const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, parseInt(telegramId)) });
+  const event = await db.query.events.findFirst({ where: eq(schema.events.id, parseInt(eventId)) });
+  
+  if (!user || !event) return;
+
+  // Проверяем, нет ли уже такой записи (защита от дублей)
+  const existing = await db.query.bookings.findFirst({ 
+    where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.eventId, event.id)) 
+  });
+  if (existing) return;
+
+  // 2. Создаем запись
+  await db.insert(schema.bookings).values({ userId: user.id, eventId: event.id, paid: true });
+
+  // 3. Обновляем счетчик игроков
+  await db.update(schema.events).set({ currentPlayers: (event.currentPlayers || 0) + 1 }).where(eq(schema.events.id, event.id));
+
+  // 4. Гасим ваучер, если он был
+  if (voucherId) await db.update(schema.vouchers).set({ status: 'used' }).where(eq(schema.vouchers.id, parseInt(voucherId)));
+
+  // 5. Бонус рефералу (если есть)
+  if (user.invitedBy) {
+    const inviter = await db.query.users.findFirst({ where: eq(schema.users.id, user.invitedBy) });
+    if (inviter) {
+      await db.insert(schema.vouchers).values({ userId: inviter.id, status: 'approved_10' });
+      bot.telegram.sendMessage(inviter.telegramId, `🎉 Твой друг оплатил игру! Тебе начислена скидка -10 PLN!`).catch(() => {});
+      await db.update(schema.users).set({ invitedBy: null }).where(eq(schema.users.id, user.id));
+    }
+  }
+
+  // 6. Пишем юзеру радостную весть
+  await bot.telegram.sendMessage(user.telegramId, `✅ <b>Оплата подтверждена автоматически!</b>\n\nВы успешно записаны на игру "${event.type}" на ${event.dateString}. Ждем вас! 🥂`, { parse_mode: 'HTML' }).catch(() => {});
+  
+  // 7. Удаляем из брошенной корзины
+  PENDING_PAYMENTS.delete(`${user.id}`);
+}
+
+// --- ЗАЩИТНЫЙ ЩИТ ОТ ОШИБОК (чтобы бот не падал) ---
+bot.catch((err: any, ctx) => {
+  const errorDescription = err.description || err.message || "";
+  if (errorDescription.includes("message is not modified")) {
+    return; // Просто игнорируем, если текст кнопки тот же
+  }
+  console.error(`Ошибка в боте (${ctx.updateType}):`, err);
+});
+
 // --- ЗАПУСК СЕРВЕРА ---
 const app = express();
+
+// СТРОГО ПЕРЕД express.json()
+app.post('/stripe-webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(req.body, sig!, process.env.STRIPE_WEBHOOK_SECRET!);
+  } catch (err: any) { return res.status(400).send(`Webhook Error: ${err.message}`); }
+
+  if (event.type === 'checkout.session.completed') {
+    await handleSuccessfulPayment(event.data.object);
+  }
+  res.json({ received: true });
+});
+
 app.use(express.json());
 app.use(bot.webhookCallback('/telegraf-webhook'));
-app.get('/', (req, res) => res.send('Allgorithm Bot is Live! ✅'));
 
 const PORT = process.env.PORT || 3000;
 const WEBHOOK_URL = process.env.TELEGRAM_WEBHOOK_URL;
 
 app.listen(PORT, async () => {
-    console.log(`🚀 Сервер запущен на порту ${PORT}`);
-    if (WEBHOOK_URL) await bot.telegram.setWebhook(`${WEBHOOK_URL}/telegraf-webhook`);
+    console.log(`🚀 Сервер Алгоритма запущен на порту ${PORT}`);
+    if (WEBHOOK_URL) {
+        await bot.telegram.setWebhook(`${WEBHOOK_URL}/telegraf-webhook`);
+        console.log(`📡 Вебхук установлен на: ${WEBHOOK_URL}`);
+    }
 });
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
