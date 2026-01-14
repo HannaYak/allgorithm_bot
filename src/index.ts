@@ -365,8 +365,23 @@ bot.start(async (ctx) => {
 bot.hears('👤 Личный кабинет', async (ctx) => {
   const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
   if (!user) return;
-  const vouchers = await db.query.vouchers.findMany({ where: and(eq(schema.vouchers.userId, user.id), eq(schema.vouchers.status, 'approved_10')) });
-  let msg = `👤 <b>Имя:</b> ${user.name || 'Не заполнено'}\n🎫 <b>Скидки:</b> ${vouchers.length} шт. (-10 PLN)\n👥 <b>Приглашено:</b> ${user.invitedCount || 0}`;
+
+  // Ищем ВСЕ активные ваучеры (и -10, и БЕСПЛАТНЫЕ)
+  const allVouchers = await db.query.vouchers.findMany({ 
+    where: and(
+      eq(schema.vouchers.userId, user.id), 
+      or(eq(schema.vouchers.status, 'approved_10'), eq(schema.vouchers.status, 'approved_free'))
+    ) 
+  });
+
+  const count10 = allVouchers.filter(v => v.status === 'approved_10').length;
+  const countFree = allVouchers.filter(v => v.status === 'approved_free').length;
+
+  let msg = `👤 <b>Имя:</b> ${user.name || 'Не заполнено'}\n`;
+  msg += `🎫 <b>Скидки (-10 PLN):</b> ${count10} шт.\n`;
+  msg += `🎁 <b>Бесплатные игры:</b> ${countFree} шт.\n`; // Теперь ты их увидишь!
+  msg += `👥 <b>Приглашено:</b> ${user.invitedCount || 0}`;
+
   const buttons = [
     [Markup.button.callback(user.name ? '✏️ Изменить анкету' : '📝 Заполнить анкету', 'start_registration')],
     [Markup.button.callback('📸 У меня есть ваучер', 'upload_voucher')],
@@ -856,7 +871,8 @@ bot.command('cancel_with_voucher', async (ctx) => {
         // 4. Начисляем FREE ваучер в таблицу vouchers
         await db.insert(schema.vouchers).values({
             userId: user.id,
-            status: 'approved_free' // Этот статус уже есть в твоей логике оплаты
+            status: 'approved_free',
+            photoFileId: null // Если в базе это поле обязательно, пустая строка или null спасет от ошибки
         });
 
         // 5. Уведомляем человека
