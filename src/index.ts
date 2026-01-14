@@ -647,13 +647,13 @@ bot.action(/confirm_pay_(\d+)/, async (ctx) => {
             const inviter = await db.query.users.findFirst({ where: eq(schema.users.id, user.invitedBy) });
             if (inviter) {
                 await db.insert(schema.vouchers).values({ userId: inviter.id, status: 'approved_10' });
-                bot.telegram.sendMessage(inviter.telegramId, `🎉 Твой друг оплатил игру! Тебе начислена скидка -10 PLN!Скорее записывай дл получение поных эмоций🎉`).catch(()=>{});
+                bot.telegram.sendMessage(inviter.telegramId, `🎉 Твой друг оплатил игру! Тебе начислена скидка -10 PLN!Скорее записывай для получение поных эмоций🎉`).catch(()=>{});
                 await db.update(schema.users).set({ invitedBy: null }).where(eq(schema.users.id, user.id));
             }
         }
         const event = await db.query.events.findFirst({ where: eq(schema.events.id, eid) });
         if (event) await db.update(schema.events).set({ currentPlayers: (event.currentPlayers || 0) + 1 }).where(eq(schema.events.id, eid));
-        await ctx.editMessageText('🎉 Оплата подтверждена! Ты в игре! Место встречи придёт за 3 часа до начала игры. Напоминаю о правилах.😎');
+        await ctx.editMessageText('🎉 Оплата подтверждена! Ты в игре! Место встречи придёт за 3 часа до начала игры. Напоминаю о правилах, оплата не возрощается за 36 часов до игры(сумма сгорает)😎');
     } catch (e) { ctx.reply('Ошибка проверки.'); }
 });
 
@@ -699,11 +699,11 @@ bot.action(/v_set_(10|free|reject)_(\d+)/, async (ctx) => {
 
     if (action === '10') { 
         status = 'approved_10'; 
-        userMsg = '🎉 Твой ваучер одобрен! Скидка -10 PLN начислена. Скорее записывай дл получение поных эмоций🎉'; 
+        userMsg = '🎉 Твой ваучер одобрен! Скидка -10 PLN начислена. Скорее записывай для получение поных эмоций🎉'; 
     }
     else if (action === 'free') { 
         status = 'approved_free'; 
-        userMsg = '🔥 Твой ваучер одобрен! Следующая игра для тебя БЕСПЛАТНАЯ! Скорее записывай дл получение поных эмоций🎉'; 
+        userMsg = '🔥 Твой ваучер одобрен! Следующая игра для тебя БЕСПЛАТНАЯ! Скорее записывай для получение поных эмоций🎉'; 
     }
     else if (action === 'reject') { 
         status = 'rejected'; 
@@ -1056,7 +1056,7 @@ bot.command('reply', async (ctx) => {
 bot.action('start_registration', (ctx) => { ctx.deleteMessage(); ctx.scene.enter('REGISTER_SCENE'); });
 
 bot.action('upload_voucher', (ctx) => { 
-    ctx.reply('📸 Отправь фото ваучера прямо сюда, а админимтратор одобрит его.'); 
+    ctx.reply('📸 Отправь фото ваучера прямо сюда, а администратор одобрит в течение нескольких минут..'); 
     (ctx.session as any).waitingForVoucher = true; 
 });
 bot.action('my_games', async (ctx) => {
@@ -1109,6 +1109,45 @@ async function handleSuccessfulPayment(session: any) {
   // 7. Удаляем из брошенной корзины
   PENDING_PAYMENTS.delete(`${user.id}`);
 }
+
+bot.command('kick', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    const parts = ctx.message.text.split(' ');
+    // Формат: /kick [TG_ID] [ID_Игры]
+    if (parts.length < 3) return ctx.reply('Используй: /kick [TG_ID] [ID_Игры]');
+
+    const targetTgId = parseInt(parts[1]);
+    const eventId = parseInt(parts[2]);
+
+    try {
+        const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, targetTgId) });
+        const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
+        if (!user || !event) return ctx.reply('❌ Юзер или игра не найдены.');
+
+        // Ищем запись
+        const booking = await db.query.bookings.findFirst({ 
+            where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.eventId, event.id)) 
+        });
+
+        if (!booking) return ctx.reply('❌ Этот человек не записан на эту игру.');
+
+        // 1. Удаляем запись из базы навсегда
+        await db.delete(schema.bookings).where(eq(schema.bookings.id, booking.id));
+
+        // 2. Освобождаем место в счетчике игры
+        await db.update(schema.events)
+            .set({ currentPlayers: Math.max(0, (event.currentPlayers || 0) - 1) })
+            .where(eq(schema.events.id, event.id));
+
+        await ctx.reply(`✅ Юзер ${user.name} удален из игры №${eventId}. Балл лояльности начислен НЕ БУДЕТ.`);
+        
+        // Опционально: можно написать юзеру, что он исключен
+        await bot.telegram.sendMessage(targetTgId, `🚫 Вы были удалены из списка участников игры "${event.type}" (No-show).`).catch(()=>{});
+
+    } catch (e) {
+        ctx.reply('❌ Ошибка при удалении.');
+    }
+});
 
 // --- ЗАЩИТНЫЙ ЩИТ ОТ ОШИБОК (чтобы бот не падал) ---
 bot.catch((err: any, ctx) => {
