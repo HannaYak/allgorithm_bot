@@ -114,7 +114,7 @@ const registerWizard = new Scenes.WizardScene(
   async (ctx) => { await ctx.replyWithHTML(`👋 <b>Почти готово!</b>\n\nНужно внести тебя в базу клуба.\n\n<b>1. Как тебя зовут?</b>`); return ctx.wizard.next(); },
   async (ctx) => { if (!ctx.message || !('text' in ctx.message)) return; (ctx.wizard.state as any).name = ctx.message.text; ctx.reply('2. Твоя дата рождения? (ДД.ММ.ГГГГ)'); return ctx.wizard.next(); },
   async (ctx) => { if (!ctx.message || !('text' in ctx.message)) return; (ctx.wizard.state as any).birthDate = ctx.message.text; ctx.reply('3. Факт о себе, который никто не знает:'); return ctx.wizard.next(); },
-  async (ctx) => { if (!ctx.message || !('text' in ctx.message)) return; (ctx.wizard.state as any).fact = ctx.message.text; ctx.reply('4. Самая странная история из жизни:'); return ctx.wizard.next(); },
+  async (ctx) => { if (!ctx.message || !('text' in ctx.message)) return; (ctx.wizard.state as any).fact = ctx.message.text; ctx.reply('4. Твоя самая странная история из жизни? (Её мы используем для секретной викторины в конце вечера — заинтригуй всех! ✨):'); return ctx.wizard.next(); },
   async (ctx) => { if (!ctx.message || !('text' in ctx.message)) return; (ctx.wizard.state as any).story = ctx.message.text; ctx.reply('5. Твой пол (для баланса пар):', Markup.keyboard([['Мужчина', 'Женщина']]).oneTime().resize()); return ctx.wizard.next(); },
   async (ctx) => {
     if (!ctx.message || !('text' in ctx.message)) return;
@@ -257,10 +257,16 @@ setInterval(async () => {
         }, 10000);
       }
 
-      // 3. НАПОМИНАНИЕ ЗА 3 ДНЯ
+
+      // 3. НАПОМИНАНИЕ ЗА 3 ДНЯ (УЛУЧШЕННОЕ)
       if (diffHours >= 71.5 && diffHours <= 72.5 && !PROCESSED_AUTO_ACTIONS.has(`remind_3d_${event.id}`)) {
         PROCESSED_AUTO_ACTIONS.add(`remind_3d_${event.id}`);
-        await broadcastToEvent(event.id, `📅 <b>Скоро игра!</b>\n\nНапоминаем, что через 3 дня состоится игра "${event.type}". Готовьтесь!🥂 Адрес вышлем за 3 часа до начала встречи`);
+        
+        const reminderMsg = `📅 <b>До встречи осталось 3 дня!</b>\n\n` +
+          `Мы уже вовсю готовимся к игре "${event.type}". Состав участников почти собран, атмосфера обещает быть 🔥.\n\n` +
+          `📍 Подробную инструкцию и адрес заведения пришлем ровно за 3 часа до начала. Проверьте, что у вас включены уведомления от бота! 🥂`;
+
+        await broadcastToEvent(event.id, reminderMsg);
       }
 
       // 4. РАСКРЫТИЕ АДРЕСА И НОМЕРОВ ЗА 3 ЧАСА
@@ -386,24 +392,20 @@ bot.hears('👤 Личный кабинет', async (ctx) => {
   const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
   if (!user) return;
 
-  // Внутри bot.hears('👤 Личный кабинет', ...)
-  const vouchers = await db.query.vouchers.findMany({ 
+  const userVouchers = await db.query.vouchers.findMany({ 
     where: and(
         eq(schema.vouchers.userId, user.id), 
-        or(
-            eq(schema.vouchers.status, 'approved_10'), 
-            eq(schema.vouchers.status, 'approved_free')
-        )
+        or(eq(schema.vouchers.status, 'approved_10'), eq(schema.vouchers.status, 'approved_free'))
     ) 
   });
 
-  const count10 = vouchers.filter(v => v.status === 'approved_10').length;
-  const countFree = vouchers.filter(v => v.status === 'approved_free').length;
+  const count10 = userVouchers.filter(v => v.status === 'approved_10').length;
+  const countFree = userVouchers.filter(v => v.status === 'approved_free').length;
 
-  let msg = `👤 <b>Имя:</b> ${user.name || 'Не заполнено'}\n`;
-  msg += `🎫 <b>Скидки (-10 PLN):</b> ${count10} шт.\n`;
-  msg += `🎁 <b>Бесплатные игры:</b> ${countFree} шт.\n`; // Теперь ты их увидишь!
-  msg += `👥 <b>Приглашено:</b> ${user.invitedCount || 0}`;
+  let msg = `👤 <b>Имя:</b> ${user.name || 'Не заполнено'}\n` +
+            `🎫 <b>Скидки (-10 PLN):</b> ${count10} шт.\n` +
+            `🎁 <b>Бесплатные игры:</b> ${countFree} шт.\n` +
+            `👥 <b>Приглашено:</b> ${user.invitedCount || 0}`;
 
   const buttons = [
     [Markup.button.callback(user.name ? '✏️ Изменить анкету' : '📝 Заполнить анкету', 'start_registration')],
@@ -512,7 +514,7 @@ bot.hears('📜 Правила', (ctx) => {
 // Кнопка "🆘 Помощь"
 bot.hears('🆘 Помощь', (ctx) => {
   (ctx.session as any).waitingForSupport = true; // Установка флага ожидания сообщения
-  ctx.reply('Напишите ваш вопрос или описание проблемы прямо сюда. Администратор свяжется с вами в ближайшее время! 👇');
+  ctx.reply('Напишите ваш вопрос или описание проблемы прямо сюда. Администратор свяжется с вами в ближайшее время! 👇 «Мы отвечаем в течение 15–30 минут. Если вопрос срочный — не волнуйтесь, мы всё видим!»');
 });
 
 // --- 8. ЛОГИКА ИГР ---
@@ -575,8 +577,16 @@ bot.action(/cv_(.+)_(.+)/, async (ctx) => {
   const btns = filtered.map(e => [Markup.button.callback(`📅 ${e.dateString} (${e.currentPlayers}/${e.maxPlayers})`, `pay_event_${e.id}`)]);
   
   // Добавлена кнопка Назад к выбору игры
-  ctx.editMessageText(`🍝 <b>${selectedTitle}</b>`, { parse_mode: 'HTML', ...Markup.inlineKeyboard([...btns, [Markup.button.callback('🔙 Назад к выбору', 'book_talk')]]) });
-});
+  // Добавлена кнопка Назад к выбору игры
+  ctx.editMessageText(
+    `🍽 <b>Направление: ${selectedTitle}</b>\n\n` +
+    `Отличный выбор! Ниже список доступных дат для этой кухни. Выбирай удобное время и переходи к бронированию. 👇\n\n` +
+    `⚠️ <i>Напоминаем: в стоимость билета входит участие и организация. Заказы по меню ресторана оплачиваются отдельно на месте.</i>`, 
+    { 
+      parse_mode: 'HTML', 
+      ...Markup.inlineKeyboard([...btns, [Markup.button.callback('🔙 Назад к выбору', 'book_talk')]]) 
+    }
+  );
 
 bot.action('back_to_games', (ctx) => { ctx.deleteMessage(); ctx.reply('Выберите игру:', Markup.inlineKeyboard([[Markup.button.callback('Talk & Toast 🥂', 'game_talk')], [Markup.button.callback('Stock & Know 🧠', 'game_stock')], [Markup.button.callback('Fast Dates 💘', 'game_dating')]])); });
 
@@ -623,6 +633,9 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {  //Gemini  если ты это �
         const event = await db.query.events.findFirst({ where: eq(schema.events.id, eid) });
         if (!event) return;
 
+        // Сразу после проверки анкеты:
+        await bot.telegram.sendMessage(ADMIN_ID, `⚠️ Юзер ${user.name} (@${ctx.from.username}) нажал «Оплатить» на игру №${eid}. Ждем подтверждения...`);
+      
         // 1. МЕЛОЧЬ: Каждая 5-я игра бесплатно
         if (((user.gamesPlayed || 0) + 1) % 5 === 0) {
             await db.insert(schema.bookings).values({ userId: user.id, eventId: eid, paid: true });
@@ -639,7 +652,7 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {  //Gemini  если ты это �
             await db.insert(schema.bookings).values({ userId: user.id, eventId: eid, paid: true });
             await db.update(schema.events).set({ currentPlayers: (event.currentPlayers || 0) + 1 }).where(eq(schema.events.id, eid));
             await db.update(schema.vouchers).set({ status: 'used' }).where(eq(schema.vouchers.id, activeVoucher.id));
-            return ctx.reply('🎫 Оплачено FREE ваучером! Ты в игре! Место встречи придёт за 3 часа до начала игры. Напоминаю о правилах.');
+            return ctx.reply('return ctx.reply('🎫 Оплачено FREE ваучером! Ты в игре! Место встречи и инструкция придут за 3 часа до начала. Помни: отмена возможна только за 36 часов! 🥂');');
         }
 
         // 3. Страйп (BLIK включен)
@@ -747,11 +760,11 @@ bot.action(/v_set_(10|free|reject)_(\d+)/, async (ctx) => {
 
     if (action === '10') { 
         status = 'approved_10'; 
-        userMsg = '🎉 Твой ваучер одобрен! Скидка -10 PLN начислена. Скорее записывай для получение поных эмоций🎉'; 
+        userMsg = '🎉 Твой ваучер одобрен! Скидка -10 PLN начислена. Скорее записывайся для получения полных эмоций! 🥂'; 
     }
     else if (action === 'free') { 
         status = 'approved_free'; 
-        userMsg = '🔥 Твой ваучер одобрен! Следующая игра для тебя БЕСПЛАТНАЯ! Скорее записывай для получение поных эмоций🎉'; 
+        userMsg = '🔥 Твой ваучер одобрен! Следующая игра для тебя БЕСПЛАТНАЯ! Скорее записывайся для получения полных эмоций! 🥂'; 
     }
     else if (action === 'reject') { 
         status = 'rejected'; 
