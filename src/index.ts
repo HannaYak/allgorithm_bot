@@ -300,9 +300,6 @@ setInterval(async () => {
         `🔋 <b>Важно:</b> Обязательно заряди телефон! Бот — твой ведущий на этот вечер.\n\n` +
         `Ждем тебя! Будет тепло и вкусно! 🥂`;
 
-        await broadcastToEvent(event.id, instructionMsg);
-    // ... логика для Speed Dating (номера) остается ниже без изменений
-        
         if (event.type === 'speed_dating') {
           const bookings = await db.query.bookings.findMany({ where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true)) });
           const m: any[] = [], w: any[] = [];
@@ -318,6 +315,13 @@ setInterval(async () => {
             bot.telegram.sendMessage(m[i].telegramId, `💘 <b>Ваш номер: ${mNum}</b>`).catch(()=>{});
           }
         }
+      } // <--- ВОТ ЭТОЙ СКОБКИ НЕ ХВАТАЛО! Она закрывает блок "reveal"
+
+      // 5. ВИКТОРИНА (105 МИНУТ)
+      if (minutesSinceStart >= 105 && event.type === 'talk_toast' && !PROCESSED_AUTO_ACTIONS.has(`quiz_${event.id}`)) {
+        PROCESSED_AUTO_ACTIONS.add(`quiz_${event.id}`); 
+        await runAutoQuiz(event.id);
+      }
 
 
       // 5. ВИКТОРИНА (105 МИНУТ)
@@ -703,7 +707,7 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
 bot.action(/confirm_pay_(\d+)/, async (ctx) => {
     const eid = parseInt(ctx.match[1]);
     try {
-        const sessions = await stripe.checkout.sessions.list({ limit: 15 });
+        const sessions = await stripe.checkout.sessions.list({ limit: 100 });
         const paid = sessions.data.find(s => s.metadata?.telegramId === ctx.from!.id.toString() && s.metadata?.eventId === eid.toString() && s.payment_status === 'paid');
         
         if (!paid) return ctx.reply('🔍 Оплата не найдена. Подождите 10 сек.');
