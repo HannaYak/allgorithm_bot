@@ -318,7 +318,7 @@ setInterval(async () => {
             bot.telegram.sendMessage(m[i].telegramId, `💘 <b>Ваш номер: ${mNum}</b>`).catch(()=>{});
           }
         }
-      }
+
 
       // 5. ВИКТОРИНА (105 МИНУТ)
       if (minutesSinceStart >= 105 && event.type === 'talk_toast' && !PROCESSED_AUTO_ACTIONS.has(`quiz_${event.id}`)) {
@@ -590,9 +590,8 @@ bot.action(/cv_(.+)_(.+)/, async (ctx) => {
   const filtered = events.filter(e => parseEventDesc(e.description).title === selectedTitle);
   const btns = filtered.map(e => [Markup.button.callback(`📅 ${e.dateString} (${e.currentPlayers}/${e.maxPlayers})`, `pay_event_${e.id}`)]);
   
-  // Добавлена кнопка Назад к выбору игры
-  // Добавлена кнопка Назад к выбору игры
-  ctx.editMessageText(
+  // Сообщение ДОЛЖНО быть внутри функции (до закрывающей скобки)
+  return ctx.editMessageText(
     `🍽 <b>Направление: ${selectedTitle}</b>\n\n` +
     `Отличный выбор! Ниже список доступных дат для этой кухни. Выбирай удобное время и переходи к бронированию. 👇\n\n` +
     `⚠️ <i>Напоминаем: в стоимость билета входит участие и организация. Заказы по меню ресторана оплачиваются отдельно на месте.</i>`, 
@@ -601,6 +600,7 @@ bot.action(/cv_(.+)_(.+)/, async (ctx) => {
       ...Markup.inlineKeyboard([...btns, [Markup.button.callback('🔙 Назад к выбору', 'book_talk')]]) 
     }
   );
+}); // <-- Теперь функция закрыта правильно
 
 bot.action('back_to_games', (ctx) => { ctx.deleteMessage(); ctx.reply('Выберите игру:', Markup.inlineKeyboard([[Markup.button.callback('Talk & Toast 🥂', 'game_talk')], [Markup.button.callback('Stock & Know 🧠', 'game_stock')], [Markup.button.callback('Fast Dates 💘', 'game_dating')]])); });
 
@@ -708,10 +708,8 @@ bot.action(/confirm_pay_(\d+)/, async (ctx) => {
         const paid = sessions.data.find(s => s.metadata?.telegramId === ctx.from!.id.toString() && s.metadata?.eventId === eid.toString() && s.payment_status === 'paid');
         
         if (!paid) return ctx.reply('🔍 Оплата не найдена. Подождите 10 сек.');
-        
-        const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
+        const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) }); // Сначала создаем
         if (!user) return;
-
         PENDING_PAYMENTS.delete(`${user.id}`);
         if (paid.metadata?.voucherId) await db.update(schema.vouchers).set({ status: 'used' }).where(eq(schema.vouchers.id, parseInt(paid.metadata.voucherId)));
         
