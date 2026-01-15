@@ -231,26 +231,30 @@ setInterval(async () => {
       const minutesSinceStart = now.diff(start, 'minutes').minutes;
 
       // 2. ПРИВЕТСТВИЕ И ТЕМА №1 (В МОМЕНТ СТАРТА)
+      // 2. ПРИВЕТСТВИЕ И ТЕМА №1 (В МОМЕНТ СТАРТА)
       if (Math.abs(minutesSinceStart) <= 1 && !PROCESSED_AUTO_ACTIONS.has(`start_greet_${event.id}`)) {
         PROCESSED_AUTO_ACTIONS.add(`start_greet_${event.id}`);
         
         const { title } = parseEventDesc(event.description);
         const welcomeMsg = `🥂 <b>Игра "${title}" начинается!</b>\n\nРады всех видеть за столом! В следующем сообщении придет ваша первая тема для обсуждения.\n\n✨ Чтобы получить следующую тему, нажимайте кнопку <b>"🎲 Новая тема"</b>. Для начала представьтесь друг другу!`;
         
+        // Получаем всех, кто оплатил
         const bookings = await db.query.bookings.findMany({
           where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true))
-        });
+        }); // Вот так закрывается правильно: });
 
+        // Рассылаем приветствие каждому участнику
         for (const b of bookings) {
           const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
           if (u) {
             await bot.telegram.sendMessage(u.telegramId, welcomeMsg, { 
               parse_mode: 'HTML',
-              ...getMainKeyboard(true) 
+              ...getMainKeyboard(true) // Включаем кнопку "Новая тема"
             }).catch(() => {});
           }
         }
 
+        // Через 10 секунд кидаем первую тему
         setTimeout(async () => {
           const firstTopic = CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)];
           await broadcastToEvent(event.id, `🎲 <b>Тема №1:</b>\n\n${firstTopic}`);
