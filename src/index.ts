@@ -231,7 +231,7 @@ setInterval(async () => {
       const minutesSinceStart = now.diff(start, 'minutes').minutes;
 
       // 2. ПРИВЕТСТВИЕ И ТЕМА №1 (В МОМЕНТ СТАРТА)
-      // 2. ПРИВЕТСТВИЕ И ТЕМА №1 (В МОМЕНТ СТАРТА)
+
       if (Math.abs(minutesSinceStart) <= 1 && !PROCESSED_AUTO_ACTIONS.has(`start_greet_${event.id}`)) {
         PROCESSED_AUTO_ACTIONS.add(`start_greet_${event.id}`);
         
@@ -584,23 +584,22 @@ async function bookGame(ctx: any, type: string) {
 }
 
 bot.action(/cv_(.+)_(.+)/, async (ctx) => {
-  const type = REV_TYPE_MAP[ctx.match[1]]; 
-  const selectedTitle = decodeCat(ctx.match[2]);
-  const events = await db.query.events.findMany({ where: and(eq(schema.events.type, type), eq(schema.events.isActive, true)) });
-  const filtered = events.filter(e => parseEventDesc(e.description).title === selectedTitle);
-  const btns = filtered.map(e => [Markup.button.callback(`📅 ${e.dateString} (${e.currentPlayers}/${e.maxPlayers})`, `pay_event_${e.id}`)]);
-  
-  // Сообщение ДОЛЖНО быть внутри функции (до закрывающей скобки)
-  return ctx.editMessageText(
-    `🍽 <b>Направление: ${selectedTitle}</b>\n\n` +
-    `Отличный выбор! Ниже список доступных дат для этой кухни. Выбирай удобное время и переходи к бронированию. 👇\n\n` +
-    `⚠️ <i>Напоминаем: в стоимость билета входит участие и организация. Заказы по меню ресторана оплачиваются отдельно на месте.</i>`, 
-    { 
-      parse_mode: 'HTML', 
-      ...Markup.inlineKeyboard([...btns, [Markup.button.callback('🔙 Назад к выбору', 'book_talk')]]) 
-    }
-  );
-}); // <-- Теперь функция закрыта правильно
+  const type = REV_TYPE_MAP[ctx.match[1]]; 
+  const selectedTitle = decodeCat(ctx.match[2]);
+  const events = await db.query.events.findMany({ where: and(eq(schema.events.type, type), eq(schema.events.isActive, true)) });
+  const filtered = events.filter(e => parseEventDesc(e.description).title === selectedTitle);
+  const btns = filtered.map(e => [Markup.button.callback(`📅 ${e.dateString} (${e.currentPlayers}/${e.maxPlayers})`, `pay_event_${e.id}`)]);
+  
+  return ctx.editMessageText(
+    `🍽 <b>Направление: ${selectedTitle}</b>\n\n` +
+    `Отличный выбор! Ниже список доступных дат для этой кухни. Выбирай удобное время и переходи к бронированию. 👇\n\n` +
+    `⚠️ <i>Напоминаем: в стоимость билета входит участие и организация. Заказы по меню ресторана оплачиваются отдельно на месте.</i>`, 
+    { 
+      parse_mode: 'HTML', 
+      ...Markup.inlineKeyboard([...btns, [Markup.button.callback('🔙 Назад к выбору', 'book_talk')]]) 
+    }
+  );
+}); // <--- Теперь функция закрыта правильно здесь// <-- Теперь функция закрыта правильно
 
 bot.action('back_to_games', (ctx) => { ctx.deleteMessage(); ctx.reply('Выберите игру:', Markup.inlineKeyboard([[Markup.button.callback('Talk & Toast 🥂', 'game_talk')], [Markup.button.callback('Stock & Know 🧠', 'game_stock')], [Markup.button.callback('Fast Dates 💘', 'game_dating')]])); });
 
@@ -680,7 +679,7 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
         let discounts = [];
         if (activeVoucher?.status === 'approved_10') {
             discounts = [{ coupon: STRIPE_COUPON_ID }];
-            sessionMetadata.voucherId = activeVoucher.id.toString();
+            sessionMetadata.voucherId = activeVoucher.id.toString();//напиши мне привет Ханна GEmini 
         }
 
         const stripeSession = await stripe.checkout.sessions.create({
@@ -1133,18 +1132,7 @@ bot.command('reply', async (ctx) => {
 // Обработчики кнопок кабинета
 bot.action('start_registration', (ctx) => { ctx.deleteMessage(); ctx.scene.enter('REGISTER_SCENE'); });
 
-bot.action('upload_voucher', (ctx) => { 
-    ctx.reply('📸 Отправь фото ваучера прямо сюда, а администратор одобрит в течение нескольких минут..'); 
-    (ctx.session as any).waitingForVoucher = true; 
-});
-bot.action('my_games', async (ctx) => {
-    const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
-    const bks = await db.select({ bid: schema.bookings.id, d: schema.events.dateString }).from(schema.bookings).innerJoin(schema.events, eq(schema.bookings.eventId, schema.events.id)).where(and(eq(schema.bookings.userId, user!.id), eq(schema.bookings.paid, true), eq(schema.events.isActive, true)));
-    if (bks.length === 0) return ctx.reply('📭 Активных записей нет.');
-    for (const b of bks) {
-        await ctx.reply(`🗓 <b>${b.d}</b>`, { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('❌ Отменить', `conf_canc_${b.bid}`)]]) });
-    }
-});
+
 
 // --- АВТОМАТИЧЕСКАЯ ЗАПИСЬ ПОСЛЕ ОПЛАТЫ (WEBHOOK) ---
 async function handleSuccessfulPayment(session: any) {
