@@ -273,6 +273,17 @@ setInterval(async () => {
         await broadcastToEvent(event.id, reminderMsg);
       }
 
+      // 3.5 НАПОМИНАНИЕ УТРОМ В ДЕНЬ ИГРЫ (в 10:00)
+      if (now.hasSame(start, 'day') && now.hour === 10 && !PROCESSED_AUTO_ACTIONS.has(`morning_rem_${event.id}`)) {
+        PROCESSED_AUTO_ACTIONS.add(`morning_rem_${event.id}`);
+        
+        const morningMsg = `☀️ <b>Доброе утро! Сегодня тот самый день!</b>\n\n` +
+          `Мы уже готовим бокалы и отличное настроение для игры "${event.type}". Ждем тебя сегодня! 🥂\n\n` +
+          `📍 Подробную инструкцию и адрес заведения пришлем ровно за 3 часа до начала. Проверь, что телефон заряжен! ✨`;
+
+        await broadcastToEvent(event.id, morningMsg);
+      }
+
       // 4. РАСКРЫТИЕ АДРЕСА И НОМЕРОВ ЗА 3 ЧАСА
       if (diffHours >= 2.8 && diffHours <= 3.2 && !PROCESSED_AUTO_ACTIONS.has(`reveal_${event.id}`)) {
         PROCESSED_AUTO_ACTIONS.add(`reveal_${event.id}`);
@@ -291,7 +302,6 @@ setInterval(async () => {
 
         await broadcastToEvent(event.id, instructionMsg);
     // ... логика для Speed Dating (номера) остается ниже без изменений
-      }
         
         if (event.type === 'speed_dating') {
           const bookings = await db.query.bookings.findMany({ where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true)) });
