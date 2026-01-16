@@ -111,20 +111,59 @@ const bot = new Telegraf<any>(process.env.TELEGRAM_BOT_TOKEN || '');
 // 1. Мастер регистрации
 const registerWizard = new Scenes.WizardScene(
   'REGISTER_SCENE',
-  async (ctx) => { await ctx.replyWithHTML(`👋 <b>Почти готово!</b>\n\nНужно внести тебя в базу клуба.\n\n<b>1. Как тебя зовут?</b>`); return ctx.wizard.next(); },
-  async (ctx) => { if (!ctx.message || !('text' in ctx.message)) return; (ctx.wizard.state as any).name = ctx.message.text; ctx.reply('2. Твоя дата рождения? (ДД.ММ.ГГГГ)'); return ctx.wizard.next(); },
-  async (ctx) => { if (!ctx.message || !('text' in ctx.message)) return; (ctx.wizard.state as any).birthDate = ctx.message.text; ctx.reply('3. Факт о себе, который никто не знает:'); return ctx.wizard.next(); },
-  async (ctx) => { if (!ctx.message || !('text' in ctx.message)) return; (ctx.wizard.state as any).fact = ctx.message.text; ctx.reply('4. Твоя самая странная история из жизни? (Её мы используем для секретной викторины в конце вечера — заинтригуй всех! ✨):'); return ctx.wizard.next(); },
-  async (ctx) => { if (!ctx.message || !('text' in ctx.message)) return; (ctx.wizard.state as any).story = ctx.message.text; ctx.reply('5. Твой пол (для баланса пар):', Markup.keyboard([['Мужчина', 'Женщина']]).oneTime().resize()); return ctx.wizard.next(); },
+  async (ctx) => { await ctx.replyWithHTML(`👋 <b>Почти готово!</b>\n\nНужно внести тебя в базу Алгоритма, для этого пройди анкету из 3-х вопросов(всего 30 секунд). После анкеты возрощайся в "Игры" и покупай билет без помех!\n\n<b>1. Как тебя зовут?</b>`); return ctx.wizard.next(); },
+  async (ctx) => { 
+    if (!ctx.message || !('text' in ctx.message)) return; 
+    (ctx.wizard.state as any).name = ctx.message.text; 
+    await ctx.reply('2. Сколько тебе полных лет? (Введи число)'); 
+    return ctx.wizard.next(); 
+  },
+  async (ctx) => { 
+    if (!ctx.message || !('text' in ctx.message)) return; 
+    const age = parseInt(ctx.message.text);
+    if (isNaN(age)) return ctx.reply('❌ Ошибка! Пожалуйста, введи возраст цифрами (например: 25):');
+    (ctx.wizard.state as any).age = age.toString(); 
+    await ctx.reply('3. Твой пол (для баланса пар на играх):', Markup.keyboard([['Мужчина', 'Женщина']]).oneTime().resize()); 
+    return ctx.wizard.next(); 
+  },
   async (ctx) => {
     if (!ctx.message || !('text' in ctx.message)) return;
-    const gender = ctx.message.text; const data = ctx.wizard.state as any;
-    await db.update(schema.users).set({ name: data.name, birthDate: data.birthDate, fact: data.fact, strangeStory: data.story, gender: gender }).where(eq(schema.users.telegramId, ctx.from!.id));
-    await ctx.reply('✅ Регистрация завершена успешно! После этого вопроса возрощайся в меню "Игры" и можешь покупать билет на игру!', getMainKeyboard());
+    const gender = ctx.message.text; 
+    const data = ctx.wizard.state as any; // Тут лежат наши данные
+
+    // 1. Сохраняем данные в базу
+    await db.update(schema.users).set({ 
+        name: data.name, 
+        birthDate: data.age, 
+        gender: gender 
+    }).where(eq(schema.users.telegramId, ctx.from!.id));
+    
+    await ctx.reply('✅ Регистрация завершена!');
+
+    // 2. ПРОВЕРЯЕМ: Нужно ли вернуть юзера к оплате?
+    const eventId = data.returnToEvent; 
+    
+    if (eventId) {
+        // Если он пришел с конкретной игры — возвращаем его туда
+        await ctx.reply('🚀 Возвращаю тебя к бронированию игры...');
+        
+        // Показываем кнопку оплаты именно этой игры
+        const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
+        if (event) {
+            return ctx.reply(
+                `Вы выбрали: ${event.type} (${event.dateString})\nК оплате: 50 PLN`,
+                Markup.inlineKeyboard([[Markup.button.callback('💸 Перейти к оплате', `pay_event_${eventId}`)]])
+            ).then(() => ctx.scene.leave());
+        }
+    }
+
+    // Если он просто заполнял анкету из кабинета — обычный выход
+    await ctx.reply('Теперь ты можешь записываться на любые игры клуба!', getMainKeyboard());
     return ctx.scene.leave();
   }
 );
 
+  
 const addEventWizard = new Scenes.WizardScene(
   'ADD_EVENT_SCENE',
   async (ctx) => {
@@ -301,21 +340,38 @@ setInterval(async () => {
         `Ждем тебя! Будет тепло и вкусно! 🥂`;
 
         if (event.type === 'speed_dating') {
-          const bookings = await db.query.bookings.findMany({ where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true)) });
+          const bks = await db.query.bookings.findMany({ where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true)) });
           const m: any[] = [], w: any[] = [];
-          for (const b of bookings) {
+          for (const b of bks) {
             const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
             if (u?.gender === 'Мужчина') m.push(u); else if (u?.gender === 'Женщина') w.push(u);
           }
-          for (let i = 0; i < Math.min(m.length, w.length); i++) {
+
+          // Раздаем номера парам
+          const limit = Math.min(m.length, w.length);
+          for (let i = 0; i < limit; i++) {
             const wNum = (i * 2) + 1; const mNum = (i * 2) + 2;
             FAST_DATES_STATE.participants.set(w[i].telegramId, { id: w[i].id, num: wNum, gender: 'Женщина', name: w[i].name, username: w[i].username || '' });
             FAST_DATES_STATE.participants.set(m[i].telegramId, { id: m[i].id, num: mNum, gender: 'Мужчина', name: m[i].name, username: m[i].username || '' });
-            bot.telegram.sendMessage(w[i].telegramId, `💘 <b>Ваш номер: ${wNum}</b>`).catch(()=>{});
-            bot.telegram.sendMessage(m[i].telegramId, `💘 <b>Ваш номер: ${mNum}</b>`).catch(()=>{});
+            bot.telegram.sendMessage(w[i].telegramId, `💘 <b>Ваш номер на сегодня: ${wNum}</b>`).catch(()=>{});
+            bot.telegram.sendMessage(m[i].telegramId, `💘 <b>Ваш номер на сегодня: ${mNum}</b>`).catch(()=>{});
           }
-        }
-      } // <--- ВОТ ЭТОЙ СКОБКИ НЕ ХВАТАЛО! Она закрывает блок "reveal"
+
+          // --- ЛОГИКА ДЛЯ ЛИШНИХ ЛЮДЕЙ ---
+          const allPaid = [...m, ...w];
+          const assignedIds = Array.from(FAST_DATES_STATE.participants.keys());
+          const extraPlayers = allPaid.filter(p => !assignedIds.includes(p.telegramId));
+
+          for (const extra of extraPlayers) {
+            await bot.telegram.sendMessage(extra.telegramId, 
+              `💌 <b>Внимание:</b> Сегодня на Speed Dating образовалось нечетное количество участников.\n\nК сожалению, ты пока в списке ожидания. Мы очень ждем тебя на месте — если кто-то опоздает, ты сразу займешь место! Если нет — мы подарим тебе <b>FREE ваучер</b> на следующую игру. 🥂`,
+              { parse_mode: 'HTML' }
+            ).catch(()=>{});
+            // Пишем тебе
+            await bot.telegram.sendMessage(ADMIN_ID, `⚠️ <b>Дисбаланс!</b> ${extra.name} (@${extra.username}) — лишний(я) на Speed Dating.`).catch(()=>{});
+          }
+        } 
+      }// <--- ВОТ ЭТОЙ СКОБКИ НЕ ХВАТАЛО! Она закрывает блок "reveal"
 
       // 5. ВИКТОРИНА (105 МИНУТ)
       if (minutesSinceStart >= 105 && event.type === 'talk_toast' && !PROCESSED_AUTO_ACTIONS.has(`quiz_${event.id}`)) {
@@ -323,12 +379,6 @@ setInterval(async () => {
         await runAutoQuiz(event.id);
       }
 
-
-      // 5. ВИКТОРИНА (105 МИНУТ)
-      if (minutesSinceStart >= 105 && event.type === 'talk_toast' && !PROCESSED_AUTO_ACTIONS.has(`quiz_${event.id}`)) {
-        PROCESSED_AUTO_ACTIONS.add(`quiz_${event.id}`); 
-        await runAutoQuiz(event.id);
-      }
 
       // 6. ЗАВЕРШЕНИЕ (135 МИНУТ)
       if (minutesSinceStart >= 135 && !PROCESSED_AUTO_ACTIONS.has(`close_${event.id}`)) {
@@ -646,6 +696,13 @@ bot.action(/exec_canc_(\d+)/, async (ctx) => {
 bot.action(/pay_event_(\d+)/, async (ctx) => {
     const eid = parseInt(ctx.match[1]);
     const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
+    
+    // Если имени нет — отправляем в анкету и ПЕРЕДАЕМ ID игры (eventId)
+    if (!user?.name) {
+        return ctx.scene.enter('REGISTER_SCENE', { returnToEvent: eid });
+    }
+    
+    // ... дальше твой обычный код оплаты (проверка бана, страйп и т.д.)
     
     if (!user?.name) return ctx.reply('Сначала заполни анкету!', Markup.inlineKeyboard([[Markup.button.callback('📝 Заполнить', 'start_registration')]]));
 
@@ -1173,9 +1230,14 @@ async function handleSuccessfulPayment(session: any) {
     }
   }
 
-  // 6. Пишем юзеру радостную весть
-  await bot.telegram.sendMessage(user.telegramId, `✅ <b>Оплата подтверждена автоматически!</b>\n\nВы успешно записаны на игру "${event.type}" на ${event.dateString}. Ждем вас! 🥂`, { parse_mode: 'HTML' }).catch(() => {});
+// 6. Пишем юзеру радостную весть
+  let messageText = `✅ <b>Оплата подтверждена автоматически!</b>\n\nВы успешно записаны на игру "${event.type}" на ${event.dateString}. Ждем вас! 🥂`;
   
+  if (event.type === 'talk_toast' || event.type === 'stock_know') {
+    messageText += `\n\n🤫 <b>Кстати!</b> У нас будет тайная викторина. Чтобы удивить всех своей историей, нажми 👤 <b>Личный кабинет</b> -> <b>Изменить анкету</b> и заполни поле с интересным фактом о себе! ✨`;
+  }
+
+  await bot.telegram.sendMessage(user.telegramId, messageText, { parse_mode: 'HTML' }).catch(() => {});
   // 7. Удаляем из брошенной корзины
   PENDING_PAYMENTS.delete(`${user.id}`);
 }
