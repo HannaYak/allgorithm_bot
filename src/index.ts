@@ -346,64 +346,53 @@ setInterval(async () => {
             const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
             if (u?.gender === 'Мужчина') m.push(u); else if (u?.gender === 'Женщина') w.push(u);
           }
-
-          // Раздаем номера парам
           const limit = Math.min(m.length, w.length);
           for (let i = 0; i < limit; i++) {
             const wNum = (i * 2) + 1; const mNum = (i * 2) + 2;
             FAST_DATES_STATE.participants.set(w[i].telegramId, { id: w[i].id, num: wNum, gender: 'Женщина', name: w[i].name, username: w[i].username || '' });
             FAST_DATES_STATE.participants.set(m[i].telegramId, { id: m[i].id, num: mNum, gender: 'Мужчина', name: m[i].name, username: m[i].username || '' });
-            bot.telegram.sendMessage(w[i].telegramId, `💘 <b>Ваш номер на сегодня: ${wNum}</b>`).catch(()=>{});
-            bot.telegram.sendMessage(m[i].telegramId, `💘 <b>Ваш номер на сегодня: ${mNum}</b>`).catch(()=>{});
+            bot.telegram.sendMessage(w[i].telegramId, `💘 <b>Ваш номер: ${wNum}</b>`).catch(()=>{});
+            bot.telegram.sendMessage(m[i].telegramId, `💘 <b>Ваш номер: ${mNum}</b>`).catch(()=>{});
           }
-
-          // --- ЛОГИКА ДЛЯ ЛИШНИХ ЛЮДЕЙ ---
-          const allPaid = [...m, ...w];
+          // Лишние люди
           const assignedIds = Array.from(FAST_DATES_STATE.participants.keys());
-          const extraPlayers = allPaid.filter(p => !assignedIds.includes(p.telegramId));
-
+          const extraPlayers = [...m, ...w].filter(p => !assignedIds.includes(p.telegramId));
           for (const extra of extraPlayers) {
-            await bot.telegram.sendMessage(extra.telegramId, 
-              `💌 <b>Внимание:</b> Сегодня на Speed Dating образовалось нечетное количество участников.\n\nК сожалению, ты пока в списке ожидания. Мы очень ждем тебя на месте — если кто-то опоздает, ты сразу займешь место! Если нет — мы подарим тебе <b>FREE ваучер</b> на следующую игру. 🥂`,
-              { parse_mode: 'HTML' }
-            ).catch(()=>{});
-            // Пишем тебе
-            await bot.telegram.sendMessage(ADMIN_ID, `⚠️ <b>Дисбаланс!</b> ${extra.name} (@${extra.username}) — лишний(я) на Speed Dating.`).catch(()=>{});
+            await bot.telegram.sendMessage(extra.telegramId, `💌 Ты пока в списке ожидания (нечетное кол-во). Если место освободится — ты в игре! 🥂`).catch(()=>{});
+            await bot.telegram.sendMessage(ADMIN_ID, `⚠️ Дисбаланс! ${extra.name} без пары.`).catch(()=>{});
           }
-        } 
-      }// <--- ВОТ ЭТОЙ СКОБКИ НЕ ХВАТАЛО! Она закрывает блок "reveal"
+        }
 
-      // 5. ВИКТОРИНА (105 МИНУТ)
-      if (minutesSinceStart >= 105 && event.type === 'talk_toast' && !PROCESSED_AUTO_ACTIONS.has(`quiz_${event.id}`)) {
-        PROCESSED_AUTO_ACTIONS.add(`quiz_${event.id}`); 
-        await runAutoQuiz(event.id);
+        // Логика Stock & Know (Номера)
+        if (event.type === 'stock_know') {
+          const bks = await db.query.bookings.findMany({ where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true)) });
+          for (let i = 0; i < bks.length; i++) {
+            const u = await db.query.users.findFirst({ where: eq(schema.users.id, bks[i].userId) });
+            if (u) await bot.telegram.sendMessage(u.telegramId, `🧠 <b>Твой игровой номер: ${i + 1}</b>`).catch(() => {});
+          }
+        }
       }
 
-
-      // 6. ЗАВЕРШЕНИЕ (135 МИНУТ)
+      // 4. ВИКТОРИНА (105 МИН) И ЗАВЕРШЕНИЕ (135 МИН)
+      if (minutesSinceStart >= 105 && event.type === 'talk_toast' && !PROCESSED_AUTO_ACTIONS.has(`quiz_${event.id}`)) {
+        PROCESSED_AUTO_ACTIONS.add(`quiz_${event.id}`); await runAutoQuiz(event.id);
+      }
       if (minutesSinceStart >= 135 && !PROCESSED_AUTO_ACTIONS.has(`close_${event.id}`)) {
-        PROCESSED_AUTO_ACTIONS.add(`close_${event.id}`); 
-        await autoCloseEvent(event.id);
+        PROCESSED_AUTO_ACTIONS.add(`close_${event.id}`); await autoCloseEvent(event.id);
       }
     }
-    // --- НАПОМИНАНИЕ О НЕЗАВЕРШЕННОЙ ОПЛАТЕ ---
-      for (const [uId, data] of PENDING_PAYMENTS.entries()) {
-        const minutesPassed = now.diff(data.time, 'minutes').minutes;
-        if (minutesPassed >= 30 && !data.notified) {
-          const user = await db.query.users.findFirst({ where: eq(schema.users.id, parseInt(uId)) });
-          if (user) {
-            await bot.telegram.sendMessage(user.telegramId, 
-              `🔔 <b>Вы не завершили оплату!</b>\n\nВижу, что вы начали запись на игру, но оплата не подтверждена. Места разлетаются быстро! Нужна помощь? Напишите в 🆘 Помощь.`, 
-              { parse_mode: 'HTML' }
-            ).catch(() => {});
-          }
-          PENDING_PAYMENTS.set(uId, { ...data, notified: true });
-        }
-        if (minutesPassed > 120) PENDING_PAYMENTS.delete(uId);
+
+    // 5. НАПОМИНАНИЯ ОБ ОПЛАТЕ
+    for (const [uId, data] of PENDING_PAYMENTS.entries()) {
+      if (now.diff(data.time, 'minutes').minutes >= 30 && !data.notified) {
+        const user = await db.query.users.findFirst({ where: eq(schema.users.id, parseInt(uId)) });
+        if (user) await bot.telegram.sendMessage(user.telegramId, `🔔 <b>Вы не завершили оплату!</b>`).catch(() => {});
+        PENDING_PAYMENTS.set(uId, { ...data, notified: true });
       }
+      if (now.diff(data.time, 'minutes').minutes > 120) PENDING_PAYMENTS.delete(uId);
+    }
   } catch (e) { console.error("Ошибка автопилота:", e); }
 }, 60000);
-
 // --- ФУНКЦИИ АВТОПИЛОТА ---
 
 async function runAutoQuiz(eventId: number) {
