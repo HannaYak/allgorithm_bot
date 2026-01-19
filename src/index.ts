@@ -93,11 +93,11 @@ const parseEventDesc = (desc: string | null) => {
 const PENDING_PAYMENTS = new Map<string, { time: DateTime, notified: boolean }>();
 
 const FAST_DATES_STATE = {
-  eventId: 0, round: 0, 
-  votes: new Map<number, number[]>(), 
-  participants: new Map<number, { id: number, num: number, gender: string, name: string, username: string }>(),
-  men: [] as number[], women: [] as number[]
-};
+  eventId: 0,
+  currentRound: 1, // Текущий раунд
+  participants: new Map<number, any>(), // Тут храним всех по Telegram ID
+  votes: new Map<number, number[]>()
+};;
 
 const STOCK_STATE = {
   isActive: false,
@@ -253,14 +253,19 @@ bot.use(session());
 bot.use(stage.middleware());
 
 // Главная клавиатура
-function getMainKeyboard(isAtEvent = false) {
-    const buttons = [['🎮 Игры', '👤 Личный кабинет'], ['🆘 Помощь', '📜 Правила']];
-    // Кнопка добавляется ТОЛЬКО если isAtEvent === true
-    if (isAtEvent) buttons.unshift(['🎲 Новая тема']);
+function getMainKeyboard(showTopicButton = false) {
+    const buttons = [
+        ['🎮 Игры', '👤 Личный кабинет'],
+        ['🆘 Помощь', '📜 Правила']
+    ];
+    // Добавляем кнопку только если флаг true
+    if (showTopicButton) {
+        buttons.unshift(['🎲 Новая тема']);
+    }
     return Markup.keyboard(buttons).resize();
 }
-// --- 6. АВТОПИЛОТ (Вторичный интервал) ---
-// --- 6. АВТОПИЛОТ (ПОЛНАЯ ВЕРСИЯ: ВСЕ ТЕКСТЫ + НОМЕРА) ---
+
+// --- 6. АВТОПИЛОТ (ЧИСТАЯ ВЕРСИЯ БЕЗ ДУБЛЕЙ) ---
 setInterval(async () => {
   try {
     const now = DateTime.now().setZone('Europe/Warsaw'); 
@@ -273,128 +278,94 @@ setInterval(async () => {
       const diffHours = start.diff(now, 'hours').hours;
       const minutesSinceStart = now.diff(start, 'minutes').minutes;
 
-      // 1. ПРИВЕТСТВИЕ И ТЕМА №1 (В МОМЕНТ СТАРТА)
-      if (Math.abs(minutesSinceStart) <= 1 && !PROCESSED_AUTO_ACTIONS.has(`start_greet_${event.id}`)) {
-        PROCESSED_AUTO_ACTIONS.add(`start_greet_${event.id}`);
-        const { title } = parseEventDesc(event.description);
-        
-        const welcomeMsg = `🥂 <b>Игра "${title}" начинается!</b>\n\nРады всех видеть за столом! Для начала представьтесь друг другу!`;
-        
-        const bookings = await db.query.bookings.findMany({ where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true)) });
-
-        for (const b of bookings) {
-          const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
-          if (u) {
-            await bot.telegram.sendMessage(u.telegramId, welcomeMsg, { 
-              parse_mode: 'HTML',
-              ...getMainKeyboard(event.type === 'talk_toast') 
-            }).catch(() => {});
-          }
-        }
-
-        if (event.type === 'talk_toast') {
-          setTimeout(async () => {
-            const firstTopic = CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)];
-            await broadcastToEvent(event.id, `🎲 <b>Тема №1:</b>\n\n${firstTopic}`);
-          }, 10000);
-        }
-      }
-
-      // 2. НАПОМИНАНИЕ ЗА 3 ДНЯ
+      // 1. НАПОМИНАНИЯ (3 ДНЯ И УТРО)
       if (diffHours >= 71.5 && diffHours <= 72.5 && !PROCESSED_AUTO_ACTIONS.has(`remind_3d_${event.id}`)) {
         PROCESSED_AUTO_ACTIONS.add(`remind_3d_${event.id}`);
-        const reminderMsg = `📅 <b>До встречи осталось 3 дня!</b>\n\nМы уже вовсю готовимся к игре "${event.type}". Состав участников почти собран, атмосфера обещает быть 🔥.\n\n📍 Подробную инструкцию и адрес заведения пришлем ровно за 3 часа до начала. Проверьте, что у вас включены уведомления! 🥂`;
-        await broadcastToEvent(event.id, reminderMsg);
+        await broadcastToEvent(event.id, `📅 <b>До встречи осталось 3 дня!</b>\n\nГотовимся к игре "${event.type}". Атмосфера будет 🔥. ✨`);
       }
-
-      // 3. НАПОМИНАНИЕ УТРОМ В ДЕНЬ ИГРЫ (10:00)
       if (now.hasSame(start, 'day') && now.hour === 10 && !PROCESSED_AUTO_ACTIONS.has(`morning_rem_${event.id}`)) {
         PROCESSED_AUTO_ACTIONS.add(`morning_rem_${event.id}`);
-        const morningMsg = `☀️ <b>Доброе утро! Сегодня тот самый день!</b>\n\nМы уже готовим бокалы и отличное настроение для игры "${event.type}". Ждем тебя сегодня! 🥂\n\n📍 Подробную инструкцию и адрес заведения пришлем ровно за 3 часа до начала. Проверь, что телефон заряжен! ✨`;
-        await broadcastToEvent(event.id, morningMsg);
+        await broadcastToEvent(event.id, `☀️ <b>Доброе утро! Тот самый день!</b>\n\nЖдем тебя сегодня на "${event.type}"! ✨`);
       }
 
-      // 4. РАСКРЫТИЕ АДРЕСА И НОМЕРОВ (ЗА 3 ЧАСА)
+      // 2. РАСКРЫТИЕ АДРЕСА (ЗА 3 ЧАСА)
       if (diffHours >= 2.5 && diffHours <= 3.5 && !PROCESSED_AUTO_ACTIONS.has(`reveal_${event.id}`)) {
         PROCESSED_AUTO_ACTIONS.add(`reveal_${event.id}`);
         const { address } = parseEventDesc(event.description);
         
-        let specificInstructions = "";
-        if (event.type === 'talk_toast') {
-          specificInstructions = `🥂 <b>Инструкция для Talk & Toast:</b>\n` +
-          `1️⃣ <b>Приходи заранее:</b> за 10–15 мин до начала.\n` +
-          `2️⃣ <b>Как найти:</b> Спрашивай столик на имя <b>"АЛГОРИТМ"</b>.\n` +
-          `3️⃣ <b>Управляй беседой:</b> нажимай кнопку <b>"🎲 Новая тема"</b>, когда обсудили текущую.\n` +
-          `4️⃣ <b>Викторина:</b> в конце будет игра по вашим анкетам! ✨`;
-        } else if (event.type === 'stock_know') {
-          specificInstructions = `🧠 <b>Инструкция для Stock & Know:</b>\n` +
-          `1️⃣ <b>Азарт:</b> сегодня ты ставишь на свои знания! 💰\n` +
-          `2️⃣ <b>Твой номер:</b> сейчас бот пришлет тебе игровой номер участника.\n` +
-          `3️⃣ <b>Ставки:</b> пиши число (свою ставку) прямо в этот чат, когда ведущий попросит. 🎰`;
-        } else if (event.type === 'speed_dating') {
-          specificInstructions = `💘 <b>Инструкция для Speed Dating:</b>\n` +
-          `1️⃣ <b>Раунды:</b> у вас будет 10 минут на каждое знакомство.\n` +
-          `2️⃣ <b>Карточки:</b> отмечай симпатии в боте сразу после звонка.\n` +
-          `3️⃣ <b>Мэтчи:</b> если всё взаимно, бот пришлет контакты в конце. ✨`;
-        }
+        const rules = `📍 <b>Место встречи: ${address}</b>\n\n` +
+          `1️⃣ <b>Приходи за 10–15 минут:</b> Успеешь сделать заказ.\n` +
+          `2️⃣ <b>Как найти стол:</b> Спрашивай ТОЛЬКО столик <b>"АЛГОРИТМ"</b>.\n` +
+          `3️⃣ <b>Если ты первый:</b> Не беспокойся, садись, компания скоро будет. ✨\n` +
+          `4️⃣ <b>Еда и напитки:</b> Оплачиваются отдельно. 🍲\n` +
+          `5️⃣ <b>Зарядка:</b> Заряди телефон! Бот — твой ведущий. 🔋`;
 
-        const fullMsg = `📍 <b>Место встречи: ${address}</b>\n\n${specificInstructions}\n\n🔋 <b>Важно:</b> Заряди телефон! Бот — твой ведущий. До встречи! 🥂`;
-        await broadcastToEvent(event.id, fullMsg);
+        let gameSpec = "";
+        if (event.type === 'talk_toast') gameSpec = `🥂 <b>Talk & Toast:</b> Тебя ждут глубокие темы и викторина!`;
+        else if (event.type === 'stock_know') gameSpec = `🧠 <b>Stock & Know:</b> Битва за банк! Твой номер придет следом.`;
+        else if (event.type === 'speed_dating') gameSpec = `💘 <b>Свидания:</b> 7-10 мин на пару. Отмечай симпатии сразу!`;
 
-        // РАЗДАЧА НОМЕРОВ
-        if (event.type === 'speed_dating') {
-          const bks = await db.query.bookings.findMany({ where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true)) });
-          const m: any[] = [], w: any[] = [];
-          for (const b of bks) {
-            const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
-            if (u?.gender === 'Мужчина') m.push(u); else if (u?.gender === 'Женщина') w.push(u);
-          }
-          for (let i = 0; i < Math.min(m.length, w.length); i++) {
-            const wNum = (i * 2) + 1; const mNum = (i * 2) + 2;
-            FAST_DATES_STATE.participants.set(w[i].telegramId, { id: w[i].id, num: wNum, gender: 'Женщина', name: w[i].name, username: w[i].username || '' });
-            FAST_DATES_STATE.participants.set(m[i].telegramId, { id: m[i].id, num: mNum, gender: 'Мужчина', name: m[i].name, username: m[i].username || '' });
-            bot.telegram.sendMessage(w[i].telegramId, `💘 <b>Ваш номер: ${wNum}</b>`).catch(()=>{});
-            bot.telegram.sendMessage(m[i].telegramId, `💘 <b>Ваш номер: ${mNum}</b>`).catch(()=>{});
-          }
-        } else if (event.type === 'stock_know') {
-          const bks = await db.query.bookings.findMany({ where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true)) });
-          for (let i = 0; i < bks.length; i++) {
-            const u = await db.query.users.findFirst({ where: eq(schema.users.id, bks[i].userId) });
-            if (u) {
-              const pNum = i + 1;
-              STOCK_STATE.participants.set(u.telegramId, { id: u.id, num: pNum, name: u.name || 'Игрок' });
-              await bot.telegram.sendMessage(u.telegramId, `🧠 <b>Твой игровой номер: ${pNum}</b>\n\nЗапомни его, он нужен для ставок! 🎰`).catch(() => {});
+        await broadcastToEvent(event.id, `${rules}\n\n${gameSpec}\n\nЖдем тебя! 🥂`);
+
+        // Раздача номеров
+        if (event.type === 'speed_dating' || event.type === 'stock_know') {
+            const bks = await db.query.bookings.findMany({ where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true)) });
+            for (let i = 0; i < bks.length; i++) {
+                const u = await db.query.users.findFirst({ where: eq(schema.users.id, bks[i].userId) });
+                if (u) {
+                    const num = i + 1;
+                    if (event.type === 'speed_dating') {
+                      FAST_DATES_STATE.participants.set(u.telegramId, { id: u.telegramId, num, gender: u.gender, name: u.name });
+                    } else {
+                      STOCK_STATE.participants.set(u.telegramId, { id: u.id, num, name: u.name || 'Игрок' });
+                    }
+                    bot.telegram.sendMessage(u.telegramId, `🎫 <b>Твой номер участника: ${num}</b>`).catch(()=>{});
+                }
             }
-          }
         }
       }
 
-      // 5. ВИКТОРИНА (105 МИН)
-      if (minutesSinceStart >= 105 && event.type === 'talk_toast' && !PROCESSED_AUTO_ACTIONS.has(`quiz_${event.id}`)) {
-        PROCESSED_AUTO_ACTIONS.add(`quiz_${event.id}`); 
-        await runAutoQuiz(event.id);
+      // 3. СТАРТ ИГРЫ (ПРИВЕТСТВИЕ + КНОПКА)
+      if (minutesSinceStart >= 0 && minutesSinceStart <= 10 && !PROCESSED_AUTO_ACTIONS.has(`start_greet_${event.id}`)) {
+        PROCESSED_AUTO_ACTIONS.add(`start_greet_${event.id}`);
+        const { title } = parseEventDesc(event.description);
+        
+        let needsTopic = (event.type === 'talk_toast' || event.type === 'speed_dating');
+        let msg = `🥂 <b>Игра "${title}" начинается!</b>\n\nРады всех видеть! Представьтесь друг другу.`;
+        if (needsTopic) msg += ` Если обсудили тему — жмите кнопку <b>"🎲 Новая тема"</b>. Она уже в вашем меню! ✨`;
+
+        const bks = await db.query.bookings.findMany({ where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true)) });
+        for (const b of bks) {
+          const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+          if (u) await bot.telegram.sendMessage(u.telegramId, msg, { parse_mode: 'HTML', ...getMainKeyboard(needsTopic) }).catch(()=>{});
+        }
+
+        if (needsTopic) {
+          setTimeout(() => broadcastToEvent(event.id, `🎲 <b>Тема №1 для разогрева:</b>\n\n${CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)]}`), 20000);
+        }
       }
 
-      // 6. ЗАВЕРШЕНИЕ (135 МИН)
+      // 4. ВИКТОРИНА (105 МИН) И ЗАВЕРШЕНИЕ (135 МИН)
+      if (minutesSinceStart >= 105 && event.type === 'talk_toast' && !PROCESSED_AUTO_ACTIONS.has(`quiz_${event.id}`)) {
+        PROCESSED_AUTO_ACTIONS.add(`quiz_${event.id}`); await runAutoQuiz(event.id);
+      }
       if (minutesSinceStart >= 135 && !PROCESSED_AUTO_ACTIONS.has(`close_${event.id}`)) {
-        PROCESSED_AUTO_ACTIONS.add(`close_${event.id}`); 
-        await autoCloseEvent(event.id);
+        PROCESSED_AUTO_ACTIONS.add(`close_${event.id}`); await autoCloseEvent(event.id);
       }
     }
 
-    // 7. НАПОМИНАНИЕ ОБ ОПЛАТЕ (БРОШЕННАЯ КОРЗИНА)
+    // 5. ОПЛАТА (Pending)
     for (const [uId, data] of PENDING_PAYMENTS.entries()) {
-      const minutesPassed = now.diff(data.time, 'minutes').minutes;
-      if (minutesPassed >= 30 && !data.notified) {
-        const user = await db.query.users.findFirst({ where: eq(schema.users.id, parseInt(uId)) });
-        if (user) await bot.telegram.sendMessage(user.telegramId, `🔔 <b>Вы не завершили оплату!</b>\n\nВижу, что вы начали запись, но оплата не подтверждена. Места разлетаются быстро! Нужна помощь? Напишите в 🆘 Помощь.`).catch(() => {});
+      if (now.diff(data.time, 'minutes').minutes >= 30 && !data.notified) {
+        const u = await db.query.users.findFirst({ where: eq(schema.users.id, parseInt(uId)) });
+        if (u) bot.telegram.sendMessage(u.telegramId, `🔔 <b>Вы не завершили оплату!</b>`).catch(()=>{});
         PENDING_PAYMENTS.set(uId, { ...data, notified: true });
       }
-      if (minutesPassed > 120) PENDING_PAYMENTS.delete(uId);
+      if (now.diff(data.time, 'minutes').minutes > 120) PENDING_PAYMENTS.delete(uId);
     }
-
   } catch (e) { console.error("Ошибка автопилота:", e); }
 }, 60000);
+
 // --- ФУНКЦИИ АВТОПИЛОТА ---
 
 async function runAutoQuiz(eventId: number) {
@@ -424,7 +395,7 @@ async function autoCloseEvent(eventId: number) {
         `✨ <b>Это был прекрасный вечер!</b>\n\n` +
         `Надеемся, тебе было так же тепло и интересно, как и нам. В твой личный кабинет добавлен балл лояльности — напомню, что каждая 5-я встреча у нас бесплатная 🥂\n\n` +
         `Будем очень рады узнать твои впечатления. Если захочешь поделиться парой слов, просто напиши нам в <b>🆘 Помощь</b>.\n\n` +
-        `Кстати, если у тебя останется вдохновение на короткий видео-отзыв (кружочек или отметка в сторис), с нас приятный бонус: <b>скидка -20 PLN</b> на следующую игру 📸\n\n` +
+        `Кстати, если у тебя останется вдохновение на короткий видео-отзыв (кружочек или отметка в сторис), с нас приятный бонус: <b>скидка -10 PLN</b> на следующую игру 📸\n\n` +
         `До новой встречи в Алгоритме!`, { parse_mode: 'HTML' }
 );
     }
@@ -493,59 +464,47 @@ bot.hears('🎮 Игры', (ctx) => {
   ]));
 });
 
-// Обработчик кнопки "🎲 Новая тема"
 bot.hears('🎲 Новая тема', async (ctx) => {
-  const user = await db.query.users.findFirst({
-    where: eq(schema.users.telegramId, ctx.from.id)
-  });
+  const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
   if (!user) return;
 
-  // Ищем оплаченную запись
   const myBookings = await db.query.bookings.findMany({
     where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.paid, true))
   });
 
   let currentEventId = null;
-  // Устанавливаем текущее время по ВАРШАВЕ
   const nowWarsaw = DateTime.now().setZone('Europe/Warsaw');
 
   for (const b of myBookings) {
     const event = await db.query.events.findFirst({
       where: and(
         eq(schema.events.id, b.eventId),
-        eq(schema.events.type, 'talk_toast'),
+        or(eq(schema.events.type, 'talk_toast'), eq(schema.events.type, 'speed_dating')), // Видит обе игры
         eq(schema.events.isActive, true)
       )
     });
     
     if (event) {
-      // Парсим время начала тоже по ВАРШАВЕ
       const start = DateTime.fromFormat(event.dateString, "dd.MM.yyyy HH:mm", { zone: 'Europe/Warsaw' });
+      const diffHours = nowWarsaw.diff(start, 'hours').hours;
       
-      if (start.isValid) {
-        const diffHours = nowWarsaw.diff(start, 'hours').hours;
-        
-        // Кнопка активна от 15 минут ДО начала и в течение 4 часов ПОСЛЕ
-        if (diffHours >= -0.25 && diffHours <= 4) {
-          currentEventId = event.id;
-          break;
-        }
+      // Кнопка активна во время игры (от 0 до 4 часов после старта)
+      if (diffHours >= 0 && diffHours <= 4) {
+        currentEventId = event.id;
+        break;
       }
     }
   }
 
   if (!currentEventId) {
-    // Если игра не найдена по времени, возвращаем клавиатуру БЕЗ кнопки темы
-    return ctx.reply("❌ Кнопка доступна только во время игры, на которую вы записаны.", getMainKeyboard(false));
+    // Если игры нет или она не того типа, возвращаем обычную клавиатуру
+    return ctx.reply("❌ Кнопка доступна только во время активной игры.", getMainKeyboard(false));
   }
 
   const randomTopic = CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)];
-  
-  // Отправляем всем за столом
-  await broadcastToEvent(currentEventId, `🎲 <b>Новая общая тема для стола:</b>\n\n${randomTopic}`);
-  
+  await broadcastToEvent(currentEventId, `🎲 <b>Новая общая тема для вашего стола:</b>\n\n${randomTopic}`);
   return ctx.reply("✅ Тема отправлена всем участникам!");
-});                
+});
 
 // Кнопка "📜 Правила"
 bot.hears('📜 Правила', (ctx) => {
@@ -1029,7 +988,16 @@ bot.action(/view_ev_bks_(\d+)/, async (ctx) => {
 
 
 // 5. Управление Speed Dating и Stock
-bot.action('admin_fd_panel', ctx => { ctx.editMessageText(`💘 <b>Пульт Speed Dating</b>`, { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('✍️ Ввести анкеты', 'fd_input_start')], [Markup.button.callback('🏁 Рассчитать мэтчи', 'fd_calc_matches')]]) }); });
+bot.action('admin_fd_panel', ctx => { 
+  ctx.editMessageText(`💘 <b>Пульт Speed Dating</b>`, { 
+    parse_mode: 'HTML', 
+    ...Markup.inlineKeyboard([
+      [Markup.button.callback('🚀 Начать 1-й раунд', 'fd_start_game')],
+      [Markup.button.callback('🔄 СЛЕДУЮЩИЙ РАУНД', 'fd_next_round')], // Нажимаешь каждые 10 мин
+      [Markup.button.callback('🏁 Рассчитать мэтчи', 'fd_calc_matches')]
+    ]) 
+  }); 
+});
 bot.action('admin_stock_list', (ctx) => {
     const btns = STOCK_QUESTIONS.map((q, i) => [Markup.button.callback(`Вопрос №${i+1}`, `sk_pick_${i}`)]);
     ctx.editMessageText('🧠 Выберите вопрос:', Markup.inlineKeyboard([...btns, [Markup.button.callback('🔙 Назад', 'admin_back_to_panel')]]));
@@ -1116,6 +1084,42 @@ bot.action(/sk_win_(\d+)_(\d+)/, async (ctx) => {
 });
 
 // --- ЛОГИКА СТАТИСТИКИ И МЭТЧЕЙ ---
+
+bot.action('fd_next_round', async (ctx) => {
+  FAST_DATES_STATE.currentRound++;
+  const round = FAST_DATES_STATE.currentRound;
+  
+  // Берем всех участников
+  const players = Array.from(FAST_DATES_STATE.participants.values());
+  const women = players.filter(p => p.gender === 'Женщина').sort((a,b) => a.num - b.num);
+  const men = players.filter(p => p.gender === 'Мужчина').sort((a,b) => a.num - b.num);
+
+  if (women.length === 0 || men.length === 0) return ctx.reply("Нет участников для свиданий!");
+
+  // Логика смещения: Мужчины двигаются по кругу
+  for (let i = 0; i < women.length; i++) {
+    const woman = women[i];
+    // Формула сдвига: (индекс женщины + номер раунда - 1) % количество мужчин
+    const manIndex = (i + round - 1) % men.length;
+    const man = men[manIndex];
+
+    // Отправляем женщине
+    await bot.telegram.sendMessage(woman.id, 
+      `🔄 <b>Раунд №${round}</b>\n\nОставайтесь за своим столиком. К вам подсаживается <b>Игрок №${man.num}</b>. Приятного общения! ✨`,
+      { parse_mode: 'HTML' }
+    ).catch(()=>{});
+
+    // Отправляем мужчине
+    await bot.telegram.sendMessage(man.id, 
+      `🔄 <b>Раунд №${round}</b>\n\nВремя сменить столик! Пересаживайтесь к <b>Игроку №${woman.num}</b>. Удачи! 💘`,
+      { parse_mode: 'HTML' }
+    ).catch(()=>{});
+  }
+
+  await ctx.answerCbQuery(`Раунд ${round} запущен!`);
+  await ctx.reply(`📢 <b>Раунд №${round} начался!</b> Все игроки получили уведомления о пересадке.`, { parse_mode: 'HTML' });
+});
+
 bot.action('admin_stats', async (ctx) => {
   const allUsers = await db.query.users.findMany();
   const allPaidBookings = await db.query.bookings.findMany({ where: eq(schema.bookings.paid, true) });
