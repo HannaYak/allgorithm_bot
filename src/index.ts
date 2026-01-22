@@ -718,15 +718,26 @@ bot.action(/confirm_pay_(\d+)/, async (ctx) => {
         const paid = sessions.data.find(s => s.metadata?.telegramId === ctx.from!.id.toString() && s.metadata?.eventId === eid.toString() && s.payment_status === 'paid');
         
         if (!paid) return ctx.reply('🔍 Оплата не найдена. Подождите 10 сек.');
-        const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) }); // Сначала создаем
+        const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
         if (!user) return;
+
+        // ПРОВЕРКА НА ДУБЛЬ
+        const existing = await db.query.bookings.findFirst({ 
+            where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.eventId, eid)) 
+        });
+
+        if (existing) {
+            return ctx.editMessageText('✅ Вы уже в списке участников! Инструкция придет за 3 часа.');
+        }
+
         PENDING_PAYMENTS.delete(`${user.id}`);
-        if (paid.metadata?.voucherId) await db.update(schema.vouchers).set({ status: 'used' }).where(eq(schema.vouchers.id, parseInt(paid.metadata.voucherId)));
-        
         await db.insert(schema.bookings).values({ userId: user.id, eventId: eid, paid: true });
 
         const event = await db.query.events.findFirst({ where: eq(schema.events.id, eid) });
-        if (event) await db.update(schema.events).set({ currentPlayers: (event.currentPlayers || 0) + 1 }).where(eq(schema.events.id, eid));
+        if (event) {
+            // Прибавляем только если это новая запись
+            await db.update(schema.events).set({ currentPlayers: (event.currentPlayers || 0) + 1 }).where(eq(schema.events.id, eid));
+        }
         
         await ctx.editMessageText(
             `🎉 <b>Оплата подтверждена! Ты в игре!</b>\n\n` +
@@ -833,7 +844,28 @@ bot.action('admin_global_broadcast', (ctx) => {
 bot.action('admin_add_event', (ctx) => ctx.scene.enter('ADD_EVENT_SCENE'));
 bot.action('admin_msg_event', (ctx) => ctx.scene.enter('MSG_EVENT_SCENE'));
 
+
+
 // --- Исправленные команды админа ---
+
+bot.command('recount', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    const events = await db.query.events.findMany({ where: eq(schema.events.isActive, true) });
+    
+    for (const event of events) {
+        const realBookings = await db.query.bookings.findMany({ 
+            where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true)) 
+        });
+        
+        // Считаем только уникальных пользователей
+        const uniqueUserIds = new Set(realBookings.map(b => b.userId));
+        await db.update(schema.events)
+            .set({ currentPlayers: uniqueUserIds.size })
+            .where(eq(schema.events.id, event.id));
+    }
+    ctx.reply('✨ Счётчики игроков успешно исправлены! Теперь они показывают только реальных людей.');
+});
+
 bot.command('list_ids', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     try {
@@ -978,14 +1010,18 @@ bot.action(/view_ev_bks_(\d+)/, async (ctx) => {
     if (bookings.length === 0) return ctx.reply('Записей нет.');
 
     let msg = `📋 <b>Список записей на игру:</b>\n\n`;
+    const seenUsers = new Set(); // Для фильтрации дублей в списке
+
     for (const b of bookings) {
+        if (seenUsers.has(b.userId)) continue; // Пропускаем, если уже вывели этого юзера
+        seenUsers.add(b.userId);
+
         const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
         const status = b.paid ? '✅ Оплачено' : '⏳ Ждет оплаты';
         msg += `• ${u?.name || 'Аноним'} (@${u?.username || 'нет'}) \n   ID: <code>${u?.telegramId}</code> — <b>${status}</b>\n\n`;
     }
     ctx.replyWithHTML(msg);
 });
-
 
 // 5. Управление Speed Dating и Stock
 bot.action('admin_fd_panel', ctx => { 
@@ -1308,23 +1344,18 @@ bot.action('start_registration', (ctx) => { ctx.deleteMessage(); ctx.scene.enter
 // --- АВТОМАТИЧЕСКАЯ ЗАПИСЬ ПОСЛЕ ОПЛАТЫ (WEBHOOK) ---
 async function handleSuccessfulPayment(session: any) {
   const { telegramId, eventId, voucherId } = session.metadata;
-  
-  // 1. Ищем юзера и игру
   const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, parseInt(telegramId)) });
   const event = await db.query.events.findFirst({ where: eq(schema.events.id, parseInt(eventId)) });
   
   if (!user || !event) return;
 
-  // Проверяем, нет ли уже такой записи (защита от дублей)
+  // Если запись уже создана кнопкой "Я оплатил", выходим и ничего не прибавляем!
   const existing = await db.query.bookings.findFirst({ 
     where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.eventId, event.id)) 
   });
-  if (existing) return;
+  if (existing) return; 
 
-  // 2. Создаем запись
   await db.insert(schema.bookings).values({ userId: user.id, eventId: event.id, paid: true });
-
-  // 3. Обновляем счетчик игроков
   await db.update(schema.events).set({ currentPlayers: (event.currentPlayers || 0) + 1 }).where(eq(schema.events.id, event.id));
 
   // 4. Гасим ваучер, если он был
