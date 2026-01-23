@@ -294,11 +294,11 @@ setInterval(async () => {
         const { address } = parseEventDesc(event.description);
         
         const rules = `📍 <b>Место встречи: ${address}</b>\n\n` +
-          `1️⃣ <b>Приходи за 10–15 минут:</b> Успеешь сделать заказ.\n` +
-          `2️⃣ <b>Как найти стол:</b> Спрашивай ТОЛЬКО столик <b>"АЛГОРИТМ"</b>.\n` +
-          `3️⃣ <b>Если ты первый:</b> Не беспокойся, садись, компания скоро будет. ✨\n` +
-          `4️⃣ <b>Еда и напитки:</b> Оплачиваются отдельно. 🍲\n` +
-          `5️⃣ <b>Зарядка:</b> Заряди телефон! Бот — твой ведущий. 🔋`;
+          `1️⃣ <b>Приходи за 10–15 минут:</b> Успеешь сделать заказ и снять куртку.\n` +
+          `2️⃣ <b>Как найти стол:</b> Спрашивай ТОЛЬКО столик на имя <b>"АЛГОРИТМ"</b>, ничего более.\n` +
+          `3️⃣ <b>Если ты первый:</b> Не беспокойся, садись, компания скоро будет, стоит немного подождать. ✨\n` +
+          `4️⃣ <b>Еда и напитки:</b> Оплачиваются отдельно на месте. 🍲\n` +
+          `5️⃣ <b>Зарядка:</b> Заряди телефон! Бот — твой ведущий и поможет провести ваш вечер. 🔋`;
 
         let gameSpec = "";
         if (event.type === 'talk_toast') gameSpec = `🥂 <b>Talk & Toast:</b> Тебя ждут глубокие темы и викторина!`;
@@ -308,22 +308,53 @@ setInterval(async () => {
         await broadcastToEvent(event.id, `${rules}\n\n${gameSpec}\n\nЖдем тебя! 🥂`);
 
         // Раздача номеров
-        if (event.type === 'speed_dating' || event.type === 'stock_know') {
-            const bks = await db.query.bookings.findMany({ where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true)) });
+       // --- УМНАЯ РАЗДАЧА НОМЕРОВ ПРИ РАСКРЫТИИ (ЗА 3 ЧАСА) ---
+        const bks = await db.query.bookings.findMany({ 
+            where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true)) 
+        });
+
+        if (event.type === 'speed_dating') {
+            const men: any[] = [], women: any[] = [];
+            
+            // 1. Сортируем оплативших по полу
+            for (const b of bks) {
+                const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+                if (u?.gender === 'Мужчина') men.push(u);
+                else if (u?.gender === 'Женщина') women.push(u);
+            }
+
+            // 2. Раздаем пары (по меньшему количеству, чтобы никто не сидел один)
+            const limit = Math.min(men.length, women.length);
+            for (let i = 0; i < limit; i++) {
+                const wNum = (i * 2) + 1; // 1, 3, 5...
+                const mNum = (i * 2) + 2; // 2, 4, 6...
+
+                // Записываем в память свиданий (используем telegramId как ключ)
+                FAST_DATES_STATE.participants.set(women[i].telegramId, { id: women[i].telegramId, num: wNum, gender: 'Женщина', name: women[i].name });
+                FAST_DATES_STATE.participants.set(men[i].telegramId, { id: men[i].telegramId, num: mNum, gender: 'Мужчина', name: men[i].name });
+
+                // Шлем каждому его личный номер
+                bot.telegram.sendMessage(women[i].telegramId, `💘 <b>Твой номер на сегодня: ${wNum}</b> (Столик №${i + 1})\n\nЖдем тебя!`).catch(()=>{});
+                bot.telegram.sendMessage(men[i].telegramId, `💘 <b>Твой номер на сегодня: ${mNum}</b> (Столик №${i + 1})\n\nЖдем тебя!`).catch(()=>{});
+            }
+
+            // 3. Уведомляем админа, если кто-то остался без пары
+            if (men.length !== women.length) {
+                const extra = Math.abs(men.length - women.length);
+                bot.telegram.sendMessage(ADMIN_ID, `⚠️ <b>Внимание!</b> На игре "${event.type}" дисбаланс: ${extra} чел. остались без пары и номера не получили.`);
+            }
+
+        } else if (event.type === 'stock_know') {
+            // Для Stock & Know пол не важен, просто даем номера по порядку
             for (let i = 0; i < bks.length; i++) {
                 const u = await db.query.users.findFirst({ where: eq(schema.users.id, bks[i].userId) });
                 if (u) {
-                    const num = i + 1;
-                    if (event.type === 'speed_dating') {
-                      FAST_DATES_STATE.participants.set(u.telegramId, { id: u.telegramId, num, gender: u.gender, name: u.name });
-                    } else {
-                      STOCK_STATE.participants.set(u.telegramId, { id: u.id, num, name: u.name || 'Игрок' });
-                    }
-                    bot.telegram.sendMessage(u.telegramId, `🎫 <b>Твой номер участника: ${num}</b>`).catch(()=>{});
+                    const pNum = i + 1;
+                    STOCK_STATE.participants.set(u.telegramId, { id: u.id, num: pNum, name: u.name || 'Игрок' });
+                    bot.telegram.sendMessage(u.telegramId, `🧠 <b>Твой номер в Stock & Know: ${pNum}</b>\n\nЗапомни его для ставок! 🎰`).catch(()=>{});
                 }
             }
         }
-      }
 
       // 3. СТАРТ ИГРЫ (ПРИВЕТСТВИЕ + КНОПКА)
       if (minutesSinceStart >= 0 && minutesSinceStart <= 10 && !PROCESSED_AUTO_ACTIONS.has(`start_greet_${event.id}`)) {
@@ -1125,35 +1156,41 @@ bot.action('fd_next_round', async (ctx) => {
   FAST_DATES_STATE.currentRound++;
   const round = FAST_DATES_STATE.currentRound;
   
-  // Берем всех участников
-  const players = Array.from(FAST_DATES_STATE.participants.values());
-  const women = players.filter(p => p.gender === 'Женщина').sort((a,b) => a.num - b.num);
-  const men = players.filter(p => p.gender === 'Мужчина').sort((a,b) => a.num - b.num);
+  const ps = Array.from(FAST_DATES_STATE.participants.values());
+  // Сортируем, чтобы всё шло по порядку номеров
+  const women = ps.filter(p => p.gender === 'Женщина').sort((a,b) => a.num - b.num);
+  const men = ps.filter(p => p.gender === 'Мужчина').sort((a,b) => a.num - b.num);
 
-  if (women.length === 0 || men.length === 0) return ctx.reply("Нет участников для свиданий!");
+  if (women.length === 0 || men.length === 0) return ctx.reply("Ошибка: некого пересаживать.");
 
-  // Логика смещения: Мужчины двигаются по кругу
+  // Если раундов больше, чем пар, игра финиширует
+  if (round > women.length) {
+    return ctx.reply("🏁 Все участники познакомились! Раунды закончились.");
+  }
+
   for (let i = 0; i < women.length; i++) {
     const woman = women[i];
-    // Формула сдвига: (индекс женщины + номер раунда - 1) % количество мужчин
+    
+    // Вычисляем, какой мужчина идет к этой женщине в этом раунде
+    // Формула гарантирует, что каждый мужчина посетит каждую женщину за цикл
     const manIndex = (i + round - 1) % men.length;
     const man = men[manIndex];
 
-    // Отправляем женщине
-    await bot.telegram.sendMessage(woman.id, 
-      `🔄 <b>Раунд №${round}</b>\n\nОставайтесь за своим столиком. К вам подсаживается <b>Игрок №${man.num}</b>. Приятного общения! ✨`,
+    // Уведомление Женщине (она сидит на месте)
+    bot.telegram.sendMessage(woman.id, 
+      `🔄 <b>Раунд №${round}</b>\n\nОставайтесь на месте. Сейчас к вам подсядет <b>Участник №${man.num}</b>.`,
       { parse_mode: 'HTML' }
     ).catch(()=>{});
 
-    // Отправляем мужчине
-    await bot.telegram.sendMessage(man.id, 
-      `🔄 <b>Раунд №${round}</b>\n\nВремя сменить столик! Пересаживайтесь к <b>Игроку №${woman.num}</b>. Удачи! 💘`,
+    // Уведомление Мужчине (он идет к женщине)
+    bot.telegram.sendMessage(man.id, 
+      `🔄 <b>Раунд №${round}</b>\n\nПереходите к <b>Участнице №${woman.num}</b>. Желаем приятного знакомства! 💘`,
       { parse_mode: 'HTML' }
     ).catch(()=>{});
   }
 
   await ctx.answerCbQuery(`Раунд ${round} запущен!`);
-  await ctx.reply(`📢 <b>Раунд №${round} начался!</b> Все игроки получили уведомления о пересадке.`, { parse_mode: 'HTML' });
+  await ctx.reply(`📢 <b>Раунд №${round} начался!</b>\nМужчины получили уведомления, к какой участнице им переходить.`);
 });
 
 bot.action('admin_stats', async (ctx) => {
