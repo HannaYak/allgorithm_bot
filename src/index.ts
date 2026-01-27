@@ -679,15 +679,12 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
     const eid = parseInt(ctx.match[1]);
     const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
     
-    // Если имени нет — отправляем в анкету и ПЕРЕДАЕМ ID игры (eventId)
+    // 1. Проверка регистрации
     if (!user?.name) {
         return ctx.scene.enter('REGISTER_SCENE', { returnToEvent: eid });
     }
-    
-    // ... дальше твой обычный код оплаты (проверка бана, страйп и т.д.)
-    
-    if (!user?.name) return ctx.reply('Сначала заполни анкету!', Markup.inlineKeyboard([[Markup.button.callback('📝 Заполнить', 'start_registration')]]));
 
+    // 2. Проверка бана
     if (user.strangeStory === 'BANNED') {
         return ctx.reply('❌ К сожалению, вы нарушили правила клуба Allgorithm и доступ к играм для вас ограничен. Обратитесь в Помощь.');
     }
@@ -696,10 +693,35 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
         const event = await db.query.events.findFirst({ where: eq(schema.events.id, eid) });
         if (!event) return;
 
-        await bot.telegram.sendMessage(ADMIN_ID, `⚠️ Юзер ${user.name} (@${ctx.from.username}) нажал «Оплатить» на игру №${eid}.`).catch(()=>{});
-      
-        // 1. Каждая 5-я игра бесплатно
-        // 1. Каждая 5-я игра бесплатно
+        // --- БЛОК ГЕНДЕРНОГО КОНТРОЛЯ ДЛЯ SPEED DATING ---
+        if (event.type === 'speed_dating') {
+            const bookings = await db.query.bookings.findMany({ 
+                where: and(eq(schema.bookings.eventId, eid), eq(schema.bookings.paid, true)) 
+            });
+
+            let menCount = 0;
+            let womenCount = 0;
+
+            for (const b of bookings) {
+                const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+                if (u?.gender === 'Мужчина') menCount++;
+                else if (u?.gender === 'Женщина') womenCount++;
+            }
+
+            const limitPerGender = event.maxPlayers / 2;
+
+            if (user.gender === 'Мужчина' && menCount >= limitPerGender) {
+                return ctx.reply(`❌ Извините, места для мужчин на эту игру закончились. \n\nПопробуйте выбрать другую дату или загляните на Talk & Toast! 🥂`);
+            }
+            if (user.gender === 'Женщина' && womenCount >= limitPerGender) {
+                return ctx.reply(`❌ Извините, места для девушек на эту игру закончились. \n\nВыбирайте другой день, мы будем очень вас ждать! ✨`);
+            }
+        }
+
+        // Уведомление админу о намерении оплатить
+        await bot.telegram.sendMessage(ADMIN_ID, `⚠️ Юзер ${user.name} (@${ctx.from!.username}) нажал «Оплатить» на игру №${eid}.`).catch(()=>{});
+
+        // 3. Каждая 5-я игра БЕСПЛАТНО
         if (((user.gamesPlayed || 0) + 1) % 5 === 0) {
             await db.insert(schema.bookings).values({ userId: user.id, eventId: eid, paid: true });
             await db.update(schema.events).set({ currentPlayers: (event.currentPlayers || 0) + 1 }).where(eq(schema.events.id, eid));
@@ -714,7 +736,7 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
             );
         }
 
-        // 2. Проверка активных ваучеров
+        // 4. Проверка активных ваучеров
         const activeVoucher = await db.query.vouchers.findFirst({ 
             where: and(eq(schema.vouchers.userId, user.id), or(eq(schema.vouchers.status, 'approved_10'), eq(schema.vouchers.status, 'approved_free'))) 
         });
@@ -734,12 +756,13 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
             );
         }
 
-        // 3. Stripe
+        // 5. Оплата через Stripe
         const sessionMetadata: any = { telegramId: ctx.from!.id.toString(), eventId: eid.toString() };
         let discounts = [];
+        
         if (activeVoucher?.status === 'approved_10') {
             discounts = [{ coupon: STRIPE_COUPON_ID }];
-            sessionMetadata.voucherId = activeVoucher.id.toString();//напиши мне привет Ханна GEmini 
+            sessionMetadata.voucherId = activeVoucher.id.toString(); // Привет, Ханна Gemini! ❤️
         }
 
         const stripeSession = await stripe.checkout.sessions.create({
@@ -753,9 +776,18 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
             cancel_url: `https://t.me/${ctx.botInfo.username}`,
         });
 
-        await ctx.reply(`К оплате: ${activeVoucher ? '40' : '50'} PLN`, Markup.inlineKeyboard([[Markup.button.url('💸 Оплатить (BLIK, Revolut...)', stripeSession.url!)], [Markup.button.callback('✅ Я оплатил', `confirm_pay_${eid}`)]]));
+        await ctx.reply(
+            `К оплате: ${activeVoucher?.status === 'approved_10' ? '40' : '50'} PLN`, 
+            Markup.inlineKeyboard([
+                [Markup.button.url('💸 Оплатить (Apple/Google Pay, BLIK...)', stripeSession.url!)], 
+                [Markup.button.callback('✅ Я оплатил', `confirm_pay_${eid}`)]
+            ])
+        );
 
-    } catch (e) { console.error(e); ctx.reply('Ошибка Stripe. Проверь валюту в Dashboard!'); }
+    } catch (e) { 
+        console.error(e); 
+        ctx.reply('Ошибка Stripe. Проверь валюту в Dashboard!'); 
+    }
     
     PENDING_PAYMENTS.set(`${user.id}`, { time: DateTime.now(), notified: false });
 });
