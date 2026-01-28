@@ -200,9 +200,7 @@ const editFactWizard = new Scenes.WizardScene(
   }
 );
 
-// Не забудь добавить её в Stage:
-// Теперь тут ВСЕ 4 сцены. Без этого кнопка истории в кабинете — просто текст.
-const stage = new Scenes.Stage<any>([registerWizard, addEventWizard, msgEventWizard, editFactWizard]);
+
   
 const addEventWizard = new Scenes.WizardScene(
   'ADD_EVENT_SCENE',
@@ -284,7 +282,7 @@ const msgEventWizard = new Scenes.WizardScene(
 );
 
 // Регистрация всех сцен и подключение сессий
-const stage = new Scenes.Stage<any>([registerWizard, addEventWizard, msgEventWizard]);
+const stage = new Scenes.Stage<any>([registerWizard, addEventWizard, msgEventWizard, editFactWizard]);
 bot.use(session()); 
 bot.use(stage.middleware());
 
@@ -545,22 +543,6 @@ bot.hears('👤 Личный кабинет', async (ctx) => {
 
 // И обработчик для новой кнопки:
 bot.action('start_edit_fact', (ctx) => { ctx.deleteMessage(); ctx.scene.enter('EDIT_FACT_SCENE'); });
-  const count10 = userVouchers.filter(v => v.status === 'approved_10').length;
-  const countFree = userVouchers.filter(v => v.status === 'approved_free').length;
-
-  let msg = `👤 <b>Имя:</b> ${user.name || 'Не заполнено'}\n` +
-            `🎫 <b>Скидки (-10 PLN):</b> ${count10} шт.\n` +
-            `🎁 <b>Бесплатные игры:</b> ${countFree} шт.\n` +
-            `👥 <b>Приглашено:</b> ${user.invitedCount || 0}`;
-
-  const buttons = [
-    [Markup.button.callback(user.name ? '✏️ Изменить анкету' : '📝 Заполнить анкету', 'start_registration')],
-    [Markup.button.callback('📸 У меня есть ваучер', 'upload_voucher')],
-    [Markup.button.callback('🎮 Мои записи на игры', 'my_games')],
-    [Markup.button.callback('🤝 Реферальная программа', 'referral_info')]
-  ];
-  return ctx.replyWithHTML(msg, Markup.inlineKeyboard(buttons));
-});
 
 bot.action('referral_info', async (ctx) => {
     const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
