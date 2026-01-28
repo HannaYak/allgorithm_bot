@@ -12,12 +12,22 @@ import { DateTime } from 'luxon';
 // --- 1. НАСТРОЙКИ ---
 
 async function broadcastToEvent(eventId: number, message: string) {
+  // 1. Получаем все оплаченные брони на эту игру
   const bookings = await db.query.bookings.findMany({
     where: and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true))
   });
-  for (const b of bookings) {
-    const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
-    if (u) bot.telegram.sendMessage(u.telegramId, message, { parse_mode: 'HTML' }).catch(() => {});
+
+  // 2. СОЗДАЕМ УНИКАЛЬНЫЙ СПИСОК (Set)
+  // Это магическая кнопка: она отсеивает все дубли по userId
+  const uniqueUserIds = [...new Set(bookings.map(b => b.userId))];
+
+  // 3. Делаем рассылку только по уникальным ID
+  for (const userId of uniqueUserIds) {
+    const u = await db.query.users.findFirst({ where: eq(schema.users.id, userId) });
+    if (u) {
+      bot.telegram.sendMessage(u.telegramId, message, { parse_mode: 'HTML' })
+        .catch((err) => console.error(`Ошибка отправки юзеру ${u.id}:`, err));
+    }
   }
 }
 
@@ -167,6 +177,32 @@ const registerWizard = new Scenes.WizardScene(
   }
 );
 
+const editFactWizard = new Scenes.WizardScene(
+  'EDIT_FACT_SCENE',
+  async (ctx) => {
+    await ctx.replyWithHTML(
+      `🤫 <b>Твоя история для викторины</b>\n\n` +
+      `Напиши один необычный или забавный факт о себе. \n\n` +
+      `<i>Например: «я боюсь бабочек», «однажды я выиграл в лотерею» или «я умею играть на ложках». Мы используем это, чтобы другие игроки угадывали, чей это факт!</i> 👇`
+    );
+    return ctx.wizard.next();
+  },
+  async (ctx) => {
+    if (!ctx.message || !('text' in ctx.message)) return;
+    const fact = ctx.message.text;
+
+    await db.update(schema.users)
+      .set({ fact: fact })
+      .where(eq(schema.users.telegramId, ctx.from!.id));
+
+    await ctx.reply('✅ История сохранена! Теперь ты официально в пуле участников нашей секретной викторины. ✨', getMainKeyboard());
+    return ctx.scene.leave();
+  }
+);
+
+// Не забудь добавить её в Stage:
+// Теперь тут ВСЕ 4 сцены. Без этого кнопка истории в кабинете — просто текст.
+const stage = new Scenes.Stage<any>([registerWizard, addEventWizard, msgEventWizard, editFactWizard]);
   
 const addEventWizard = new Scenes.WizardScene(
   'ADD_EVENT_SCENE',
@@ -358,13 +394,17 @@ setInterval(async () => {
       }
 
       // 3. СТАРТ ИГРЫ (ПРИВЕТСТВИЕ + КНОПКА)
+      // 3. СТАРТ ИГРЫ (ПРИВЕТСТВИЕ + КНОПКА)
       if (minutesSinceStart >= 0 && minutesSinceStart <= 10 && !PROCESSED_AUTO_ACTIONS.has(`start_greet_${event.id}`)) {
         PROCESSED_AUTO_ACTIONS.add(`start_greet_${event.id}`);
         const { title } = parseEventDesc(event.description);
         
         let needsTopic = (event.type === 'talk_toast' || event.type === 'speed_dating');
-        let msg = `🥂 <b>Игра "${title}" начинается!</b>\n\nРады всех видеть! Представьтесь для начала друг другу(например имя и ваше хобби/специальность и т.д.).`;
-        if (needsTopic) msg += ` Если обсудили тему — жмите кнопку <b>"🎲 Новая тема"</b>. Она уже в вашем меню! ✨`;
+        let msg = `🥂 <b>Игра "${title}" начинается!</b>\n\nРады всех видеть! Представьтесь для начала друг другу (имя и ваше хобби или специальность).`;
+        
+        if (needsTopic) {
+            msg += `\n\n⏱ Через 1 минуту я пришлю первую тему и выберу того, кто начнет. Кнопка <b>"🎲 Новая тема"</b> уже в вашем меню! ✨`;
+        }
 
         const bks = await db.query.bookings.findMany({ where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true)) });
         for (const b of bks) {
@@ -372,8 +412,31 @@ setInterval(async () => {
           if (u) await bot.telegram.sendMessage(u.telegramId, msg, { parse_mode: 'HTML', ...getMainKeyboard(needsTopic) }).catch(()=>{});
         }
 
+        // --- УЛУЧШЕННАЯ ПЕРВАЯ ТЕМА (ЧЕРЕЗ 60 СЕКУНД) ---
         if (needsTopic) {
-          setTimeout(() => broadcastToEvent(event.id, `🎲 <b>Тема №1 для разогрева:</b>\n\n${CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)]}`), 20000);
+          setTimeout(async () => {
+            // 1. Получаем список всех участников игры прямо сейчас
+            const currentBks = await db.query.bookings.findMany({ 
+                where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true)) 
+            });
+            
+            const playersNames: string[] = [];
+            for (const b of currentBks) {
+                const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+                if (u?.name) playersNames.push(u.name);
+            }
+
+            // 2. Выбираем случайного игрока, который начнет
+            const starter = playersNames.length > 0 
+                ? playersNames[Math.floor(Math.random() * playersNames.length)] 
+                : "того, кто чувствует себя самым смелым";
+
+            const randomTopic = CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)];
+            
+            const topicMsg = `🎲 <b>Тема №1 для разогрева:</b>\n\n${randomTopic}\n\n🎙 <b>Начинает рассуждение:</b> <u>${starter}</u>`;
+            
+            await broadcastToEvent(event.id, topicMsg);
+          }, 60000); // Ровно 1 минута (60 000 мс)
         }
       }
 
@@ -467,6 +530,27 @@ bot.hears('👤 Личный кабинет', async (ctx) => {
   let msg = `👤 <b>Имя:</b> ${user.name || 'Не заполнено'}\n` +
             `🎫 <b>Скидки (-10 PLN):</b> ${count10} шт.\n` +
             `🎁 <b>Бесплатные игры:</b> ${countFree} шт.\n` +
+            `👥 <b>Приглашено:</b> ${user.invitedCount || 0}\n\n` +
+            `📖 <b>Твоя история:</b> ${user.fact ? '✅ Заполнена' : '❌ Не заполнена'}`;
+
+  const buttons = [
+    [Markup.button.callback(user.name ? '✏️ Изменить анкету' : '📝 Заполнить анкету', 'start_registration')],
+    [Markup.button.callback(user.fact ? '✏️ Изменить историю' : '📝 Добавить историю', 'start_edit_fact')],
+    [Markup.button.callback('📸 У меня есть ваучер', 'upload_voucher')],
+    [Markup.button.callback('🎮 Мои записи на игры', 'my_games')],
+    [Markup.button.callback('🤝 Реферальная программа', 'referral_info')]
+  ];
+  return ctx.replyWithHTML(msg, Markup.inlineKeyboard(buttons));
+});
+
+// И обработчик для новой кнопки:
+bot.action('start_edit_fact', (ctx) => { ctx.deleteMessage(); ctx.scene.enter('EDIT_FACT_SCENE'); });
+  const count10 = userVouchers.filter(v => v.status === 'approved_10').length;
+  const countFree = userVouchers.filter(v => v.status === 'approved_free').length;
+
+  let msg = `👤 <b>Имя:</b> ${user.name || 'Не заполнено'}\n` +
+            `🎫 <b>Скидки (-10 PLN):</b> ${count10} шт.\n` +
+            `🎁 <b>Бесплатные игры:</b> ${countFree} шт.\n` +
             `👥 <b>Приглашено:</b> ${user.invitedCount || 0}`;
 
   const buttons = [
@@ -511,16 +595,13 @@ bot.hears('🎲 Новая тема', async (ctx) => {
     const event = await db.query.events.findFirst({
       where: and(
         eq(schema.events.id, b.eventId),
-        or(eq(schema.events.type, 'talk_toast'), eq(schema.events.type, 'speed_dating')), // Видит обе игры
+        or(eq(schema.events.type, 'talk_toast'), eq(schema.events.type, 'speed_dating')),
         eq(schema.events.isActive, true)
       )
     });
-    
     if (event) {
       const start = DateTime.fromFormat(event.dateString, "dd.MM.yyyy HH:mm", { zone: 'Europe/Warsaw' });
       const diffHours = nowWarsaw.diff(start, 'hours').hours;
-      
-      // Кнопка активна во время игры (от 0 до 4 часов после старта)
       if (diffHours >= 0 && diffHours <= 4) {
         currentEventId = event.id;
         break;
@@ -529,12 +610,27 @@ bot.hears('🎲 Новая тема', async (ctx) => {
   }
 
   if (!currentEventId) {
-    // Если игры нет или она не того типа, возвращаем обычную клавиатуру
     return ctx.reply("❌ Кнопка доступна только во время активной игры.", getMainKeyboard(false));
   }
 
+  // ВЫБИРАЕМ КТО НАЧИНАЕТ
+  const bksForTopic = await db.query.bookings.findMany({ 
+    where: and(eq(schema.bookings.eventId, currentEventId), eq(schema.bookings.paid, true)) 
+  });
+  
+  const players: string[] = [];
+  for (const b of bksForTopic) {
+    const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+    if (u?.name) players.push(u.name);
+  }
+
+  const starter = players.length > 0 
+    ? players[Math.floor(Math.random() * players.length)] 
+    : "кто-то из вас";
+
   const randomTopic = CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)];
-  await broadcastToEvent(currentEventId, `🎲 <b>Новая общая тема для вашего стола:</b>\n\n${randomTopic}`);
+  
+  await broadcastToEvent(currentEventId, `🎲 <b>Новая тема для вашего стола:</b>\n\n${randomTopic}\n\n🎙 <b>Начинает рассуждение:</b> <u>${starter}</u>`);
   return ctx.reply("✅ Тема отправлена всем участникам!");
 });
 
@@ -570,12 +666,23 @@ bot.hears('🆘 Помощь', (ctx) => {
 // --- 8. ЛОГИКА ИГР ---
 
 bot.action('game_talk', (ctx) => {
-  const text = `🥂 <b>Talk & Toast</b>\n\n` +
-    `<b>Что это?</b>\nЭто не свидания и не нетворкинг — это лёгкая, дружеская атмосфера, где каждый чувствует себя комфортно и непринуждённо ✨\n\n` +
-    `<b>Зачем это?</b>\n• Вы сможете как просто хорошо провести вечер в интересной компании 🍷\n• Найти новых друзей, деловых партнёров и даже вторую половинку 🤝\n• Открыть для себя новый ресторан и попробовать необычные блюда 🍝\n\n` +
-    `<b>Почему стоит пойти?</b>\n• Новые знакомства с людьми, с которыми вы бы никогда не встретились 🌍\n• Яркие впечатления и новый круг общения 🎉\n• Вам не нужно ничего организовывать — мы уже сделали это за вас! 😎\n\n` +
-    `🍲 <b>Важно:</b> Еда и напитки оплачиваются отдельно по меню ресторана.`;
-  return ctx.editMessageText(text, { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('📅 Записаться', 'book_talk')], [Markup.button.callback('🔙 Назад', 'back_to_games')]]) });
+  const text = `🥂 <b>Talk & Toast: Как это работает?</b>\n\n` +
+    `Чтобы всем было проще завязать разговор и познакомиться, мы предлагаем интерактивы и интересные, глубокие темы для беседы прямо через бота.\n\n` +
+    `✨ <b>Начало:</b> В первые минуты вечера бот автоматически вышлет вам первую тему для обсуждения — это поможет «растопить лёд» и задать ритм встрече.\n\n` +
+    `🎲 <b>Управление:</b> Как только вы обсудите текущий вопрос, получить следующую тему можно нажав на клавишу <b>«🎲 Новая тема»</b> в вашем меню.\n\n` +
+    `🎙 <b>Кто начинает?</b> Чтобы не было неловких пауз, бот сам назначит игрока, который первым поделится своими мыслями.\n\n` +
+    `📍 <b>Правила вечера:</b>\n` +
+    `• (Впиши сюда своё правило 1)\n` +
+    `• (Впиши сюда своё правило 2)\n\n` +
+    `🍲 <b>Важно:</b> Еда и напитки оплачиваются отдельно по меню ресторана. Наслаждайтесь атмосферой и общением! ✨`;
+
+  return ctx.editMessageText(text, { 
+    parse_mode: 'HTML', 
+    ...Markup.inlineKeyboard([
+        [Markup.button.callback('📅 Записаться', 'book_talk')], 
+        [Markup.button.callback('🔙 Назад', 'back_to_games')]
+    ]) 
+  });
 });
 
 bot.action('game_stock', (ctx) => {
@@ -826,6 +933,7 @@ bot.action(/confirm_pay_(\d+)/, async (ctx) => {
             `• <b>Отмена и перенос:</b> Возможны только за <b>36 часов</b> до начала. Позже сумма «сгорает».\n` +
             `• <b>Атмосфера:</b> Мы за уважение и классный вайб. 🥂\n` +
             `• <b>Локация:</b> Адрес и инструкция придут за <b>3 часа</b> до начала игры.\n\n` +
+            `🤫 <b>Кстати!</b> Для нашей секретной викторины нам нужна твоя история. Пожалуйста, зайди в 👤 <b>Личный кабинет</b> -> <b>Добавить историю</b> и напиши один забавный или странный факт о себе. Это сделает вечер в разы круче! ✨\n\n` +
             `Напоминаем, что еда и напитки оплачиваются отдельно.\n\n` +
             `До встречи! 😎`, 
             { parse_mode: 'HTML' }
@@ -1459,13 +1567,20 @@ async function handleSuccessfulPayment(session: any) {
   }
 
 // 6. Пишем юзеру радостную весть
-  let messageText = `✅ <b>Оплата подтверждена автоматически!</b>\n\nВы успешно записаны на игру "${event.type}" на ${event.dateString}. Ждем вас! 🥂`;
-  
+ // 6. Пишем юзеру радостную весть
+  // 6. Пишем юзеру радостную весть
+  let messageText = `✅ <b>Оплата подтверждена автоматически!</b>\n\n` +
+                  `Вы успешно записаны на игру "${event.type}" на ${event.dateString}.\n\n` +
+                  `🤫 <b>Важный момент:</b> Для викторины нам нужна твоя история! Пожалуйста, перейди в 👤 <b>Личный кабинет</b> -> <b>Добавить историю</b> и напиши один интересный факт о себе. Ждем тебя! 🥂`;
+
+// СНАЧАЛА проверяем тип игры, а ПОТОМ отправляем
   if (event.type === 'talk_toast' || event.type === 'stock_know') {
-    messageText += `\n\n🤫 <b>Кстати!</b> У нас будет тайная викторина. Чтобы удивить всех своей историей, нажми 👤 <b>Личный кабинет</b> -> <b>Изменить анкету</b> и заполни поле с интересным фактом о себе! ✨`;
+    // Тут можно добавить специфический текст, если нужно, 
+    // но в messageText выше уже всё основное есть.
   }
 
   await bot.telegram.sendMessage(user.telegramId, messageText, { parse_mode: 'HTML' }).catch(() => {});
+
   // 7. Удаляем из брошенной корзины
   PENDING_PAYMENTS.delete(`${user.id}`);
 }
