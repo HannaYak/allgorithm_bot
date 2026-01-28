@@ -12,22 +12,22 @@ import { DateTime } from 'luxon';
 // --- 1. НАСТРОЙКИ ---
 
 async function broadcastToEvent(eventId: number, message: string) {
-  // 1. Получаем все оплаченные брони на эту игру
   const bookings = await db.query.bookings.findMany({
     where: and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true))
   });
 
-  // 2. СОЗДАЕМ УНИКАЛЬНЫЙ СПИСОК (Set)
-  // Это магическая кнопка: она отсеивает все дубли по userId
-  const uniqueUserIds = [...new Set(bookings.map(b => b.userId))];
+  // СОЗДАЕМ Set именно из Telegram ID
+  const uniqueTgIds = new Set<number>();
+  
+  for (const b of bookings) {
+    const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+    if (u?.telegramId) uniqueTgIds.add(u.telegramId);
+  }
 
-  // 3. Делаем рассылку только по уникальным ID
-  for (const userId of uniqueUserIds) {
-    const u = await db.query.users.findFirst({ where: eq(schema.users.id, userId) });
-    if (u) {
-      bot.telegram.sendMessage(u.telegramId, message, { parse_mode: 'HTML' })
-        .catch((err) => console.error(`Ошибка отправки юзеру ${u.id}:`, err));
-    }
+  // Рассылаем только по уникальным «адресам»
+  for (const tgId of uniqueTgIds) {
+    bot.telegram.sendMessage(tgId, message, { parse_mode: 'HTML' })
+      .catch((err) => console.error(`Ошибка отправки на ${tgId}:`, err));
   }
 }
 
