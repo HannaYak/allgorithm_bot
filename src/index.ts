@@ -889,6 +889,8 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
                 return ctx.reply(`❌ Места для девушек на эту дату закончились.`, 
                     Markup.inlineKeyboard([[Markup.button.callback('⏳ Встать в лист ожидания', `waitlist_add_${eid}`)]]));
             }
+        }
+    
 
 
           
@@ -1362,6 +1364,27 @@ bot.command('cancel_with_voucher', async (ctx) => {
     }
 });
 
+bot.command('kick', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    const parts = ctx.message.text.split(' ');
+    if (parts.length < 3) return ctx.reply('Используй: /kick [TG_ID] [ID_Игры]');
+    const targetTgId = parseInt(parts[1]);
+    const eventId = parseInt(parts[2]);
+    try {
+        const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, targetTgId) });
+        const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
+        const booking = await db.query.bookings.findFirst({ where: and(eq(schema.bookings.userId, user!.id), eq(schema.bookings.eventId, eventId)) });
+        if (booking) {
+            await db.delete(schema.bookings).where(eq(schema.bookings.id, booking.id));
+            await db.update(schema.events).set({ currentPlayers: Math.max(0, (event!.currentPlayers || 0) - 1) }).where(eq(schema.events.id, eventId));
+            await ctx.reply(`✅ Удален.`);
+            await notifyNextInWaitlist(eventId, event!.type, event!.dateString);
+        }
+    } catch (e) { 
+        console.error(e);
+        ctx.reply('❌ Ошибка'); 
+    }
+});
 
 // Обработчик кнопки "Записи" - показывает список игр
 bot.action('admin_bookings', async (ctx) => {
