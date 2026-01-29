@@ -1386,7 +1386,7 @@ bot.command('kick', async (ctx) => {
             await ctx.reply(`✅ Юзер ${user.name} удален из игры №${eventId}.`);
             await bot.telegram.sendMessage(targetTgId, `🚫 Вы были удалены из списка участников игры "${event.type}".`).catch(()=>{});
 
-            // --- ОЧЕРЕДЬ (ДОЛЖНА БЫТЬ ТУТ, ВНУТРИ) ---
+            // --- МАГИЯ ОЧЕРЕДИ (ДОЛЖНА БЫТЬ СТРОГО ТУТ, ВНУТРИ ФУНКЦИИ KICK) ---
             const nextInLine = await db.query.bookings.findFirst({
                 where: and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, false)),
                 orderBy: [asc(schema.bookings.id)] 
@@ -1395,9 +1395,8 @@ bot.command('kick', async (ctx) => {
             if (nextInLine) {
                 const candidate = await db.query.users.findFirst({ where: eq(schema.users.id, nextInLine.userId) });
                 if (candidate) {
-                    await bot.telegram.sendMessage(candidate.telegramId, 
-                        `🔥 <b>Хорошие новости!</b>\n\nНа игру "${event.type}" освободилось место! 🥂\n\nЗаходи в "Игры", чтобы занять его!`, 
-                        { parse_mode: 'HTML' }).catch(()=>{});
+                    const notifyMsg = `🔥 <b>Хорошие новости!</b>\n\nНа игру "${event.type}" освободилось место! 🥂\n\nЗаходи в "Игры", чтобы занять его!`;
+                    await bot.telegram.sendMessage(candidate.telegramId, notifyMsg, { parse_mode: 'HTML' }).catch(()=>{});
                 }
             }
         } else {
@@ -1407,7 +1406,7 @@ bot.command('kick', async (ctx) => {
         console.error(e);
         ctx.reply('❌ Ошибка при удалении.');
     }
-}); // <-- УБЕДИСЬ, ЧТО ЭТА СКОБКА ЕСТЬ И ПОСЛЕ НЕЁ СРАЗУ bot.catch
+}); // <--- ВОТ ЭТА ЗАКРЫВАЮЩАЯ СКОБКА ДОЛЖНА БЫТЬ ТУТ. После неё сразу должен идти bot.catch
 
 // Обработчик кнопки "Записи" - показывает список игр
 bot.action('admin_bookings', async (ctx) => {
