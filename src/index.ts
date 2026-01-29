@@ -1362,52 +1362,6 @@ bot.command('cancel_with_voucher', async (ctx) => {
     }
 });
 
-// --- 11. КОМАНДА: КИК (УДАЛЕНИЕ БЕЗ ВОЗВРАТА) ---
-bot.command('kick', async (ctx) => {
-    if (ctx.from.id !== ADMIN_ID) return;
-    const parts = ctx.message.text.split(' ');
-    if (parts.length < 3) return ctx.reply('Используй: /kick [TG_ID] [ID_Игры]');
-
-    const targetTgId = parseInt(parts[1]);
-    const eventId = parseInt(parts[2]);
-
-    try {
-        const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, targetTgId) });
-        const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
-        if (!user || !event) return ctx.reply('❌ Ошибка: Юзер или игра не найдены.');
-
-        const booking = await db.query.bookings.findFirst({ 
-            where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.eventId, event.id)) 
-        });
-
-        if (booking) {
-            await db.delete(schema.bookings).where(eq(schema.bookings.id, booking.id));
-            await db.update(schema.events).set({ currentPlayers: Math.max(0, (event.currentPlayers || 0) - 1) }).where(eq(schema.events.id, event.id));
-            
-            await ctx.reply(`✅ Юзер ${user.name} удален из игры №${eventId}.`);
-            await bot.telegram.sendMessage(targetTgId, `🚫 Вы были удалены из списка участников игры "${event.type}".`).catch(()=>{});
-
-            // --- МАГИЯ ОЧЕРЕДИ (ДОЛЖНА БЫТЬ СТРОГО ТУТ, ВНУТРИ ФУНКЦИИ KICK) ---
-            const nextInLine = await db.query.bookings.findFirst({
-                where: and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, false)),
-                orderBy: [asc(schema.bookings.id)] 
-            });
-
-            if (nextInLine) {
-                const candidate = await db.query.users.findFirst({ where: eq(schema.users.id, nextInLine.userId) });
-                if (candidate) {
-                    const notifyMsg = `🔥 <b>Хорошие новости!</b>\n\nНа игру "${event.type}" освободилось место! 🥂\n\nЗаходи в "Игры", чтобы занять его!`;
-                    await bot.telegram.sendMessage(candidate.telegramId, notifyMsg, { parse_mode: 'HTML' }).catch(()=>{});
-                }
-            }
-        } else {
-            ctx.reply('❌ Запись не найдена.');
-        }
-    } catch (e) {
-        console.error(e);
-        ctx.reply('❌ Ошибка при удалении.');
-    }
-}); // <--- ВОТ ЭТА ЗАКРЫВАЮЩАЯ СКОБКА ДОЛЖНА БЫТЬ ТУТ. После неё сразу должен идти bot.catch
 
 // Обработчик кнопки "Записи" - показывает список игр
 bot.action('admin_bookings', async (ctx) => {
