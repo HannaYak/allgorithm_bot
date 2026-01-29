@@ -1114,26 +1114,30 @@ bot.action(/v_set_(10|free|reject)_(\d+)/, async (ctx) => {
 });
 // --- 11. АДМИНКА (ПОЛНАЯ ИСПРАВЛЕННАЯ ВЕРСИЯ БЕЗ ОШИБОК) ---
 
+// --- ГЛАВНЫЙ ПУЛЬТ ---
 bot.command('panel', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
-    return ctx.replyWithHTML(`🚀 <b>Админ-пульт Allgorithm 2.0</b>\n\nВыберите раздел для управления:`, 
+    return ctx.replyWithHTML(`🚀 <b>Админ-пульт Allgorithm 2.0</b>\n\nВыберите раздел:`, 
         Markup.inlineKeyboard([
             [Markup.button.callback('🎮 Управление Играми', 'admin_events_menu')],
             [Markup.button.callback('📊 Статистика и Проверка', 'admin_stats_menu')],
-            [Markup.button.callback('🧼 Тех. обслуживание (База)', 'admin_db_menu')],
+            [Markup.button.callback('🧼 Тех. обслуживание', 'admin_db_menu')],
             [Markup.button.callback('📢 Глобальная рассылка', 'admin_global_broadcast')]
         ]));
 });
 
-// --- 1. МЕНЮ УПРАВЛЕНИЯ ИГРАМИ ---
+// --- МЕНЮ УПРАВЛЕНИЯ ИГРАМИ (ЗДЕСЬ ВСЕ ТВОИ КНОПКИ!) ---
 bot.action('admin_events_menu', (ctx) => {
-    ctx.editMessageText(`🎮 <b>Управление Играми</b>`, {
+    ctx.editMessageText(`🎮 <b>Управление Играми и Пульты</b>`, {
         parse_mode: 'HTML',
         ...Markup.inlineKeyboard([
             [Markup.button.callback('➕ Добавить игру', 'admin_add_event')],
+            [Markup.button.callback('📢 Рассылка по игре (Дата)', 'admin_msg_event')], // ТВОЯ РАССЫЛКА
+            [Markup.button.callback('💘 ПУЛЬТ Speed Dating', 'admin_fd_panel')],     // ТВОЙ ПУЛЬТ СВИДАНИЙ
+            [Markup.button.callback('🧠 ПУЛЬТ Stock & Know', 'admin_stock_list')],   // ТВОЙ ПУЛЬТ СТОКА
             [Markup.button.callback('📋 Список записей', 'admin_bookings')],
             [Markup.button.callback('🏁 Завершить игру', 'admin_close_event')],
-            [Markup.button.callback('🔙 Назад в меню', 'admin_back_main')]
+            [Markup.button.callback('🔙 Назад', 'admin_back_main')]
         ])
     });
 });
