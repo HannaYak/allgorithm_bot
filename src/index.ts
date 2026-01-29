@@ -1295,6 +1295,7 @@ bot.command('reschedule', async (ctx) => {
     }
 });
 
+// --- 11. КОМАНДА: ОТМЕНА С ВЫДАЧЕЙ ВАУЧЕРА (Полная версия) ---
 bot.command('cancel_with_voucher', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     const parts = ctx.message.text.split(' ');
@@ -1308,58 +1309,109 @@ bot.command('cancel_with_voucher', async (ctx) => {
         // 1. Ищем юзера и игру
         const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, targetTgId) });
         const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
-        if (!user || !event) return ctx.reply('❌ Юзер или игра не найдены.');
+        if (!user || !event) return ctx.reply('❌ Ошибка: Юзер или игра не найдены.');
 
+        // 2. Ищем запись на игру
         const booking = await db.query.bookings.findFirst({ 
             where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.eventId, event.id)) 
         });
         if (!booking) return ctx.reply('❌ Запись на эту игру не найдена.');
 
-        // 2. Удаляем запись из таблицы bookings
+        // 3. Удаляем запись из таблицы bookings
         await db.delete(schema.bookings).where(eq(schema.bookings.id, booking.id));
 
-        // 3. Возвращаем 1 свободное место в игре
+        // 4. Возвращаем 1 свободное место в игре
         await db.update(schema.events)
             .set({ currentPlayers: Math.max(0, (event.currentPlayers || 0) - 1) })
             .where(eq(schema.events.id, event.id));
 
-        // 4. Начисляем FREE ваучер в таблицу vouchers
-        // 4. Начисляем FREE ваучер в таблицу vouchers
+        // 5. Начисляем FREE ваучер (для будущих оплат)
         await db.insert(schema.vouchers).values({
             userId: user.id,
             status: 'approved_free',
-            photoFileId: 'MANUAL' // <--- ЗАМЕНИ null НА 'MANUAL'
-          
+            photoFileId: 'MANUAL' 
         });
 
-        // 5. Уведомляем человека
+        // 6. Уведомляем человека об отмене и подарке
         const userNotice = `🚫 <b>Ваша запись на игру отменена</b>\n\n` +
             `Организатор изменил список участников игры "${event.type}".\n\n` +
-            `🎁 Не переживайте! Вам начислен ваучер на <b>БЕСПЛАТНУЮ ИГРУ</b>. Вы сможете использовать его при записи на любое следующее мероприятие!`;
-
+            `🎁 Вам начислен ваучер на <b>БЕСПЛАТНУЮ ИГРУ</b>. Он уже ждет тебя в Личном кабинете!`;
         await bot.telegram.sendMessage(targetTgId, userNotice, { parse_mode: 'HTML' }).catch(()=>{});
 
-        await ctx.reply(`✅ Участник ${user.name} удален. Место №${eventId} освобождено, юзеру выдан FREE ваучер.`);
+        await ctx.reply(`✅ Участник ${user.name} удален. Место освобождено, юзеру выдан FREE ваучер.`);
+
+        // --- МАГИЯ ОЧЕРЕДИ: Ищем, кому отдать место (ВНУТРИ try) ---
+        const nextInLine = await db.query.bookings.findFirst({
+            where: and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, false)),
+            orderBy: [asc(schema.bookings.id)] 
+        });
+
+        if (nextInLine) {
+            const candidate = await db.query.users.findFirst({ where: eq(schema.users.id, nextInLine.userId) });
+            if (candidate) {
+                await bot.telegram.sendMessage(candidate.telegramId, 
+                    `🔥 <b>Хорошие новости!</b>\n\nНа игру "${event.type}" (${event.dateString}) освободилось место! 🥂\n\nСкорее переходи в "Игры", чтобы занять его!`, 
+                    { parse_mode: 'HTML' }).catch(()=>{});
+            }
+        }
 
     } catch (e) {
         console.error(e);
-        ctx.reply('❌ Произошла ошибка. Проверь ID участников и игры.');
+        ctx.reply('❌ Ошибка при выполнении отмены с ваучером.');
     }
+});
 
-    // После удаления участника:
-    const nextInLine = await db.query.bookings.findFirst({
-        where: and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, false)),
-        orderBy: [asc(schema.bookings.id)] // Берем того, кто встал первым
-    });
+// --- 11. КОМАНДА: КИК (УДАЛЕНИЕ БЕЗ ВОЗВРАТА) ---
+bot.command('kick', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    const parts = ctx.message.text.split(' ');
+    // Формат: /kick [TG_ID] [ID_Игры]
+    if (parts.length < 3) return ctx.reply('Используй: /kick [TG_ID] [ID_Игры]');
 
-    if (nextInLine) {
-        const candidate = await db.query.users.findFirst({ where: eq(schema.users.id, nextInLine.userId) });
-        if (candidate) {
-            await bot.telegram.sendMessage(candidate.telegramId, 
-                `🔥 <b>Хорошие новости!</b>\n\nНа игру "${event.type}" (${event.dateString}) освободилось место! 🥂\n\nСкорее переходи в "Игры", чтобы занять его, пока кто-то другой не перехватил!`, 
-                { parse_mode: 'HTML' });
+    const targetTgId = parseInt(parts[1]);
+    const eventId = parseInt(parts[2]);
+
+    try {
+        const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, targetTgId) });
+        const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
+        if (!user || !event) return ctx.reply('❌ Юзер или игра не найдены.');
+
+        const booking = await db.query.bookings.findFirst({ 
+            where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.eventId, event.id)) 
+        });
+
+        if (!booking) return ctx.reply('❌ Этот человек не записан на эту игру.');
+
+        // 1. Удаляем запись
+        await db.delete(schema.bookings).where(eq(schema.bookings.id, booking.id));
+
+        // 2. Освобождаем место
+        await db.update(schema.events)
+            .set({ currentPlayers: Math.max(0, (event.currentPlayers || 0) - 1) })
+            .where(eq(schema.events.id, event.id));
+
+        await ctx.reply(`✅ Юзер ${user.name} удален из игры №${eventId}.`);
+        await bot.telegram.sendMessage(targetTgId, `🚫 Вы были удалены из списка участников игры "${event.type}".`).catch(()=>{});
+
+        // --- МАГИЯ ОЧЕРЕДИ: Уведомляем следующего (ВНУТРИ try) ---
+        const nextInLine = await db.query.bookings.findFirst({
+            where: and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, false)),
+            orderBy: [asc(schema.bookings.id)]
+        });
+
+        if (nextInLine) {
+            const candidate = await db.query.users.findFirst({ where: eq(schema.users.id, nextInLine.userId) });
+            if (candidate) {
+                await bot.telegram.sendMessage(candidate.telegramId, 
+                    `🔥 <b>Хорошие новости!</b>\n\nНа игру "${event.type}" освободилось место! 🥂\n\nСкорее заходи в "Игры", чтобы занять его!`, 
+                    { parse_mode: 'HTML' }).catch(()=>{});
+            }
         }
-    } 
+
+    } catch (e) {
+        console.error(e);
+        ctx.reply('❌ Ошибка при удалении (kick).');
+    }
 });
 
 // Обработчик кнопки "Записи" - показывает список игр
@@ -1895,57 +1947,6 @@ async function handleSuccessfulPayment(session: any) {
   // 7. Удаляем из брошенной корзины
   PENDING_PAYMENTS.delete(`${user.id}`);
 }
-
-bot.command('kick', async (ctx) => {
-    if (ctx.from.id !== ADMIN_ID) return;
-    const parts = ctx.message.text.split(' ');
-    // Формат: /kick [TG_ID] [ID_Игры]
-    if (parts.length < 3) return ctx.reply('Используй: /kick [TG_ID] [ID_Игры]');
-
-    const targetTgId = parseInt(parts[1]);
-    const eventId = parseInt(parts[2]);
-
-    try {
-        const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, targetTgId) });
-        const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
-        if (!user || !event) return ctx.reply('❌ Юзер или игра не найдены.');
-
-        // Ищем запись
-        const booking = await db.query.bookings.findFirst({ 
-            where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.eventId, event.id)) 
-        });
-
-        if (!booking) return ctx.reply('❌ Этот человек не записан на эту игру.');
-
-        // 1. Удаляем запись из базы навсегда
-        await db.delete(schema.bookings).where(eq(schema.bookings.id, booking.id));
-
-        // 2. Освобождаем место в счетчике игры
-        await db.update(schema.events)
-            .set({ currentPlayers: Math.max(0, (event.currentPlayers || 0) - 1) })
-            .where(eq(schema.events.id, event.id));
-
-        await ctx.reply(`✅ Юзер ${user.name} удален из игры №${eventId}.`);
-        await bot.telegram.sendMessage(targetTgId, `🚫 Вы были удалены из списка участников игры "${event.type}".`).catch(()=>{});
-
-        // --- МАГИЯ ОЧЕРЕДИ: Ищем следующего (ВНУТРИ ФУНКЦИИ KICK) ---
-        const nextInLine = await db.query.bookings.findFirst({
-            where: and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, false)),
-            orderBy: [asc(schema.bookings.id)] 
-        });
-
-        if (nextInLine) {
-            const candidate = await db.query.users.findFirst({ where: eq(schema.users.id, nextInLine.userId) });
-            if (candidate) {
-                const notifyMsg = `🔥 <b>Хорошие новости!</b>\n\nНа игру <b>"${event.type}"</b> (${event.dateString}) освободилось место! 🥂\n\nСкорее заходи в раздел 🎮 <b>Игры</b> и оплачивай!`;
-                await bot.telegram.sendMessage(candidate.telegramId, notifyMsg, { parse_mode: 'HTML' }).catch(()=>{});
-            }
-        }
-    } catch (e) {
-        console.error(e);
-        ctx.reply('❌ Ошибка при удалении.');
-    }
-}); // <-- Скобка закрывает ВСЮ логику кика и очереди
 
 // --- ЗАЩИТНЫЙ ЩИТ ОТ ОШИБОК (чтобы бот не падал) ---
 bot.catch((err: any, ctx) => {
