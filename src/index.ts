@@ -1199,6 +1199,78 @@ bot.action(/view_ev_bks_(\d+)/, async (ctx) => {
     ctx.replyWithHTML(msg);
 });
 
+bot.command('inspect', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    const parts = ctx.message.text.split(' ');
+    if (parts.length < 2) return ctx.reply('Используй: /inspect [ID_Игры]');
+
+    const eventId = parseInt(parts[1]);
+    const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
+    if (!event) return ctx.reply('Игра не найдена.');
+
+    const bookings = await db.query.bookings.findMany({ where: eq(schema.bookings.eventId, eventId) });
+    
+    let report = `🔎 <b>ИНСПЕКЦИЯ ИГРЫ №${eventId}</b> (${event.type})\n`;
+    report += `Лимит на пол: <b>${event.maxPlayers / 2}</b>\n\n`;
+
+    let realMen = 0;
+    let realWomen = 0;
+
+    for (const [index, b] of bookings.entries()) {
+        const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+        const gender = u?.gender || '⚠️ NULL';
+        const paidStatus = b.paid ? '✅' : '⏳';
+        
+        if (gender === 'Мужчина' && b.paid) realMen++;
+        if (gender === 'Женщина' && b.paid) realWomen++;
+
+        report += `${index + 1}. ${paidStatus} <b>${u?.name || 'Аноним'}</b>\n`;
+        report += `   ID: <code>${u?.id}</code> | TG: <code>${u?.telegramId}</code>\n`;
+        report += `   ПОЛ: «<b>${gender}</b>»\n\n`;
+    }
+
+    report += `📊 <b>ИТОГО ОПЛАЧЕНО:</b>\n`;
+    report += `🕺 Мужчин: ${realMen}\n`;
+    report += `💃 Женщин: ${realWomen}`;
+
+    await ctx.replyWithHTML(report);
+});
+
+bot.command('set_limit', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    const parts = ctx.message.text.split(' ');
+    // Формат: /set_limit [ID_Игры] [Новое_Число]
+    if (parts.length < 3) return ctx.reply('Используй: /set_limit [ID_Игры] [Новое_Кол_во_Мест]');
+
+    const eventId = parseInt(parts[1]);
+    const newMax = parseInt(parts[2]);
+
+    if (isNaN(eventId) || isNaN(newMax)) return ctx.reply('❌ Ошибка: Введи числа.');
+
+    try {
+        const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
+        if (!event) return ctx.reply('❌ Игра не найдена.');
+
+        // Обновляем лимит в базе
+        await db.update(schema.events)
+            .set({ maxPlayers: newMax })
+            .where(eq(schema.events.id, eventId));
+
+        const limitPerGender = newMax / 2;
+        
+        await ctx.replyWithHTML(
+            `✅ <b>Лимит изменен!</b>\n\n` +
+            `Игра №${eventId} (${event.type})\n` +
+            `Новое общее кол-во мест: <b>${newMax}</b>\n` +
+            `Лимит на каждый пол: <b>${limitPerGender}</b>\n\n` +
+            `<i>Теперь бот будет считать места исходя из этих цифр.</i>`
+        );
+    } catch (e) {
+        console.error(e);
+        ctx.reply('❌ Ошибка при обновлении лимита.');
+    }
+});
+
 // 5. Управление Speed Dating и Stock
 bot.action('admin_fd_panel', ctx => { 
   ctx.editMessageText(`💘 <b>Пульт Speed Dating</b>`, { 
