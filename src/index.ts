@@ -1925,15 +1925,27 @@ bot.command('kick', async (ctx) => {
             .set({ currentPlayers: Math.max(0, (event.currentPlayers || 0) - 1) })
             .where(eq(schema.events.id, event.id));
 
-        await ctx.reply(`✅ Юзер ${user.name} удален из игры №${eventId}. Балл лояльности начислен НЕ БУДЕТ.`);
-        
-        // Опционально: можно написать юзеру, что он исключен
-        await bot.telegram.sendMessage(targetTgId, `🚫 Вы были удалены из списка участников игры "${event.type}" (No-show).`).catch(()=>{});
+        await ctx.reply(`✅ Юзер ${user.name} удален из игры №${eventId}.`);
+        await bot.telegram.sendMessage(targetTgId, `🚫 Вы были удалены из списка участников игры "${event.type}".`).catch(()=>{});
 
+        // --- МАГИЯ ОЧЕРЕДИ: Ищем следующего (ВНУТРИ ФУНКЦИИ KICK) ---
+        const nextInLine = await db.query.bookings.findFirst({
+            where: and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, false)),
+            orderBy: [asc(schema.bookings.id)] 
+        });
+
+        if (nextInLine) {
+            const candidate = await db.query.users.findFirst({ where: eq(schema.users.id, nextInLine.userId) });
+            if (candidate) {
+                const notifyMsg = `🔥 <b>Хорошие новости!</b>\n\nНа игру <b>"${event.type}"</b> (${event.dateString}) освободилось место! 🥂\n\nСкорее заходи в раздел 🎮 <b>Игры</b> и оплачивай!`;
+                await bot.telegram.sendMessage(candidate.telegramId, notifyMsg, { parse_mode: 'HTML' }).catch(()=>{});
+            }
+        }
     } catch (e) {
+        console.error(e);
         ctx.reply('❌ Ошибка при удалении.');
     }
-});
+}); // <-- Скобка закрывает ВСЮ логику кика и очереди
 
 // --- ЗАЩИТНЫЙ ЩИТ ОТ ОШИБОК (чтобы бот не падал) ---
 bot.catch((err: any, ctx) => {
