@@ -1914,16 +1914,18 @@ const app = express();
 // СТРОГО ПЕРЕД express.json()
 app.post('/stripe-webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   const sig = req.headers['stripe-signature'];
-  let event;
+  let stripeEvent;
   try {
-    event = stripe.webhooks.constructEvent(req.body, sig!, process.env.STRIPE_WEBHOOK_SECRET!);
-  } catch (err: any) { return res.status(400).send(`Webhook Error: ${err.message}`); }
+    stripeEvent = stripe.webhooks.constructEvent(req.body, sig!, process.env.STRIPE_WEBHOOK_SECRET!);
+  } catch (err: any) { 
+    return res.status(400).send(`Webhook Error: ${err.message}`); 
+  }
 
-  if (event.type === 'checkout.session.completed') {
-    await handleSuccessfulPayment(event.data.object);
+  if (stripeEvent.type === 'checkout.session.completed') {
+    await handleSuccessfulPayment(stripeEvent.data.object);
   }
   res.json({ received: true });
-});
+});;
 
 app.use(express.json());
 app.use(bot.webhookCallback('/telegraf-webhook'));
