@@ -141,71 +141,89 @@ const bot = new Telegraf<any>(process.env.TELEGRAM_BOT_TOKEN || '');
 // 1. Мастер регистрации
 const registerWizard = new Scenes.WizardScene(
   'REGISTER_SCENE',
-  async (ctx) => { await ctx.replyWithHTML(`👋 <b>Почти готово!</b>\n\nНужно внести тебя в базу Алгоритма, для этого пройди анкету из 3-х вопросов(всего 30 секунд). После анкеты возрощайся в "Игры" и покупай билет без помех!\n\n<b>1. Как тебя зовут?(пиши прям сюда своё имя)</b>`); return ctx.wizard.next(); },
-  async (ctx) => { 
-    if (!ctx.message || !('text' in ctx.message)) return; 
-    (ctx.wizard.state as any).name = ctx.message.text; 
-    await ctx.reply('2. Сколько тебе полных лет? (Введи число)'); 
-    return ctx.wizard.next(); 
+  // --- ШАГ 1: Приветствие и запрос Имени ---
+  async (ctx) => {
+    await ctx.replyWithHTML(
+      `👋 <b>Почти готово!</b>\n\n` +
+      `Нужно внести тебя в базу Алгоритма, для этого пройди анкету из 3-х вопросов (всего 30 секунд). ` +
+      `После анкеты возвращайся в "Игры" и покупай билет без помех!\n\n` +
+      `<b>1. Как тебя зовут? (пиши прям сюда своё имя)</b>`
+    );
+    return ctx.wizard.next();
   },
-  async (ctx) => { 
-    if (!ctx.message || !('text' in ctx.message)) return; 
-    const age = parseInt(ctx.message.text);
-    if (isNaN(age)) return ctx.reply('❌ Ошибка! Пожалуйста, введи возраст цифрами (например: 25):');
-    (ctx.wizard.state as any).age = age.toString(); 
-    await ctx.reply('3. Твой пол (для баланса пар на играх):', Markup.keyboard([['Мужчина', 'Женщина']]).oneTime().resize()); 
-    return ctx.wizard.next(); 
-  },
+
+  // --- ШАГ 2: Сохранение имени и запрос Возраста ---
   async (ctx) => {
     if (!ctx.message || !('text' in ctx.message)) return;
-    const input = ctx.message.text.toLowerCase(); // Берем то, что ввел юзер
-    
-    // --- МАГИЯ МАКАКИ (Нормализация) ---
+    (ctx.wizard.state as any).name = ctx.message.text;
+    await ctx.reply('2. Сколько тебе полных лет? (Введи число)');
+    return ctx.wizard.next();
+  },
+
+  // --- ШАГ 3: Сохранение возраста и запрос Пола ---
+  async (ctx) => {
+    if (!ctx.message || !('text' in ctx.message)) return;
+    const age = parseInt(ctx.message.text);
+    if (isNaN(age)) {
+      return ctx.reply('❌ Ошибка! Пожалуйста, введи возраст цифрами (например: 25):');
+    }
+    (ctx.wizard.state as any).age = age.toString();
+    await ctx.reply(
+      '3. Твой пол (для баланса пар на играх):',
+      Markup.keyboard([['Мужчина', 'Женщина']]).oneTime().resize()
+    );
+    return ctx.wizard.next();
+  },
+
+  // --- ШАГ 4: Нормализация пола, Сохранение в БД и Редирект ---
+  async (ctx) => {
+    if (!ctx.message || !('text' in ctx.message)) return;
+    const input = ctx.message.text.toLowerCase();
+
+    // МАГИЯ НОРМАЛИЗАЦИИ: превращаем любой ввод в стандарт
     let normalizedGender = '';
     if (input.includes('муж')) normalizedGender = 'Мужчина';
     else if (input.includes('жен')) normalizedGender = 'Женщина';
 
-    // Если юзер прислал какую-то ерунду вместо пола
+    // Если бот не понял, что ввели
     if (!normalizedGender) {
-        return ctx.reply('Пожалуйста, выбери пол, нажав на одну из кнопок ниже 👇', 
-            Markup.keyboard([['Мужчина', 'Женщина']]).oneTime().resize());
+      return ctx.reply(
+        'Пожалуйста, выбери пол кнопкой ниже 👇',
+        Markup.keyboard([['Мужчина', 'Женщина']]).oneTime().resize()
+      );
     }
 
     const data = ctx.wizard.state as any;
 
-    // 1. Сохраняем уже ПРАВИЛЬНЫЕ данные в базу
-    await db.update(schema.users).set({ 
-        name: data.name, 
-        birthDate: data.age, 
-        gender: normalizedGender // Теперь тут всегда будет строго "Мужчина" или "Женщина"
+    // 1. Обновляем данные пользователя в базе
+    await db.update(schema.users).set({
+      name: data.name,
+      birthDate: data.age,
+      gender: normalizedGender // Здесь всегда будет либо "Мужчина", либо "Женщина"
     }).where(eq(schema.users.telegramId, ctx.from!.id));
-    
+
     await ctx.reply(`✅ Регистрация завершена! Мы записали: ${normalizedGender}`);
 
-    // 2. ПРОВЕРЯЕМ: Нужно ли вернуть юзера к оплате?
-    const eventId = data.returnToEvent; 
-    
+    // 2. Проверяем, нужно ли вернуть юзера к оплате конкретной игры
+    const eventId = data.returnToEvent;
+
     if (eventId) {
-        await ctx.reply('🚀 Возвращаю тебя к бронированию игры...');
-        const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
-        if (event) {
-            return ctx.reply(
-                `Вы выбрали: ${event.type} (${event.dateString})\nК оплате: 50 PLN`,
-                Markup.inlineKeyboard([[Markup.button.callback('💸 Перейти к оплате', `pay_event_${eventId}`)]])
-            ).then(() => ctx.scene.leave());
-        }
+      await ctx.reply('🚀 Возвращаю тебя к бронированию игры...');
+      const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
+      if (event) {
+        await ctx.reply(
+          `Вы выбрали: ${event.type} (${event.dateString})\nК оплате: 50 PLN`,
+          Markup.inlineKeyboard([[Markup.button.callback('💸 Перейти к оплате', `pay_event_${eventId}`)]])
+        );
+        return ctx.scene.leave();
+      }
     }
 
+    // 3. Если он просто заполнял анкету из кабинета — обычный выход в меню
     await ctx.reply('Теперь ты можешь записываться на любые игры клуба!', getMainKeyboard());
     return ctx.scene.leave();
   }
-
-    // Если он просто заполнял анкету из кабинета — обычный выход
-    // ... внутри последнего шага ...
-    await ctx.reply('Теперь ты можешь записываться на любые игры клуба!', getMainKeyboard());
-    return ctx.scene.leave();
-  }
-); // Вот тут сцена закрывается и больше ничего лишнего!
+);
 
 const editFactWizard = new Scenes.WizardScene(
   'EDIT_FACT_SCENE',
