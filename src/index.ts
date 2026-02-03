@@ -699,22 +699,7 @@ bot.hears('🎲 Новая тема', async (ctx) => {
   await broadcastToEvent(currentEventId, `🎲 <b>Новая тема для вашего стола:</b>\n\n${randomTopic}\n\n🎙 <b>Начинает рассуждение:</b> <u>${starter}</u>`);
   return ctx.reply("✅ Тема отправлена всем участникам!");
 });
-  
-  const players: string[] = [];
-  for (const b of bksForTopic) {
-    const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
-    if (u?.name) players.push(u.name);
-  }
 
-  const starter = players.length > 0 
-    ? players[Math.floor(Math.random() * players.length)] 
-    : "кто-то из вас";
-
-  const randomTopic = CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)];
-  
-  await broadcastToEvent(currentEventId, `🎲 <b>Новая тема для вашего стола:</b>\n\n${randomTopic}\n\n🎙 <b>Начинает рассуждение:</b> <u>${starter}</u>`);
-  return ctx.reply("✅ Тема отправлена всем участникам!");
-});
 
 // Кнопка "📜 Правила"
 bot.hears('📜 Правила', (ctx) => {
