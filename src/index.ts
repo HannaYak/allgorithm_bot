@@ -43,13 +43,27 @@ const GAME_PRICES: Record<string, string> = {
   'talk_toast': 'price_1SUTjrHhXyjuCWwfhQ7zwxLQ', 
   'stock_know': 'price_1SUTkoHhXyjuCWwfxD89YIpP',
   'speed_dating': 'price_1SUTlVHhXyjuCWwfU1IzNMlf',
+  'talk_toast_review': 'price_1SiDMGHhXyjuCWwfzysRSphU',
+  'stock_know_review': 'price_1SiDKoHhXyjuCWwfwg24Y7mF',
 };
 const STRIPE_COUPON_ID = '8RiQPzVX'; 
 const ADMIN_ID = 5456905649; 
 const PROCESSED_AUTO_ACTIONS = new Set<string>(); 
 
-const TYPE_MAP: Record<string, string> = { 'talk_toast': 'tt', 'stock_know': 'sk', 'speed_dating': 'sd' };
-const REV_TYPE_MAP: Record<string, string> = { 'tt': 'talk_toast', 'sk': 'stock_know', 'sd': 'speed_dating' };
+const TYPE_MAP: Record<string, string> = { 
+  'talk_toast': 'tt', 
+  'stock_know': 'sk', 
+  'speed_dating': 'sd',
+  'talk_toast_review': 'ttr',
+  'stock_know_review': 'skr'
+};
+const REV_TYPE_MAP: Record<string, string> = { 
+  'tt': 'talk_toast', 
+  'sk': 'stock_know', 
+  'sd': 'speed_dating',
+  'ttr': 'talk_toast_review',
+  'skr': 'stock_know_review'
+};
 
 // --- 2. КОНТЕНТ (ПОЛНЫЙ) ---
 
@@ -446,7 +460,7 @@ setInterval(async () => {
         PROCESSED_AUTO_ACTIONS.add(`start_greet_${event.id}`);
         const { title } = parseEventDesc(event.description);
         
-        let needsTopic = (event.type === 'talk_toast' || event.type === 'speed_dating');
+        let needsTopic = (event.type.includes('talk_toast') || event.type === 'speed_dating');
         let msg = `🥂 <b>Игра "${title}" начинается!</b>\n\nРады всех видеть! Представьтесь для начала друг другу (имя и ваше хобби или специальность).`;
         
         if (needsTopic) {
@@ -488,7 +502,7 @@ setInterval(async () => {
       }
 
       // 4. ВИКТОРИНА (105 МИН) И ЗАВЕРШЕНИЕ (135 МИН)
-      if (minutesSinceStart >= 105 && event.type === 'talk_toast' && !PROCESSED_AUTO_ACTIONS.has(`quiz_${event.id}`)) {
+      if (minutesSinceStart >= 105 && event.type.includes('talk_toast') && !PROCESSED_AUTO_ACTIONS.has(`quiz_${event.id}`)) {
         PROCESSED_AUTO_ACTIONS.add(`quiz_${event.id}`); await runAutoQuiz(event.id);
       }
       if (minutesSinceStart >= 135 && !PROCESSED_AUTO_ACTIONS.has(`close_${event.id}`)) {
@@ -500,7 +514,7 @@ setInterval(async () => {
     for (const [uId, data] of PENDING_PAYMENTS.entries()) {
       if (now.diff(data.time, 'minutes').minutes >= 30 && !data.notified) {
         const u = await db.query.users.findFirst({ where: eq(schema.users.id, parseInt(uId)) });
-        if (u) bot.telegram.sendMessage(u.telegramId, `🔔 <b>Вы не завершили оплату!</b>`).catch(()=>{});
+        if (u) bot.telegram.sendMessage(u.telegramId, `🔔 Вы не завершили оплату! Скорее нажимай оплатить игру чтоб попасть к нам за стол.`).catch(()=>{});
         PENDING_PAYMENTS.set(uId, { ...data, notified: true });
       }
       if (now.diff(data.time, 'minutes').minutes > 120) PENDING_PAYMENTS.delete(uId);
@@ -647,7 +661,11 @@ bot.hears('🎲 Новая тема', async (ctx) => {
     const event = await db.query.events.findFirst({
       where: and(
         eq(schema.events.id, b.eventId),
-        or(eq(schema.events.type, 'talk_toast'), eq(schema.events.type, 'speed_dating')),
+        or(
+          eq(schema.events.type, 'talk_toast'), 
+          eq(schema.events.type, 'speed_dating'),
+          eq(schema.events.type, 'talk_toast_review')
+        ),
         eq(schema.events.isActive, true)
       )
     });
@@ -665,10 +683,22 @@ bot.hears('🎲 Новая тема', async (ctx) => {
     return ctx.reply("❌ Кнопка доступна только во время активной игры.", getMainKeyboard(false));
   }
 
-  // ВЫБИРАЕМ КТО НАЧИНАЕТ
   const bksForTopic = await db.query.bookings.findMany({ 
     where: and(eq(schema.bookings.eventId, currentEventId), eq(schema.bookings.paid, true)) 
   });
+  
+  const players: string[] = [];
+  for (const b of bksForTopic) {
+    const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+    if (u?.name) players.push(u.name);
+  }
+
+  const starter = players.length > 0 ? players[Math.floor(Math.random() * players.length)] : "кто-то из вас";
+  const randomTopic = CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)];
+  
+  await broadcastToEvent(currentEventId, `🎲 <b>Новая тема для вашего стола:</b>\n\n${randomTopic}\n\n🎙 <b>Начинает рассуждение:</b> <u>${starter}</u>`);
+  return ctx.reply("✅ Тема отправлена всем участникам!");
+});
   
   const players: string[] = [];
   for (const b of bksForTopic) {
@@ -731,7 +761,7 @@ bot.action('game_talk', (ctx) => {
     `<b>Почему стоит пойти?</b>\n` +
     `• Новые знакомства с людьми, с которыми вы бы никогда не встретились 🌍\n` +
     `• Вам не нужно ничего организовывать — бот-модератор сделает всё за вас! 😎\n\n` +
-    `🍲 <b>Важно:</b> Еда и напитки оплачиваются отдельно по меню ресторана.`;
+    `🍲 <b>Важно:</b> Еда и напитки оплачиваются отдельно по меню ресторана. При покупке игры со значком и скидкой "🎥" и скидкой -50% Покупая билет на игру со съемкой, вы даете согласие на использование вашего изображения в соцсетях`;
 
   return ctx.editMessageText(text, { 
     parse_mode: 'HTML', 
@@ -747,7 +777,7 @@ bot.action('game_stock', (ctx) => {
     `<b>Что это?</b>\nИнтеллектуальная игра, где ставят на знания! 🎓 Здесь важно не только содержание вашего багажа знаний, но и умение уверенно делать ставки. Это остроумная битва, где сплетены искусство блефа и эрудиция 🎭\n\n` +
     `<b>Зачем это?</b>\n• Шанс найти новые знакомства без фильтров 👀\n• Незабываемые эмоции от командной игры 🔥\n• Проверка знаний, удачи и остроумия 🍀\n• Расширение кругозора 🌍\n\n` +
     `<b>Как работает?</b>\nВ начале раунда все делают обязательную ставку 💰. Ведущий задает вопрос, вы записываете ответ (менять нельзя!). Затем, в зависимости от азарта, вы можете повышать ставки (даже ва-банк!). Ведущий дает 3 подсказки 💡 — после каждой можно менять ставку. Побеждает тот, кто ближе всех к истине!\n\n` +
-    `⏳ <b>Время:</b> 2 часа\n👥 <b>Игроков:</b> до 8\n🍲 <b>Меню:</b> Еда и напитки оплачиваются отдельно`;
+    `⏳ <b>Время:</b> 2 часа\n👥 <b>Игроков:</b> до 8\n🍲 <b>Меню:</b> Еда и напитки оплачиваются отдельно. При покупке игры со значком и скидкой "🎥" и скидкой -50% Покупая билет на игру со съемкой, вы даете согласие на использование вашего изображения в соцсетях`;
   return ctx.editMessageText(text, { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('📅 Записаться', 'book_stock')], [Markup.button.callback('🔙 Назад', 'back_to_games')]]) });
 });
 
@@ -755,7 +785,7 @@ bot.action('game_dating', (ctx) => {
   const text = `💘 <b>Быстрые свидания</b>\n\n` +
     `<b>Что это?</b>\n🗣️ 14 человек (7Ж + 7М), 7 уютных столиков и 10-минутные раунды. Бот сам выдаст номера, запустит таймер и перетасует пары 📲. Тебе нужно только отмечать симпатии в карточке — если мэтч, бот пришлёт контакты! ✨\n\n` +
     `<b>Зачем это?</b>\n• 🚀 <b>Семь шансов</b> на знакомство за час: одна искра — и это тот самый человек!\n• 💬 <b>Без неловких моментов</b> — бот сам подскажет интересную тему для разговора.\n• 🎯 <b>Только мэтчи:</b> уходишь с реальными контактами тех, кто тебе действительно понравился.\n• 🛡️ <b>Безопасно:</b> если человек не понравился — он никогда не получит твой контакт.\n\n` +
-    `<b>Как это работает?</b>\n✨ Испытайте искру с первого взгляда! Мужчины и женщины садятся по двое за столики, а бот присваивает каждому уникальный номер 🎫. Каждые 10 минут пары меняются 🔄, чтобы вы могли познакомиться со всеми. \n\nВ процессе общения отмечай симпатии в боте ❤️. Если чувства взаимны, бот мгновенно соединит вас! Готовьтесь к новым встречам и неожиданным открытиям! 🥂\n\n` +
+    `<b>Как это работает?</b>\n✨ Испытайте искру с первого взгляда! Мужчины и женщины садятся по двое за столики, а бот присваивает каждому уникальный номер 🎫. Каждые 10 минут пары меняются 🔄, чтобы вы могли познакомиться со всеми. \n\nВ процессе общения отмечай симпатии в своей карте ❤️. Если чувства взаимны, бот соединит вас после игра! Готовьтесь к новым встречам и неожиданным открытиям! 🥂\n\n` +
     `⏳ <b>Длительность:</b> 1 час 15 минут\n👥 <b>Участников:</b> 14 человек`;
     
   return ctx.editMessageText(text, { 
@@ -772,24 +802,47 @@ bot.action('book_stock', async (ctx) => bookGame(ctx, 'stock_know'));
 bot.action('book_dating', async (ctx) => bookGame(ctx, 'speed_dating'));
 
 async function bookGame(ctx: any, type: string) {
-  const events = await db.query.events.findMany({ where: and(eq(schema.events.type, type), eq(schema.events.isActive, true)) });
+  const events = await db.query.events.findMany({ 
+    where: and(
+      or(eq(schema.events.type, type), eq(schema.events.type, `${type}_review`)), 
+      eq(schema.events.isActive, true)
+    ) 
+  });
+
   if (events.length === 0) return ctx.reply(`Расписание формируется!`);
+
   if (type === 'talk_toast') {
-    const uniqueTitles = new Set<string>(); events.forEach(e => uniqueTitles.add(parseEventDesc(e.description).title));
+    const uniqueTitles = new Set<string>(); 
+    events.forEach(e => uniqueTitles.add(parseEventDesc(e.description).title));
     const btns = Array.from(uniqueTitles).map(t => [Markup.button.callback(t, `cv_${TYPE_MAP[type]}_${encodeCat(t)}`)]);
     return ctx.editMessageText('Выбери направление кухни:', { parse_mode: 'HTML', ...Markup.inlineKeyboard([...btns, [Markup.button.callback('🔙', 'back_to_games')]]) });
   }
-  const buttons = events.map(e => [Markup.button.callback(`📅 ${e.dateString} (${e.currentPlayers}/${e.maxPlayers})`, `pay_event_${e.id}`)]);
+
+  const buttons = events.map(e => {
+    const isReview = e.type.includes('review');
+    const label = isReview ? `🎥 ${e.dateString} (-50% ЗА ОБЗОР)` : `📅 ${e.dateString}`;
+    return [Markup.button.callback(`${label} (${e.currentPlayers}/${e.maxPlayers})`, `pay_event_${e.id}`)];
+  });
+
   ctx.editMessageText('Выбери дату:', Markup.inlineKeyboard([...buttons, [Markup.button.callback('🔙 Назад', 'back_to_games')]]));
 }
 
 bot.action(/cv_(.+)_(.+)/, async (ctx) => {
-  const type = REV_TYPE_MAP[ctx.match[1]]; 
-  const selectedTitle = decodeCat(ctx.match[2]);
-  const events = await db.query.events.findMany({ where: and(eq(schema.events.type, type), eq(schema.events.isActive, true)) });
-  const filtered = events.filter(e => parseEventDesc(e.description).title === selectedTitle);
-  const btns = filtered.map(e => [Markup.button.callback(`📅 ${e.dateString} (${e.currentPlayers}/${e.maxPlayers})`, `pay_event_${e.id}`)]);
-  
+ const type = REV_TYPE_MAP[ctx.match[1]]; 
+  const selectedTitle = decodeCat(ctx.match[2]);
+  // Теперь ищет и обычные, и ревью-игры
+  const events = await db.query.events.findMany({ 
+    where: and(
+      or(eq(schema.events.type, type), eq(schema.events.type, `${type}_review`)),
+      eq(schema.events.isActive, true)
+    ) 
+  });
+  const filtered = events.filter(e => parseEventDesc(e.description).title === selectedTitle);
+  const btns = filtered.map(e => {
+    const isReview = e.type.includes('review');
+    const label = isReview ? `🎥 ${e.dateString} (-50%)` : `📅 ${e.dateString}`;
+    return [Markup.button.callback(`${label} (${e.currentPlayers}/${e.maxPlayers})`, `pay_event_${e.id}`)];
+  });
   return ctx.editMessageText(
     `🍽 <b>Направление: ${selectedTitle}</b>\n\n` +
     `Отличный выбор! Ниже список доступных дат для этой кухни. Выбирай удобное время и переходи к бронированию. 👇\n\n` +
@@ -952,12 +1005,21 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
             cancel_url: `https://t.me/${ctx.botInfo.username}`,
         });
 
+        // 1. Сначала определяем базовую цену игры
+        let finalPrice = event.type.includes('review') ? 25 : 50;
+
+// 2. Если есть ваучер на -10 PLN, вычитаем его (только для обычных игр, например)
+        if (activeVoucher?.status === 'approved_10' && !event.type.includes('review')) {
+            finalPrice = 40;
+        }
+
+// 3. Отправляем сообщение с правильной цифрой
         await ctx.reply(
-            `К оплате: ${activeVoucher?.status === 'approved_10' ? '40' : '50'} PLN`, 
+            `К оплате: ${finalPrice} PLN, скорее нажимай оплатить, чтобы найти своих! 🥂`, 
             Markup.inlineKeyboard([
                 [Markup.button.url('💸 Оплатить (Apple/Google Pay, BLIK...)', stripeSession.url!)], 
                 [Markup.button.callback('✅ Я оплатил', `confirm_pay_${eid}`)]
-            ])
+          ])
         );
 
     } catch (e) { 
@@ -1757,7 +1819,12 @@ bot.action(/sk_pick_(\d+)/, (ctx) => {
 bot.action(/stock_send_phase_(\d+)/, async (ctx) => {
   const phase = parseInt(ctx.match[1]);
   const q = STOCK_QUESTIONS[STOCK_STATE.currentQuestionIndex];
-  const active = await db.query.events.findFirst({ where: and(eq(schema.events.type, 'stock_know'), eq(schema.events.isActive, true)) });
+  const active = await db.query.events.findFirst({ 
+  where: and(
+    or(eq(schema.events.type, 'stock_know'), eq(schema.events.type, 'stock_know_review')), 
+    eq(schema.events.isActive, true)
+  ) 
+});
   if (!active) return ctx.reply('Нет активной игры Stock');
 
   let msg = "";
