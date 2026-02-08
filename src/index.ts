@@ -1768,42 +1768,64 @@ bot.action('admin_back_to_panel', (ctx) => {
 bot.command('assign_stock', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     const parts = ctx.message.text.split(' ');
-    if (parts.length < 2) return ctx.reply('Используй: /assign_stock [ID_Игры]');
+    if (parts.length < 2) return ctx.reply('❌ Ошибка! Используй: /assign_stock [ID_Игры]');
 
     const eventId = parseInt(parts[1]);
     try {
         const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
-        if (!event) return ctx.reply('❌ Игра не найдена.');
+        if (!event) return ctx.reply('❌ Ошибка: Игра с таким ID не найдена.');
 
         const bookings = await db.query.bookings.findMany({ 
             where: and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true)) 
         });
 
-        if (bookings.length === 0) return ctx.reply('❌ На эту игру нет оплаченных записей.');
+        if (bookings.length === 0) return ctx.reply('❌ На эту игру пока нет оплаченных записей.');
 
-        STOCK_STATE.participants.clear(); // Сбрасываем старых игроков перед новой раздачей
+        // Очищаем старое состояние перед новой раздачей
+        STOCK_STATE.participants.clear();
+        STOCK_STATE.playerAnswers.clear();
 
+        let count = 0;
         for (let i = 0; i < bookings.length; i++) {
             const user = await db.query.users.findFirst({ where: eq(schema.users.id, bookings[i].userId) });
             if (user) {
                 const playerNum = i + 1;
-                // Сохраняем в систему
-                STOCK_STATE.participants.set(user.telegramId, { id: user.id, num: playerNum, name: user.name || 'Игрок' });
+                // Сохраняем в память (ключ - Telegram ID)
+                STOCK_STATE.participants.set(user.telegramId, { 
+                    id: user.id, 
+                    num: playerNum, 
+                    name: user.name || user.firstName || 'Игрок' 
+                });
 
-                // Отправляем игроку
+                // Личное сообщение игроку
                 await bot.telegram.sendMessage(user.telegramId, 
                     `🧠 <b>Твой игровой номер в Stock & Know: ${playerNum}</b>\n\n` +
-                    `Система запомнила тебя! Теперь, когда ты будешь писать число (ставку) в этот чат, я буду знать, что это ставка от Игрока №${playerNum}. Удачи! 💰🎰`,
+                    `Запомни его! Теперь, когда ты напишешь число в этот чат (свою ставку), я буду знать, что это ответ от Игрока №${playerNum}. Удачи в битве за банк! 💰🎰`,
                     { parse_mode: 'HTML' }
                 ).catch(() => {});
+                count++;
             }
         }
 
-        await ctx.reply(`✅ Номера разданы! Всего игроков: ${STOCK_STATE.participants.size}. Система готова к игре.`);
+        await ctx.reply(`✅ Номера успешно разданы!\nВсего участников: ${count}\n\nТеперь можешь выбирать вопросы в <b>/panel</b>.`, { parse_mode: 'HTML' });
     } catch (e) {
         console.error(e);
-        ctx.reply('❌ Ошибка при раздаче номеров.');
+        ctx.reply('❌ Ошибка при раздаче номеров. Проверь логи.');
     }
+});
+
+bot.command('players', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    if (STOCK_STATE.participants.size === 0) return ctx.reply('Список игроков пуст. Сначала используй /assign_stock [ID]');
+
+    let msg = `📋 <b>Текущие игроки Stock & Know:</b>\n\n`;
+    const sorted = Array.from(STOCK_STATE.participants.values()).sort((a, b) => a.num - b.num);
+    
+    for (const p of sorted) {
+        msg += `🔹 №${p.num} — ${p.name} (ID: <code>${p.id}</code>)\n`;
+    }
+    
+    await ctx.replyWithHTML(msg);
 });
 
 bot.action(/sk_win_(\d+)_(\d+)/, async (ctx) => {
