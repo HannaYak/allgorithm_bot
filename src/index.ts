@@ -277,10 +277,11 @@ const FAST_DATES_STATE = {
 
 const STOCK_STATE = {
   isActive: false,
+  currentEventId: 0, // <--- Сюда бот запомнит ID игры после твоей команды
   currentQuestionIndex: -1,
   currentPhase: 0,
-  playerAnswers: new Map<number, number>(), // userId -> ставка
-  participants: new Map<number, { id: number, num: number, name: string }>() // userId -> инфо об игроке
+  playerAnswers: new Map<number, number>(), // userId -> ответ
+  participants: new Map<number, { id: number, num: number, name: string }>() // userId -> инфо
 };
 
 const TALK_STATE = { currentFact: '', currentUser: '', isActive: false };
@@ -1781,39 +1782,38 @@ bot.command('assign_stock', async (ctx) => {
 
         if (bookings.length === 0) return ctx.reply('❌ На эту игру пока нет оплаченных записей.');
 
-        // Очищаем старое состояние перед новой раздачей
+        // Очищаем старое состояние и ЗАПОМИНАЕМ новый ID игры
         STOCK_STATE.participants.clear();
         STOCK_STATE.playerAnswers.clear();
+        STOCK_STATE.currentEventId = eventId; // <--- Фиксируем игру
 
         let count = 0;
         for (let i = 0; i < bookings.length; i++) {
             const user = await db.query.users.findFirst({ where: eq(schema.users.id, bookings[i].userId) });
             if (user) {
                 const playerNum = i + 1;
-                // Сохраняем в память (ключ - Telegram ID)
                 STOCK_STATE.participants.set(user.telegramId, { 
                     id: user.id, 
                     num: playerNum, 
                     name: user.name || user.firstName || 'Игрок' 
                 });
 
-                // Личное сообщение игроку
+                // Личное сообщение игроку (работает и для обычных, и для Review)
                 await bot.telegram.sendMessage(user.telegramId, 
                     `🧠 <b>Твой игровой номер в Stock & Know: ${playerNum}</b>\n\n` +
-                    `Запомни его! Теперь, когда ты напишешь число в этот чат (свою ставку), я буду знать, что это ответ от Игрока №${playerNum}. Удачи в битве за банк! 💰🎰`,
+                    `Запомни его! Теперь твои ставки будут привязаны к этому номеру. Удачи! 💰🎰`,
                     { parse_mode: 'HTML' }
                 ).catch(() => {});
                 count++;
             }
         }
 
-        await ctx.reply(`✅ Номера успешно разданы!\nВсего участников: ${count}\n\nТеперь можешь выбирать вопросы в <b>/panel</b>.`, { parse_mode: 'HTML' });
+        await ctx.reply(`✅ Номера разданы для игры №${eventId} (${event.type})!\nВсего участников: ${count}\n\nТеперь вопросы в пульте будут улетать именно им.`, { parse_mode: 'HTML' });
     } catch (e) {
         console.error(e);
-        ctx.reply('❌ Ошибка при раздаче номеров. Проверь логи.');
+        ctx.reply('❌ Ошибка при раздаче номеров.');
     }
 });
-
 bot.command('players', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     if (STOCK_STATE.participants.size === 0) return ctx.reply('Список игроков пуст. Сначала используй /assign_stock [ID]');
@@ -1961,24 +1961,25 @@ bot.action(/sk_pick_(\d+)/, (ctx) => {
 bot.action(/stock_send_phase_(\d+)/, async (ctx) => {
   const phase = parseInt(ctx.match[1]);
   const q = STOCK_QUESTIONS[STOCK_STATE.currentQuestionIndex];
-  const active = await db.query.events.findFirst({ 
-  where: and(
-    or(eq(schema.events.type, 'stock_know'), eq(schema.events.type, 'stock_know_review')), 
-    eq(schema.events.isActive, true)
-  ) 
-});
-  if (!active) return ctx.reply('Нет активной игры Stock');
+  
+  // Берем зафиксированный ID
+  const eventId = STOCK_STATE.currentEventId; 
+
+  if (!eventId) {
+    return ctx.reply('❌ Сначала выбери игру командой /assign_stock [ID]');
+  }
 
   let msg = "";
   if (phase === 0) msg = `❓ <b>ВОПРОС:</b>\n${q.question}`;
   else if (phase <= 3) msg = `💡 <b>ПОДСКАЗКА №${phase}:</b>\n${q.hints[phase-1]}`;
   else msg = `🏁 <b>ОТВЕТ: ${q.answer}</b>\n\n${q.fact}`;
 
-  await broadcastToEvent(active.id, msg);
+  // Шлем строго по адресу
+  await broadcastToEvent(eventId, msg);
 
-  // Если это ФИНАЛЬНАЯ фаза (Ответ) — показываем админу результаты для выбора победителя
+  // Финальные результаты
   if (phase === 4) {
-    let resultsMsg = `📊 <b>РЕЗУЛЬТАТЫ РАУНДА:</b>\nОтвет: <b>${q.answer}</b>\n\n`;
+    let resultsMsg = `📊 <b>РЕЗУЛЬТАТЫ (Игра №${eventId}):</b>\nОтвет: <b>${q.answer}</b>\n\n`;
     const winnerBtns = [];
     const correctVal = parseInt(q.answer);
 
@@ -1987,14 +1988,10 @@ bot.action(/stock_send_phase_(\d+)/, async (ctx) => {
       if (p) {
         const diff = Math.abs(correctVal - bet);
         resultsMsg += `№${p.num} (${p.name}): <b>${bet}</b> (разница: ${diff})\n`;
-        winnerBtns.push([Markup.button.callback(`🏆 Победа №${p.num}`, `sk_win_${p.num}_${active.id}`)]);
+        winnerBtns.push([Markup.button.callback(`🏆 Победа №${p.num}`, `sk_win_${p.num}_${eventId}`)]);
       }
     }
-
-    await bot.telegram.sendMessage(ADMIN_ID, resultsMsg, { 
-        parse_mode: 'HTML', 
-        ...Markup.inlineKeyboard(winnerBtns) 
-    });
+    await bot.telegram.sendMessage(ADMIN_ID, resultsMsg, { parse_mode: 'HTML', ...Markup.inlineKeyboard(winnerBtns) });
   }
 
   const buttons = [];
@@ -2004,7 +2001,7 @@ bot.action(/stock_send_phase_(\d+)/, async (ctx) => {
     buttons.push([Markup.button.callback('➡️ Следующий вопрос', 'admin_stock_list')]);
   }
   
-  await ctx.editMessageText(`Фаза ${phase} отправлена игрокам.`, Markup.inlineKeyboard(buttons));
+  await ctx.editMessageText(`Фаза ${phase} отправлена игрокам №${eventId}.`, Markup.inlineKeyboard(buttons));
 });
 
 // --- 12. ГЛАВНЫЙ ОБРАБОТЧИК СООБЩЕНИЙ ---
