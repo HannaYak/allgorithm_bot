@@ -890,52 +890,83 @@ bot.hears('🎲 Новая тема', async (ctx) => {
     where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.paid, true))
   });
 
-  let currentEventId = null;
+  let currentEvent = null;
   const nowWarsaw = DateTime.now().setZone('Europe/Warsaw');
 
   for (const b of myBookings) {
     const event = await db.query.events.findFirst({
       where: and(
         eq(schema.events.id, b.eventId),
-        or(
-          eq(schema.events.type, 'talk_toast'), 
-          eq(schema.events.type, 'speed_dating'),
-          eq(schema.events.type, 'talk_toast_review')
-        ),
         eq(schema.events.isActive, true)
       )
     });
     if (event) {
       const start = DateTime.fromFormat(event.dateString, "dd.MM.yyyy HH:mm", { zone: 'Europe/Warsaw' });
       const diffHours = nowWarsaw.diff(start, 'hours').hours;
+      // Кнопка работает в течение 4 часов после начала
       if (diffHours >= 0 && diffHours <= 4) {
-        currentEventId = event.id;
+        currentEvent = event;
         break;
       }
     }
   }
 
-  if (!currentEventId) {
+  if (!currentEvent) {
     return ctx.reply("❌ Кнопка доступна только во время активной игры.", getMainKeyboard(false));
   }
 
-  const bksForTopic = await db.query.bookings.findMany({ 
-    where: and(eq(schema.bookings.eventId, currentEventId), eq(schema.bookings.paid, true)) 
-  });
-  
-  const players: string[] = [];
-  for (const b of bksForTopic) {
-    const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
-    if (u?.name) players.push(u.name);
-  }
-
-  const starter = players.length > 0 ? players[Math.floor(Math.random() * players.length)] : "кто-то из вас";
   const randomTopic = CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)];
-  
-  await broadcastToEvent(currentEventId, `🎲 <b>Новая тема для вашего стола:</b>\n\n${randomTopic}\n\n🎙 <b>Начинает рассуждение:</b> <u>${starter}</u>`);
-  return ctx.reply("✅ Тема отправлена всем участникам!");
-});
 
+  // --- ЛОГИКА ДЛЯ СВИДАНИЙ (ТОЛЬКО ДЛЯ ПАРЫ) ---
+  if (currentEvent.type === 'speed_dating') {
+    const round = FAST_DATES_STATE.currentRound;
+    const ps = Array.from(FAST_DATES_STATE.participants.values());
+    
+    const women = ps.filter(p => p.gender === 'Женщина').sort((a,b) => a.num - b.num);
+    const men = ps.filter(p => p.gender === 'Мужчина').sort((a,b) => a.num - b.num);
+    
+    if (women.length === 0 || men.length === 0) return ctx.reply("Ошибка: участники не найдены.");
+
+    const me = ps.find(p => p.id === ctx.from.id);
+    if (!me) return ctx.reply("❌ Ты не зарегистрирован в текущей ротации.");
+
+    let partner;
+    const N = women.length;
+
+    if (me.gender === 'Женщина') {
+      const i = women.findIndex(w => w.id === me.id);
+      const manIndex = (i + round - 1) % men.length;
+      partner = men[manIndex];
+    } else {
+      const j = men.findIndex(m => m.id === me.id);
+      const womanIndex = ((j - (round - 1)) % N + N) % N;
+      partner = women[womanIndex];
+    }
+
+    if (partner) {
+      const pairMsg = `🎲 <b>Секретная тема только для вашего столика:</b>\n\n${randomTopic}`;
+      await bot.telegram.sendMessage(me.id, pairMsg, { parse_mode: 'HTML' });
+      await bot.telegram.sendMessage(partner.id, pairMsg, { parse_mode: 'HTML' });
+      return ctx.reply("✅ Тема отправлена тебе и твоему собеседнику!");
+    }
+
+  // --- ЛОГИКА ДЛЯ ОБЫЧНОГО УЖИНА (ДЛЯ ВСЕХ) ---
+  } else {
+    const bksForTopic = await db.query.bookings.findMany({ 
+      where: and(eq(schema.bookings.eventId, currentEvent.id), eq(schema.bookings.paid, true)) 
+    });
+    
+    const players: string[] = [];
+    for (const b of bksForTopic) {
+      const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+      if (u?.name) players.push(u.name);
+    }
+
+    const starter = players.length > 0 ? players[Math.floor(Math.random() * players.length)] : "кто-то из вас";
+    await broadcastToEvent(currentEvent.id, `🎲 <b>Новая тема для вашего стола:</b>\n\n${randomTopic}\n\n🎙 <b>Начинает:</b> <u>${starter}</u>`);
+    return ctx.reply("✅ Тема отправлена всем участникам!");
+  }
+});
 
 // Кнопка "📜 Правила"
 bot.hears('📜 Правила', (ctx) => {
