@@ -50,6 +50,17 @@ const STRIPE_COUPON_ID = '8RiQPzVX';
 const ADMIN_ID = 5456905649; 
 const PROCESSED_AUTO_ACTIONS = new Set<string>(); 
 
+const BEAUTY_NAMES: Record<string, string> = {
+  'talk_toast': 'Talk & Toast 🥂',
+  'stock_know': 'Stock & Know 🧠',
+  'speed_dating': 'Быстрые свидания 💘',
+  'talk_toast_review': 'Talk & Toast 🎥 (со съёмкой)',
+  'stock_know_review': 'Stock & Know 🎥 (со съёмкой)'
+};
+
+// Функция-помощник
+const getGameName = (type: string) => BEAUTY_NAMES[type] || type;
+
 const TYPE_MAP: Record<string, string> = { 
   'talk_toast': 'tt', 
   'stock_know': 'sk', 
@@ -363,6 +374,8 @@ async function notifyNextInWaitlist(eventId: number, eventType: string, dateStri
         }
     }
 }
+
+
 
 // --- 4. STATE ---
 
@@ -684,7 +697,7 @@ setInterval(async () => {
                 if (u) {
                     const pNum = i + 1;
                     STOCK_STATE.participants.set(u.telegramId, { id: u.id, num: pNum, name: u.name || 'Игрок' });
-                    bot.telegram.sendMessage(u.telegramId, `🧠 <b>Твой номер в Stock & Know: ${pNum}</b>\n\nЗапомни его для ставок! 🎰`).catch(()=>{});
+                    bot.telegram.sendMessage(u.telegramId, `🧠 Твой номер в Stock & Know: ${pNum}\n\nЗапомни его для ставок! 🎰`).catch(()=>{});
                 }
             }
         }
@@ -750,7 +763,14 @@ setInterval(async () => {
     for (const [uId, data] of PENDING_PAYMENTS.entries()) {
       if (now.diff(data.time, 'minutes').minutes >= 30 && !data.notified) {
         const u = await db.query.users.findFirst({ where: eq(schema.users.id, parseInt(uId)) });
-        if (u) bot.telegram.sendMessage(u.telegramId, `🔔 Вы не завершили оплату! Скорее нажимай оплатить игру чтоб попасть к нам за стол.`).catch(()=>{});
+        if (u) {
+          bot.telegram.sendMessage(u.telegramId, 
+            `🔔 <b>Ой! Мы что-то пропустили?</b>\n\n` +
+            `Твоё место на игру <b>${getGameName(event.type)}</b> всё ещё ждёт тебя, но бронирование не завершено. 🥂\n\n` +
+            `Места в Алгоритме разлетаются быстро, а мы очень хотим видеть тебя за столом! Нажми «Оплатить», чтобы подтвердить участие. ✨`,
+            { parse_mode: 'HTML' }
+        ).catch(() => {});
+        }
         PENDING_PAYMENTS.set(uId, { ...data, notified: true });
       }
       if (now.diff(data.time, 'minutes').minutes > 120) PENDING_PAYMENTS.delete(uId);
@@ -1233,9 +1253,18 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
         await bot.telegram.sendMessage(ADMIN_ID, `⚠️ Юзер ${user.name} (@${ctx.from!.username}) нажал «Оплатить» на игру №${eid}.`).catch(()=>{});
 
         // 3. Каждая 5-я игра БЕСПЛАТНО
-        if (((user.gamesPlayed || 0) + 1) % 5 === 0) {
-            await db.insert(schema.bookings).values({ userId: user.id, eventId: eid, paid: true });
-            await db.update(schema.events).set({ currentPlayers: (event.currentPlayers || 0) + 1 }).where(eq(schema.events.id, eid));
+        const activeBookings = await db.query.bookings.findMany({
+          where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.paid, true))
+            });
+
+// Считаем: сколько сыграно + на сколько уже записан
+        const totalIntents = (user.gamesPlayed || 0) + activeBookings.length;
+
+          if ((totalIntents + 1) % 5 === 0) {
+    // Проверяем, нет ли уже текущей бесплатной записи в процессе
+    // (Логика: если сумма + 1 делится на 5, значит именно ЭТА запись должна быть бесплатной)
+        await db.insert(schema.bookings).values({ userId: user.id, eventId: eid, paid: true });
+        await db.update(schema.events).set({ currentPlayers: (event.currentPlayers || 0) + 1 }).where(eq(schema.events.id, eid));
             
             return ctx.replyWithHTML(
                 `🎁 <b>Поздравляем! Это твоя 5-я игра, она БЕСПЛАТНАЯ!</b>\n\n` +
@@ -1643,6 +1672,49 @@ bot.command('reschedule', async (ctx) => {
     } catch (e) {
         console.error(e);
         ctx.reply('❌ Ошибка при переносе. Проверь логи.');
+    }
+});
+
+bot.command('load_dating', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    const parts = ctx.message.text.split(' ');
+    const eid = parseInt(parts[1]);
+
+    if (!eid) return ctx.reply('❌ Пиши: /load_dating [ID_Игры]');
+
+    try {
+        // 1. Ищем всех, кто оплатил эту игру
+        const bookings = await db.query.bookings.findMany({ 
+            where: and(eq(schema.bookings.eventId, eid), eq(schema.bookings.paid, true)) 
+        });
+
+        if (bookings.length === 0) return ctx.reply('❌ В базе нет оплаченных броней на этот ID.');
+
+        // 2. Очищаем память и фиксируем ID
+        FAST_DATES_STATE.participants.clear();
+        FAST_DATES_STATE.eventId = eid;
+        FAST_DATES_STATE.currentRound = 1; // Можно поменять вручную, если вы уже на 2-м раунде
+
+        const men: any[] = [], women: any[] = [];
+        for (const b of bookings) {
+            const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+            if (u?.gender === 'Мужчина') men.push(u);
+            else if (u?.gender === 'Женщина') women.push(u);
+        }
+
+        // 3. Распределяем номера заново (точно так же, как при старте)
+        const limit = Math.min(men.length, women.length);
+        for (let i = 0; i < limit; i++) {
+            const wNum = (i * 2) + 1;
+            const mNum = (i * 2) + 2;
+            FAST_DATES_STATE.participants.set(women[i].telegramId, { id: women[i].telegramId, num: wNum, gender: 'Женщина', name: women[i].name });
+            FAST_DATES_STATE.participants.set(men[i].telegramId, { id: men[i].telegramId, num: mNum, gender: 'Мужчина', name: men[i].name });
+        }
+
+        await ctx.reply(`✅ РЕАНИМАЦИЯ ИГРЫ №${eid} УСПЕШНА!\nЗагружено участников: ${FAST_DATES_STATE.participants.size}\n\nТеперь кнопки админки и "Новая тема" оживут!`);
+    } catch (e) {
+        console.error(e);
+        ctx.reply('❌ Ошибка при загрузке.');
     }
 });
 
