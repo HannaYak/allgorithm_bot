@@ -1140,6 +1140,36 @@ bot.action(/exec_canc_(\d+)/, async (ctx) => {
     ctx.editMessageText('✅ Запись отменена. Скидка/Ваучер возвращены в кабинет.');
 });
 
+bot.command('quiet_address', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    
+    // Формат: /quiet_address [ID_Игры] [Новый адрес]
+    const parts = ctx.message.text.split(' ');
+    if (parts.length < 3) return ctx.reply('❌ Используй: /quiet_address [ID] [Адрес]');
+
+    const eventId = parseInt(parts[1]);
+    const newAddress = parts.slice(2).join(' ');
+
+    try {
+        const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
+        if (!event) return ctx.reply('❌ Игра не найдена.');
+
+        // Сохраняем название, меняем только адрес
+        const { title } = parseEventDesc(event.description);
+        const newDescription = `${title} ### ${newAddress}`;
+
+        // Просто обновляем базу. НИКАКИХ рассылок.
+        await db.update(schema.events)
+            .set({ description: newDescription })
+            .where(eq(schema.events.id, eventId));
+
+        await ctx.reply(`🤫 Тсс... Адрес игры №${eventId} изменен на: ${newAddress}. Участники об этом узнают только из планового сообщения за 3 часа до старта!`);
+    } catch (e) {
+        console.error(e);
+        ctx.reply('❌ Ошибка тихой смены адреса.');
+    }
+});
+
 // --- 9. ОПЛАТА (ПОЛНАЯ) ---
 
 // --- 9. ОПЛАТА (ПОЛНАЯ И ИСПРАВЛЕННАЯ) ---
