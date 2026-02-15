@@ -1676,48 +1676,7 @@ bot.command('reschedule', async (ctx) => {
     }
 });
 
-bot.command('load_dating', async (ctx) => {
-    if (ctx.from.id !== ADMIN_ID) return;
-    const parts = ctx.message.text.split(' ');
-    const eid = parseInt(parts[1]);
-
-    if (!eid) return ctx.reply('❌ Пиши: /load_dating [ID_Игры]');
-
-    try {
-        // 1. Ищем всех, кто оплатил эту игру
-        const bookings = await db.query.bookings.findMany({ 
-            where: and(eq(schema.bookings.eventId, eid), eq(schema.bookings.paid, true)) 
-        });
-
-        if (bookings.length === 0) return ctx.reply('❌ В базе нет оплаченных броней на этот ID.');
-
-        // 2. Очищаем память и фиксируем ID
-        FAST_DATES_STATE.participants.clear();
-        FAST_DATES_STATE.eventId = eid;
-        FAST_DATES_STATE.currentRound = 1; // Можно поменять вручную, если вы уже на 2-м раунде
-
-        const men: any[] = [], women: any[] = [];
-        for (const b of bookings) {
-            const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
-            if (u?.gender === 'Мужчина') men.push(u);
-            else if (u?.gender === 'Женщина') women.push(u);
-        }
-
-        // 3. Распределяем номера заново (точно так же, как при старте)
-        const limit = Math.min(men.length, women.length);
-        for (let i = 0; i < limit; i++) {
-            const wNum = (i * 2) + 1;
-            const mNum = (i * 2) + 2;
-            FAST_DATES_STATE.participants.set(women[i].telegramId, { id: women[i].telegramId, num: wNum, gender: 'Женщина', name: women[i].name });
-            FAST_DATES_STATE.participants.set(men[i].telegramId, { id: men[i].telegramId, num: mNum, gender: 'Мужчина', name: men[i].name });
-        }
-
-        await ctx.reply(`✅ РЕАНИМАЦИЯ ИГРЫ №${eid} УСПЕШНА!\nЗагружено участников: ${FAST_DATES_STATE.participants.size}\n\nТеперь кнопки админки и "Новая тема" оживут!`);
-    } catch (e) {
-        console.error(e);
-        ctx.reply('❌ Ошибка при загрузке.');
-    }
-});
+bot.command('load_dating', (ctx) => SD.loadDatingCommand(ctx, bot));
 
 // --- 11. КОМАНДА: ОТМЕНА С ВЫДАЧЕЙ ВАУЧЕРА (Полная версия) ---
 bot.command('cancel_with_voucher', async (ctx) => {
@@ -1969,16 +1928,8 @@ bot.command('status', async (ctx) => {
 });
 
 // 5. Управление Speed Dating и Stock
-bot.action('admin_fd_panel', ctx => { 
-  ctx.editMessageText(`💘 <b>Пульт Speed Dating</b>`, { 
-    parse_mode: 'HTML', 
-    ...Markup.inlineKeyboard([
-      [Markup.button.callback('🚀 Начать 1-й раунд', 'fd_start_game')],
-      [Markup.button.callback('🔄 СЛЕДУЮЩИЙ РАУНД', 'fd_next_round')], // Нажимаешь каждые 10 мин
-      [Markup.button.callback('🏁 Рассчитать мэтчи', 'fd_calc_matches')]
-    ]) 
-  }); 
-});
+bot.action('admin_fd_panel', (ctx) => SD.getAdminFDCPanel(ctx));
+
 bot.action('admin_stock_list', (ctx) => {
     const btns = STOCK_QUESTIONS.map((q, i) => [Markup.button.callback(`Вопрос №${i+1}`, `sk_pick_${i}`)]);
     ctx.editMessageText('🧠 Выберите вопрос:', Markup.inlineKeyboard([...btns, [Markup.button.callback('🔙 Назад', 'admin_back_to_panel')]]));
@@ -2087,78 +2038,9 @@ bot.action(/sk_win_(\d+)_(\d+)/, async (ctx) => {
 
 // --- ЛОГИКА СТАТИСТИКИ И МЭТЧЕЙ ---
 
-bot.action('fd_start_game', async (ctx) => {
-  if (FAST_DATES_STATE.participants.size === 0) {
-    return ctx.reply("❌ В памяти бота нет участников. Сначала введи: /load_dating [ID_Игры]");
-  }
+bot.action('fd_start_game', (ctx) => SD.startDatingGame(ctx, bot));
 
-  FAST_DATES_STATE.currentRound = 1; // Устанавливаем 1 раунд
-  const round = FAST_DATES_STATE.currentRound;
-  
-  const ps = Array.from(FAST_DATES_STATE.participants.values());
-  const women = ps.filter(p => p.gender === 'Женщина').sort((a,b) => a.num - b.num);
-  const men = ps.filter(p => p.gender === 'Мужчина').sort((a,b) => a.num - b.num);
-
-  // Рассылка по столам для 1-го раунда
-  for (let i = 0; i < women.length; i++) {
-    const woman = women[i];
-    const man = men[i]; // В 1-м раунде просто Ж1+М2, Ж3+М4 и т.д.
-    const tableNum = i + 1;
-
-    const msg = `🚀 <b>РАУНД №1 НАЧАЛСЯ!</b>\n\nВаш столик: <b>№${tableNum}</b>\nВаш собеседник: <b>Участник №${man.gender === 'Мужчина' ? man.num : woman.num}</b>\n\nПриятного знакомства! ✨`;
-    
-    bot.telegram.sendMessage(woman.id, msg, { parse_mode: 'HTML' }).catch(()=>{});
-    bot.telegram.sendMessage(man.id, msg, { parse_mode: 'HTML' }).catch(()=>{});
-  }
-
-  await ctx.answerCbQuery("Игра запущена!");
-  await ctx.editMessageText(`📢 <b>Игра началась! Раунд №1.</b>`, { 
-    parse_mode: 'HTML',
-    ...Markup.inlineKeyboard([
-      [Markup.button.callback('🔄 СЛЕДУЮЩИЙ РАУНД', 'fd_next_round')],
-      [Markup.button.callback('🏁 Рассчитать мэтчи', 'fd_calc_matches')]
-    ])
-  });
-});
-
-bot.action('fd_next_round', async (ctx) => {
-  if (FAST_DATES_STATE.participants.size === 0) return ctx.reply("Ошибка: загрузите участников!");
-
-  FAST_DATES_STATE.currentRound++;
-  const round = FAST_DATES_STATE.currentRound;
-  
-  const ps = Array.from(FAST_DATES_STATE.participants.values());
-  const women = ps.filter(p => p.gender === 'Женщина').sort((a,b) => a.num - b.num);
-  const men = ps.filter(p => p.gender === 'Мужчина').sort((a,b) => a.num - b.num);
-
-  // Если раундов больше, чем участниц, значит круг замкнулся
-  if (round > women.length) {
-    return ctx.reply("🏁 Все участники познакомились! Раунды закончились. Время вводить симпатии!");
-  }
-
-  for (let i = 0; i < women.length; i++) {
-    const woman = women[i];
-    // Формула ротации: мужчины сдвигаются по кругу
-    const manIndex = (i + round - 1) % men.length;
-    const man = men[manIndex];
-    const tableNum = i + 1;
-
-    // Уведомление для Женщины (она на месте)
-    bot.telegram.sendMessage(woman.id, 
-      `🔄 <b>РАУНД №${round}</b>\n\nОставайтесь за столиком <b>№${tableNum}</b>.\nК вам подсаживается: <b>Участник №${man.num}</b>.`,
-      { parse_mode: 'HTML' }
-    ).catch(()=>{});
-
-    // Уведомление для Мужчины (он переходит)
-    bot.telegram.sendMessage(man.id, 
-      `🔄 <b>РАУНД №${round}</b>\n\nПереходите к столику <b>№${tableNum}</b>.\nВас ждёт: <b>Участница №${woman.num}</b>. 💘`,
-      { parse_mode: 'HTML' }
-    ).catch(()=>{});
-  }
-
-  await ctx.answerCbQuery(`Раунд ${round} запущен!`);
-  await ctx.reply(`📢 <b>Запущен раунд №${round}!</b>`);
-});
+bot.action('fd_next_round', (ctx) => SD.nextDatingRound(ctx, bot));
 
 bot.action('admin_stats', async (ctx) => {
   const allUsers = await db.query.users.findMany();
@@ -2176,41 +2058,11 @@ bot.action('admin_stats', async (ctx) => {
   });
 });
 
-bot.action(/fd_edit_(\d+)/, async (ctx) => {
-  const uid = parseInt(ctx.match[1]); 
-  const u = Array.from(FAST_DATES_STATE.participants.values()).find(p => p.id === uid);
-  const targets = Array.from(FAST_DATES_STATE.participants.values()).filter(p => p.gender !== u?.gender);
-  const votes = FAST_DATES_STATE.votes.get(u?.id || 0) || [];
-  const btns = targets.map(t => Markup.button.callback(`${votes.includes(t.id)?'✅':' '} №${t.num}`, `fd_tog_${uid}_${t.id}`));
-  const rows = []; while(btns.length) rows.push(btns.splice(0,4));
-  ctx.editMessageText(`Кто понравился №${u?.num}?`, Markup.inlineKeyboard([...rows, [Markup.button.callback('💾 Сохранить', 'admin_fd_panel')]]));
-});
+bot.action(/fd_edit_(\d+)/, (ctx) => SD.editParticipantLikes(ctx));
 
-bot.action(/fd_tog_(\d+)_(\d+)/, async (ctx) => {
-  const vId = parseInt(ctx.match[1]); const tId = parseInt(ctx.match[2]);
-  let vArr = FAST_DATES_STATE.votes.get(vId) || [];
-  FAST_DATES_STATE.votes.set(vId, vArr.includes(tId) ? vArr.filter(id=>id!==tId) : [...vArr, tId]);
-  const u = Array.from(FAST_DATES_STATE.participants.values()).find(p => p.id === vId);
-  const targets = Array.from(FAST_DATES_STATE.participants.values()).filter(p => p.gender !== u?.gender);
-  const votes = FAST_DATES_STATE.votes.get(vId) || [];
-  const btns = targets.map(t => Markup.button.callback(`${votes.includes(t.id)?'✅':' '} №${t.num}`, `fd_tog_${vId}_${t.id}`));
-  const rows = []; while(btns.length) rows.push(btns.splice(0,4));
-  await ctx.editMessageReplyMarkup({ inline_keyboard: [...rows, [Markup.button.callback('💾 Сохранить', 'admin_fd_panel')]] });
-});
+bot.action(/fd_tog_(\d+)_(\d+)/, (ctx) => SD.toggleParticipantLike(ctx));
 
-bot.action('fd_calc_matches', async (ctx) => {
-  let count = 0;
-  for (const [tid, p] of FAST_DATES_STATE.participants) {
-    const myLikes = FAST_DATES_STATE.votes.get(p.id) || [];
-    for (const targetId of myLikes) {
-      const target = Array.from(FAST_DATES_STATE.participants.values()).find(x => x.id === targetId);
-      if (target && FAST_DATES_STATE.votes.get(target.id)?.includes(p.id)) {
-        count++; bot.telegram.sendMessage(tid, `💖 <b>МЭТЧ!</b> С №${target.num} (@${target.username})`).catch(()=>{});
-      }
-    }
-  }
-  ctx.reply(`🏁 Найдено мэтчей: ${count/2}`);
-});
+bot.action('fd_calc_matches', (ctx) => SD.calculateMatches(ctx, bot));
 
 // --- ВОЗВРАТ ФУНКЦИЙ ПУЛЬТА ---
 // --- ПУЛЬТЫ (FD И STOCK) ---
