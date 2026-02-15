@@ -1,6 +1,6 @@
 import { Markup } from 'telegraf';
 import { and, eq, asc } from 'drizzle-orm';
-import * as schema from './drizzle/schema'; // Assuming schema is in a sibling directory
+import * as schema from '../drizzle/schema'; // Assuming schema is in a sibling directory
 import { db } from './db'; // Assuming db is exported from a db.ts file
 
 interface Participant {
