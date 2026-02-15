@@ -7,6 +7,7 @@ import * as schema from '../drizzle/schema';
 import 'dotenv/config';
 import Stripe from 'stripe';
 import { DateTime } from 'luxon';
+import * as SD from './speedDating';
 
 
 
