@@ -71,13 +71,18 @@ export async function loadDatingCommand(ctx: any, bot: any) {
     const men: Participant[] = [];
     const women: Participant[] = [];
 
+    // В файле speedDating.ts внутри loadDatingCommand
     for (const b of bookings) {
         const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
         if (u) {
+        // Умная проверка пола: переводим в нижний регистр и ищем корень "муж"
+            const dbGender = (u.gender || '').toLowerCase();
+            const finalGender = dbGender.includes('муж') ? 'Мужчина' : 'Женщина';
+
             const participant: Participant = {
                 id: u.telegramId!,
-                num: 0, // Will be assigned later
-                gender: u.gender === 'Мужчина' ? 'Мужчина' : 'Женщина',
+                num: 0, // Присвоится ниже
+                gender: finalGender as 'Мужчина' | 'Женщина', 
                 name: u.name || u.firstName || 'Участник',
                 username: u.username || undefined,
             };
