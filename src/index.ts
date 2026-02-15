@@ -594,16 +594,17 @@ bot.use(session());
 bot.use(stage.middleware());
 
 // Главная клавиатура
+// В начале index.ts (Функция клавиатуры)
 function getMainKeyboard(showTopicButton = false) {
     const buttons = [
         ['🎮 Игры', '👤 Личный кабинет'],
         ['🆘 Помощь', '📜 Правила']
     ];
-    // Добавляем кнопку только если флаг true
     if (showTopicButton) {
         buttons.unshift(['🎲 Новая тема']);
     }
-    return Markup.keyboard(buttons).resize();
+    // persistent(true) — МАГИЯ: кнопка меню не исчезнет!
+    return Markup.keyboard(buttons).resize().persistent(true);
 }
 
 // --- 6. АВТОПИЛОТ (ЧИСТАЯ ВЕРСИЯ БЕЗ ДУБЛЕЙ) ---
@@ -671,8 +672,8 @@ setInterval(async () => {
                 const mNum = (i * 2) + 2; // 2, 4, 6...
 
                 // Записываем в память свиданий (используем telegramId как ключ)
-                FAST_DATES_STATE.participants.set(women[i].telegramId, { id: women[i].telegramId, num: wNum, gender: 'Женщина', name: women[i].name });
-                FAST_DATES_STATE.participants.set(men[i].telegramId, { id: men[i].telegramId, num: mNum, gender: 'Мужчина', name: men[i].name });
+                SD.FAST_DATES_STATE.participants.set(women[i].telegramId, { id: women[i].telegramId, num: wNum, gender: 'Женщина', name: women[i].name });
+                SD.FAST_DATES_STATE.participants.set(men[i].telegramId, { id: men[i].telegramId, num: mNum, gender: 'Мужчина', name: men[i].name });
 
                 // Шлем каждому его личный номер
                 bot.telegram.sendMessage(women[i].telegramId, `💘 <b>Твой номер на сегодня: ${wNum}</b> (Столик №${i + 1})\n\nЖдем тебя!`).catch(()=>{});
@@ -704,6 +705,8 @@ setInterval(async () => {
         PROCESSED_AUTO_ACTIONS.add(`start_greet_${event.id}`);
         const { title } = parseEventDesc(event.description);
         
+        if (event.type === 'speed_dating') return; 
+
         let needsTopic = (event.type.includes('talk_toast'));
         let msg = `🥂 <b>Игра "${title}" начинается!</b>\n\nРады всех видеть! Представьтесь для начала друг другу (имя и ваше хобби или специальность).`;
         
@@ -925,13 +928,13 @@ bot.hears('🎲 Новая тема', async (ctx) => {
 
   const randomTopic = CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)];
 
-  // --- ЛОГИКА ДЛЯ СВИДАНИЙ (Используем память из НОВОГО файла) ---
+  // --- ЛОГИКА ДЛЯ СВИДАНИЙ ---
   if (currentEvent.type === 'speed_dating') {
     const round = SD.FAST_DATES_STATE.currentRound;
     const ps = Array.from(SD.FAST_DATES_STATE.participants.values());
     const me = ps.find(p => p.id === ctx.from.id);
 
-    if (!me || ps.length === 0) return ctx.reply("❌ Участники не загружены (напиши /load_dating).");
+    if (!me || ps.length === 0) return ctx.reply("❌ Ошибка: Участники не загружены (напиши /load_dating).");
 
     const women = ps.filter(p => p.gender === 'Женщина').sort((a,b) => a.num - b.num);
     const men = ps.filter(p => p.gender === 'Мужчина').sort((a,b) => a.num - b.num);
@@ -948,19 +951,18 @@ bot.hears('🎲 Новая тема', async (ctx) => {
 
     if (partner) {
       const pairMsg = `🎲 <b>Секретная тема только для вашего столика:</b>\n\n${randomTopic}`;
-      await bot.telegram.sendMessage(me.id, pairMsg, { parse_mode: 'HTML' });
-      await bot.telegram.sendMessage(partner.id, pairMsg, { parse_mode: 'HTML' });
+      await bot.telegram.sendMessage(me.id, pairMsg, { parse_mode: 'HTML', ...getMainKeyboard(true) });
+      await bot.telegram.sendMessage(partner.id, pairMsg, { parse_mode: 'HTML', ...getMainKeyboard(true) });
       return ctx.reply("✅ Тема отправлена тебе и собеседнику!");
     }
   } 
-  // --- ЛОГИКА ДЛЯ ОБЫЧНЫХ ИГР (Talk & Toast и т.д.) ---
+  // --- ЛОГИКА ДЛЯ ОБЫЧНЫХ ИГР ---
   else {
     const starter = user.name || "кто-то из вас";
     await broadcastToEvent(currentEvent.id, `🎲 <b>Новая тема для стола:</b>\n\n${randomTopic}\n\n🎙 <b>Начинает:</b> <u>${starter}</u>`);
-    return ctx.reply("✅ Тема отправлена всем участникам!");
+    return ctx.reply("✅ Тема отправлена всем участникам!", getMainKeyboard(true));
   }
 });
-
 // Кнопка "📜 Правила"
 bot.hears('📜 Правила', (ctx) => {
   const rulesText = `📜 <b>Правила клуба Allgorithm</b>\n\n` +
@@ -2010,7 +2012,16 @@ bot.action(/sk_win_(\d+)_(\d+)/, async (ctx) => {
 
 // --- ЛОГИКА СТАТИСТИКИ И МЭТЧЕЙ ---
 
-bot.action('fd_start_game', (ctx) => SD.startDatingGame(ctx, bot));
+bot.action('fd_start_game', async (ctx) => {
+    // Вызываем функцию из твоего умного файла
+    await SD.startDatingGame(ctx, bot);
+    
+    // ПРИНУДИТЕЛЬНО обновляем меню у всех участников, чтобы появилась кнопка темы
+    const players = Array.from(SD.FAST_DATES_STATE.participants.keys());
+    for (const id of players) {
+        await bot.telegram.sendMessage(id, "Кнопка «🎲 Новая тема» активирована! 👇", getMainKeyboard(true)).catch(()=>{});
+    }
+});
 
 bot.action('fd_next_round', (ctx) => SD.nextDatingRound(ctx, bot));
 
@@ -2039,7 +2050,7 @@ bot.action('fd_calc_matches', (ctx) => SD.calculateMatches(ctx, bot));
 // --- ВОЗВРАТ ФУНКЦИЙ ПУЛЬТА ---
 // --- ПУЛЬТЫ (FD И STOCK) ---
 bot.action('fd_input_start', ctx => { 
-  const btns = Array.from(FAST_DATES_STATE.participants.values()).sort((a,b)=>a.num-b.num).map(p => [Markup.button.callback(`№${p.num} (${p.gender[0]})`, `fd_edit_${p.id}`)]); 
+  const btns = Array.from(SD.FAST_DATES_STATE.participants.values()).sort((a,b)=>a.num-b.num).map(p => [Markup.button.callback(`№${p.num} (${p.gender[0]})`, `fd_edit_${p.id}`)]); 
   ctx.editMessageText('Чью анкету вводим?', Markup.inlineKeyboard([...btns, [Markup.button.callback('🔙', 'admin_fd_panel')]])); 
 });
 
