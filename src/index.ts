@@ -710,7 +710,7 @@ setInterval(async () => {
         PROCESSED_AUTO_ACTIONS.add(`start_greet_${event.id}`);
         const { title } = parseEventDesc(event.description);
         
-        let needsTopic = (event.type.includes('talk_toast') || event.type === 'speed_dating');
+        let needsTopic = (event.type.includes('talk_toast'));
         let msg = `🥂 <b>Игра "${title}" начинается!</b>\n\nРады всех видеть! Представьтесь для начала друг другу (имя и ваше хобби или специальность).`;
         
         if (needsTopic) {
