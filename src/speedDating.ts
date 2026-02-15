@@ -121,19 +121,16 @@ export async function loadDatingCommand(ctx: any, bot: any) {
   }
 }
 
+// --- 1. НАЧАТЬ 1-Й РАУНД ---
 export async function startDatingGame(ctx: any, bot: any) {
   if (FAST_DATES_STATE.participants.size === 0) {
-    return ctx.reply("❌ Ошибка: Участники не загружены! Введи: /load_dating [ID_Игры]");
+    return ctx.reply("❌ Ошибка: Участники не загружены! Введи: /load_dating [ID]");
   }
 
   FAST_DATES_STATE.currentRound = 1; 
   const ps = Array.from(FAST_DATES_STATE.participants.values());
   const women = ps.filter(p => p.gender === 'Женщина').sort((a,b) => a.num - b.num);
   const men = ps.filter(p => p.gender === 'Мужчина').sort((a,b) => a.num - b.num);
-
-  if (women.length === 0 || men.length === 0) {
-    return ctx.reply('❌ Недостаточно участников для начала игры (нужны и мужчины, и женщины).');
-  }
 
   const topic = CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)];
 
@@ -144,16 +141,14 @@ export async function startDatingGame(ctx: any, bot: any) {
 
     const msg = `🚀 <b>РАУНД №1</b>\n\n` +
                 `Займите место за <b>столиком №${tableNum}</b>.\n` +
-                `Ваш собеседник: <b>Участник №${man.num}</b> (и Участница №${woman.num})\n\n` +
+                `Ваш собеседник: <b>Участник №${man.num}</b>\n\n` +
                 `<b>Тема для разговора:</b> ${topic}\n` +
                 `<i>Начинает участник №${woman.num}!</i> ✨`;
-    
+
     bot.telegram.sendMessage(woman.id, msg, { parse_mode: 'HTML' }).catch(()=>{});
     bot.telegram.sendMessage(man.id, msg, { parse_mode: 'HTML' }).catch(()=>{});
   }
 
-  await ctx.answerCbQuery("Игра запущена!");
-  // Исправлено: теперь клавиатура привязана к сообщению правильно
   await ctx.editMessageText(`📢 <b>Игра началась! Раунд №1.</b>`, { 
     parse_mode: 'HTML',
     ...Markup.inlineKeyboard([
@@ -163,52 +158,68 @@ export async function startDatingGame(ctx: any, bot: any) {
   });
 }
 
+// --- 2. СЛЕДУЮЩИЙ РАУНД ---
 export async function nextDatingRound(ctx: any, bot: any) {
-  if (FAST_DATES_STATE.participants.size === 0) return ctx.reply("Ошибка: загрузите участников!");
-
-  // Anti-Spam: Disable button after click or add a cooldown if needed
-  // For now, simply incrementing round and checking for end of game acts as a basic anti-spam
-
-  FAST_DATES_STATE.currentRound++;
-  const round = FAST_DATES_STATE.currentRound;
-  
   const ps = Array.from(FAST_DATES_STATE.participants.values());
   const women = ps.filter(p => p.gender === 'Женщина').sort((a,b) => a.num - b.num);
   const men = ps.filter(p => p.gender === 'Мужчина').sort((a,b) => a.num - b.num);
 
+  if (women.length === 0) return ctx.reply("Ошибка: участники не найдены.");
+
+  FAST_DATES_STATE.currentRound++;
+  const round = FAST_DATES_STATE.currentRound;
+
   if (round > women.length) {
-    return ctx.reply("🏁 Все участники познакомились! Раунды закончились. Время вводить симпатии!", Markup.inlineKeyboard([
-        [Markup.button.callback('🏁 Рассчитать мэтчи', 'fd_calc_matches')]
-    ]));
+    return ctx.editMessageText("🏁 <b>Все участники познакомились!</b>\nРаунды закончились. Время вводить симпатии!", { parse_mode: 'HTML' });
   }
+
+  const topic = CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)];
 
   for (let i = 0; i < women.length; i++) {
     const woman = women[i];
-    const manIndex = (i + round - 1) % men.length;
-    const man = men[manIndex];
+    const man = men[(i + round - 1) % men.length];
     const tableNum = i + 1;
 
-    const randomTopic = CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)];
+    const msg = `🔄 <b>РАУНД №${round}</b>\n\n` +
+                `Оставайтесь за <b>столиком №${tableNum}</b>.\n` +
+                `К вам подсаживается: <b>Участник №${man.num}</b>.\n\n` +
+                `<b>Тема для разговора:</b> ${topic}\n` +
+                `<i>Начинает участник №${woman.num}!</i>`;
 
-    bot.telegram.sendMessage(woman.id, 
-      `🔄 <b>РАУНД №${round}</b>\n\nОставайтесь за столиком <b>№${tableNum}</b>.\nК вам подсаживается: <b>Участник №${man.num}</b>.\n\n<b>Тема для разговора:</b> ${randomTopic}\n<i>Начинает участник №${woman.num}!</i>`,
-      { parse_mode: 'HTML' }
-    ).catch(()=>{});
-
-    bot.telegram.sendMessage(man.id, 
-      `🔄 <b>РАУНД №${round}</b>\n\nПереходите к столику <b>№${tableNum}</b>.\nВас ждёт: <b>Участница №${woman.num}</b>. 💘\n\n<b>Тема для разговора:</b> ${randomTopic}\n<i>Начинает участник №${woman.num}!</i>`,
-      { parse_mode: 'HTML' }
-    ).catch(()=>{});
+    bot.telegram.sendMessage(woman.id, msg, { parse_mode: 'HTML' }).catch(()=>{});
+    bot.telegram.sendMessage(man.id, msg, { parse_mode: 'HTML' }).catch(()=>{});
   }
+  await ctx.reply(`📢 <b>Запущен раунд №${round}!</b>`);
+}
 
-  await ctx.answerCbQuery(`Раунд ${round} запущен!`);
-  await ctx.reply(`📢 <b>Запущен раунд №${round}!</b>`, { 
-    parse_mode: 'HTML',
-    ...Markup.inlineKeyboard([
-      [Markup.button.callback('🔄 СЛЕДУЮЩИЙ РАУНД', 'fd_next_round')],
-      [Markup.button.callback('🏁 Рассчитать мэтчи', 'fd_calc_matches')]
-    ])
-  });
+// --- 3. ФУНКЦИЯ ДЛЯ КНОПКИ "НОВАЯ ТЕМА" (Добавь это в конец файла!) ---
+export async function handleNewTopic(ctx: any, bot: any) {
+    const round = FAST_DATES_STATE.currentRound;
+    const ps = Array.from(FAST_DATES_STATE.participants.values());
+    const me = ps.find(p => p.id === ctx.from.id);
+
+    if (!me || ps.length === 0) return ctx.reply("❌ Ошибка: Участники игры не найдены в системе.");
+
+    const women = ps.filter(p => p.gender === 'Женщина').sort((a,b) => a.num - b.num);
+    const men = ps.filter(p => p.gender === 'Мужчина').sort((a,b) => a.num - b.num);
+    
+    let partner;
+    if (me.gender === 'Женщина') {
+      const i = women.findIndex(w => w.id === me.id);
+      partner = men[(i + round - 1) % men.length];
+    } else {
+      const j = men.findIndex(m => m.id === me.id);
+      const i = ((j - (round - 1)) % women.length + women.length) % women.length;
+      partner = women[i];
+    }
+
+    if (partner) {
+      const randomTopic = CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)];
+      const pairMsg = `🎲 <b>Секретная тема только для вашего столика:</b>\n\n${randomTopic}`;
+      await bot.telegram.sendMessage(me.id, pairMsg, { parse_mode: 'HTML' });
+      await bot.telegram.sendMessage(partner.id, pairMsg, { parse_mode: 'HTML' });
+      return ctx.reply("✅ Новая тема отправлена тебе и твоему собеседнику!");
+    }
 }
 
 export async function calculateMatches(ctx: any, bot: any) {
