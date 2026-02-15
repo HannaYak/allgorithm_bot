@@ -2012,18 +2012,82 @@ bot.action(/sk_win_(\d+)_(\d+)/, async (ctx) => {
 
 // --- ЛОГИКА СТАТИСТИКИ И МЭТЧЕЙ ---
 
+// --- ИСПРАВЛЕННОЕ УПРАВЛЕНИЕ СВИДАНИЯМИ (в index.ts) ---
+
 bot.action('fd_start_game', async (ctx) => {
-    // Вызываем функцию из твоего умного файла
-    await SD.startDatingGame(ctx, bot);
-    
-    // ПРИНУДИТЕЛЬНО обновляем меню у всех участников, чтобы появилась кнопка темы
-    const players = Array.from(SD.FAST_DATES_STATE.participants.keys());
-    for (const id of players) {
-        await bot.telegram.sendMessage(id, "Кнопка «🎲 Новая тема» активирована! 👇", getMainKeyboard(true)).catch(()=>{});
+    const ps = Array.from(SD.FAST_DATES_STATE.participants.values());
+    // Умная фильтрация: даже если в базе ошибка, мы поймем кто есть кто
+    const women = ps.filter(p => p.gender.toLowerCase().includes('жен')).sort((a,b) => a.num - b.num);
+    const men = ps.filter(p => p.gender.toLowerCase().includes('муж')).sort((a,b) => a.num - b.num);
+
+    if (women.length === 0 || men.length === 0) return ctx.reply("❌ Ошибка: участники не загружены!");
+
+    SD.FAST_DATES_STATE.currentRound = 1;
+    const topic = CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)];
+
+    for (let i = 0; i < women.length; i++) {
+        const tableNum = i + 1;
+        const woman = women[i];
+        const man = men[i];
+
+        // Сообщение ЖЕНЩИНЕ (Нечетные: 1, 3, 5...)
+        const msgW = `🚀 <b>РАУНД №1</b>\n\n` +
+                    `Займите место за <b>столиком №${tableNum}</b>.\n` +
+                    `К вам подсаживается: <b>Участник №${man.num}</b>\n\n` +
+                    `<b>Тема:</b> ${topic}\n` +
+                    `<i>Начинает участница №${woman.num}!</i>`;
+
+        // Сообщение МУЖЧИНЕ (Четные: 2, 4, 6...)
+        const msgM = `🚀 <b>РАУНД №1</b>\n\n` +
+                    `Пожалуйста, пройдите за <b>столик №${tableNum}</b>.\n` +
+                    `Вас ждёт: <b>Участница №${woman.num}</b>\n\n` +
+                    `<b>Тема:</b> ${topic}\n` +
+                    `<i>Начинает участница №${woman.num}!</i>`;
+
+        await bot.telegram.sendMessage(woman.id, msgW, { parse_mode: 'HTML', ...getMainKeyboard(true) }).catch(()=>{});
+        await bot.telegram.sendMessage(man.id, msgM, { parse_mode: 'HTML', ...getMainKeyboard(true) }).catch(()=>{});
     }
+    await ctx.editMessageText("📢 Раунд №1 запущен! Кнопки тем отправлены.");
 });
 
-bot.action('fd_next_round', (ctx) => SD.nextDatingRound(ctx, bot));
+bot.action('fd_next_round', async (ctx) => {
+    const ps = Array.from(SD.FAST_DATES_STATE.participants.values());
+    const women = ps.filter(p => p.gender.toLowerCase().includes('жен')).sort((a,b) => a.num - b.num);
+    const men = ps.filter(p => p.gender.toLowerCase().includes('муж')).sort((a,b) => a.num - b.num);
+
+    SD.FAST_DATES_STATE.currentRound++;
+    const round = SD.FAST_DATES_STATE.currentRound;
+
+    if (round > women.length) {
+        return ctx.editMessageText("🏁 <b>Все участники познакомились!</b>", { parse_mode: 'HTML' });
+    }
+
+    const topic = CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)];
+
+    for (let i = 0; i < women.length; i++) {
+        const tableNum = i + 1;
+        const woman = women[i];
+        const man = men[(i + round - 1) % men.length];
+
+        // ТЕКСТ ДЛЯ ЖЕНЩИНЫ (Она остается)
+        const msgW = `🔄 <b>РАУНД №${round}</b>\n\n` +
+                    `Оставайтесь за <b>столиком №${tableNum}</b>.\n` +
+                    `К вам переходит: <b>Участник №${man.num}</b>\n\n` +
+                    `<b>Тема:</b> ${topic}\n` +
+                    `<i>Начинает участница №${woman.num}!</i>`;
+
+        // ТЕКСТ ДЛЯ МУЖЧИНЫ (Он переходит)
+        const msgM = `🔄 <b>РАУНД №${round}</b>\n\n` +
+                    `Переходите к <b>столику №${tableNum}</b>.\n` +
+                    `Там вас ждёт: <b>Участница №${woman.num}</b>\n\n` +
+                    `<b>Тема:</b> ${topic}\n` +
+                    `<i>Начинает участница №${woman.num}!</i>`;
+
+        await bot.telegram.sendMessage(woman.id, msgW, { parse_mode: 'HTML', ...getMainKeyboard(true) }).catch(()=>{});
+        await bot.telegram.sendMessage(man.id, msgM, { parse_mode: 'HTML', ...getMainKeyboard(true) }).catch(()=>{});
+    }
+    await ctx.reply(`📢 Запущен раунд №${round}!`);
+});
 
 bot.action('admin_stats', async (ctx) => {
   const allUsers = await db.query.users.findMany();
