@@ -97,14 +97,21 @@ export async function loadDatingCommand(ctx: any, bot: any) {
         // Optionally, you could stop the loading here or ask for admin confirmation
     }
 
+        // Внутри loadDatingCommand заменяем блок раздачи:
     const limit = Math.min(men.length, women.length);
     for (let i = 0; i < limit; i++) {
-        const wNum = (i * 2) + 1;
-        const mNum = (i * 2) + 2;
+        const wNum = (i * 2) + 1; // 1, 3, 5...
+        const mNum = (i * 2) + 2; // 2, 4, 6...
+
+    // Записываем в память
         women[i].num = wNum;
         men[i].num = mNum;
         FAST_DATES_STATE.participants.set(women[i].id, women[i]);
         FAST_DATES_STATE.participants.set(men[i].id, men[i]);
+
+    // 🔥 ВОТ ЭТО ДОБАВЛЯЕМ: Сразу шлем номера игрокам
+        bot.telegram.sendMessage(women[i].id, `🎫 Твой игровой номер на сегодня: <b>${wNum}</b>\nЗапомни его!`, { parse_mode: 'HTML' }).catch(()=>{});
+        bot.telegram.sendMessage(men[i].id, `🎫 Твой игровой номер на сегодня: <b>${mNum}</b>\nЗапомни его!`, { parse_mode: 'HTML' }).catch(()=>{});
     }
 
     await ctx.reply(`✅ РЕАНИМАЦИЯ ИГРЫ №${eid} УСПЕШНА!\nЗагружено участников: ${FAST_DATES_STATE.participants.size}\n\nТеперь кнопки админки и "Новая тема" оживут!`, { parse_mode: 'HTML' });
@@ -116,12 +123,10 @@ export async function loadDatingCommand(ctx: any, bot: any) {
 
 export async function startDatingGame(ctx: any, bot: any) {
   if (FAST_DATES_STATE.participants.size === 0) {
-    return ctx.reply("❌ В памяти бота нет участников. Сначала введи: /load_dating [ID_Игры]");
+    return ctx.reply("❌ Ошибка: Участники не загружены! Введи: /load_dating [ID_Игры]");
   }
 
   FAST_DATES_STATE.currentRound = 1; 
-  const round = FAST_DATES_STATE.currentRound;
-  
   const ps = Array.from(FAST_DATES_STATE.participants.values());
   const women = ps.filter(p => p.gender === 'Женщина').sort((a,b) => a.num - b.num);
   const men = ps.filter(p => p.gender === 'Мужчина').sort((a,b) => a.num - b.num);
@@ -130,19 +135,25 @@ export async function startDatingGame(ctx: any, bot: any) {
     return ctx.reply('❌ Недостаточно участников для начала игры (нужны и мужчины, и женщины).');
   }
 
+  const topic = CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)];
+
   for (let i = 0; i < women.length; i++) {
     const woman = women[i];
     const man = men[i]; 
     const tableNum = i + 1;
 
-    const randomTopic = CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)];
-    const msg = `🚀 <b>РАУНД №1 НАЧАЛСЯ!</b>\n\nВаш столик: <b>№${tableNum}</b>\nВаш собеседник: <b>Участник №${man.num}</b>\n\n<b>Тема для разговора:</b> ${randomTopic}\n<i>Начинает участник №${woman.num}!</i>\n\nПриятного знакомства! ✨`;
+    const msg = `🚀 <b>РАУНД №1</b>\n\n` +
+                `Займите место за <b>столиком №${tableNum}</b>.\n` +
+                `Ваш собеседник: <b>Участник №${man.num}</b> (и Участница №${woman.num})\n\n` +
+                `<b>Тема для разговора:</b> ${topic}\n` +
+                `<i>Начинает участник №${woman.num}!</i> ✨`;
     
     bot.telegram.sendMessage(woman.id, msg, { parse_mode: 'HTML' }).catch(()=>{});
     bot.telegram.sendMessage(man.id, msg, { parse_mode: 'HTML' }).catch(()=>{});
   }
 
   await ctx.answerCbQuery("Игра запущена!");
+  // Исправлено: теперь клавиатура привязана к сообщению правильно
   await ctx.editMessageText(`📢 <b>Игра началась! Раунд №1.</b>`, { 
     parse_mode: 'HTML',
     ...Markup.inlineKeyboard([
