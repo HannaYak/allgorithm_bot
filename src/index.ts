@@ -1655,11 +1655,10 @@ bot.command('reschedule', async (ctx) => {
 bot.command('load_dating', (ctx) => SD.loadDatingCommand(ctx, bot));
 
 // Команда для проверки: кто прямо сейчас находится в "мозгах" бота
+// Команда для проверки: кто прямо сейчас находится в "мозгах" бота
 bot.command('check_nums', async (ctx) => {
-  // Проверка, что пишет админ
   if (ctx.from.id !== ADMIN_ID) return;
 
-  // Берем данные из памяти файла speedDating.ts (через SD)
   const ps = Array.from(SD.FAST_DATES_STATE.participants.values());
   const eventId = SD.FAST_DATES_STATE.eventId;
   const round = SD.FAST_DATES_STATE.currentRound;
@@ -1668,14 +1667,14 @@ bot.command('check_nums', async (ctx) => {
     return ctx.reply("❌ <b>В памяти бота пусто!</b>\nУчастники не загружены. Используй /load_dating [ID]", { parse_mode: 'HTML' });
   }
 
-  let report = 📊 <b>ИНСПЕКЦИЯ ПАМЯТИ:</b>\n;
-  report += ID Игры: <b>${eventId}</b>\n;
-  report += Текущий Раунд: <b>${round}</b>\n;
-  report += Всего в памяти: <b>${ps.length} чел.</b>\n\n;
+  // 🔥 Исправлено: добавили обратные кавычки для строк
+  let report = `📊 <b>ИНСПЕКЦИЯ ПАМЯТИ:</b>\n`;
+  report += `ID Игры: <b>${eventId}</b>\n`;
+  report += `Текущий Раунд: <b>${round}</b>\n`;
+  report += `Всего в памяти: <b>${ps.length} чел.</b>\n\n`;
 
-  // Сортируем список по номерам для удобства сверки с карточками
   ps.sort((a, b) => a.num - b.num).forEach(p => {
-    report += <b>№${p.num}</b> — ${p.name} (@${p.username || 'нет'}) [${p.gender === 'Мужчина' ? 'М' : 'Ж'}]\n;
+    report += `<b>№${p.num}</b> — ${p.name} (@${p.username || 'нет'}) [${p.gender === 'Мужчина' ? 'М' : 'Ж'}]\n`;
   });
 
   await ctx.reply(report, { parse_mode: 'HTML' });
