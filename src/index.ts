@@ -917,14 +917,16 @@ bot.hears('🎲 Новая тема', async (ctx) => {
     });
     if (event) {
       const start = DateTime.fromFormat(event.dateString, "dd.MM.yyyy HH:mm", { zone: 'Europe/Warsaw' });
-      if (nowWarsaw.diff(start, 'hours').hours >= 0 && nowWarsaw.diff(start, 'hours').hours <= 4) {
+      const diffHours = nowWarsaw.diff(start, 'hours').hours;
+      // Кнопка работает в течение 4 часов после начала
+      if (diffHours >= 0 && diffHours <= 4) {
         currentEvent = event;
         break;
       }
     }
   }
 
-  if (!currentEvent) return ctx.reply("❌ Кнопка доступна только во время игры.");
+  if (!currentEvent) return ctx.reply("❌ Кнопка доступна только во время активной игры.");
 
   const randomTopic = CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)];
 
@@ -934,10 +936,10 @@ bot.hears('🎲 Новая тема', async (ctx) => {
     const ps = Array.from(SD.FAST_DATES_STATE.participants.values());
     const me = ps.find(p => p.id === ctx.from.id);
 
-    if (!me || ps.length === 0) return ctx.reply("❌ Ошибка: Участники не загружены (напиши /load_dating).");
+    if (!me || ps.length === 0) return ctx.reply("❌ Ошибка: Участники не загружены (админ должен ввести /load_dating).");
 
-    const women = ps.filter(p => p.gender === 'Женщина').sort((a,b) => a.num - b.num);
-    const men = ps.filter(p => p.gender === 'Мужчина').sort((a,b) => a.num - b.num);
+    const women = ps.filter(p => p.gender.toLowerCase().includes('жен')).sort((a,b) => a.num - b.num);
+    const men = ps.filter(p => p.gender.toLowerCase().includes('муж')).sort((a,b) => a.num - b.num);
     
     let partner;
     if (me.gender === 'Женщина') {
@@ -953,7 +955,7 @@ bot.hears('🎲 Новая тема', async (ctx) => {
       const pairMsg = `🎲 <b>Секретная тема только для вашего столика:</b>\n\n${randomTopic}`;
       await bot.telegram.sendMessage(me.id, pairMsg, { parse_mode: 'HTML', ...getMainKeyboard(true) });
       await bot.telegram.sendMessage(partner.id, pairMsg, { parse_mode: 'HTML', ...getMainKeyboard(true) });
-      return ctx.reply("✅ Тема отправлена тебе и собеседнику!");
+      return ctx.reply("✅ Тема отправлена тебе и твоему собеседнику!");
     }
   } 
   // --- ЛОГИКА ДЛЯ ОБЫЧНЫХ ИГР ---
