@@ -382,12 +382,6 @@ async function notifyNextInWaitlist(eventId: number, eventType: string, dateStri
 
 const PENDING_PAYMENTS = new Map<string, { time: DateTime, notified: boolean }>();
 
-const FAST_DATES_STATE = {
-  eventId: 0,
-  currentRound: 1, // Текущий раунд
-  participants: new Map<number, any>(), // Тут храним всех по Telegram ID
-  votes: new Map<number, number[]>()
-};;
 
 const STOCK_STATE = {
   isActive: false,
@@ -916,51 +910,39 @@ bot.hears('🎲 Новая тема', async (ctx) => {
 
   for (const b of myBookings) {
     const event = await db.query.events.findFirst({
-      where: and(
-        eq(schema.events.id, b.eventId),
-        eq(schema.events.isActive, true)
-      )
+      where: and(eq(schema.events.id, b.eventId), eq(schema.events.isActive, true))
     });
     if (event) {
       const start = DateTime.fromFormat(event.dateString, "dd.MM.yyyy HH:mm", { zone: 'Europe/Warsaw' });
-      const diffHours = nowWarsaw.diff(start, 'hours').hours;
-      // Кнопка работает в течение 4 часов после начала
-      if (diffHours >= 0 && diffHours <= 4) {
+      if (nowWarsaw.diff(start, 'hours').hours >= 0 && nowWarsaw.diff(start, 'hours').hours <= 4) {
         currentEvent = event;
         break;
       }
     }
   }
 
-  if (!currentEvent) {
-    return ctx.reply("❌ Кнопка доступна только во время активной игры.", getMainKeyboard(false));
-  }
+  if (!currentEvent) return ctx.reply("❌ Кнопка доступна только во время игры.");
 
   const randomTopic = CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)];
 
-  // --- ЛОГИКА ДЛЯ СВИДАНИЙ (ТОЛЬКО ДЛЯ ПАРЫ) ---
+  // --- ЛОГИКА ДЛЯ СВИДАНИЙ (Используем память из НОВОГО файла) ---
   if (currentEvent.type === 'speed_dating') {
-    const round = FAST_DATES_STATE.currentRound;
-    const ps = Array.from(FAST_DATES_STATE.participants.values());
-    
+    const round = SD.FAST_DATES_STATE.currentRound;
+    const ps = Array.from(SD.FAST_DATES_STATE.participants.values());
+    const me = ps.find(p => p.id === ctx.from.id);
+
+    if (!me || ps.length === 0) return ctx.reply("❌ Участники не загружены (напиши /load_dating).");
+
     const women = ps.filter(p => p.gender === 'Женщина').sort((a,b) => a.num - b.num);
     const men = ps.filter(p => p.gender === 'Мужчина').sort((a,b) => a.num - b.num);
     
-    if (women.length === 0 || men.length === 0) return ctx.reply("Ошибка: участники не найдены.");
-
-    const me = ps.find(p => p.id === ctx.from.id);
-    if (!me) return ctx.reply("❌ Ты не зарегистрирован в текущей ротации.");
-
     let partner;
-    const N = women.length;
-
     if (me.gender === 'Женщина') {
       const i = women.findIndex(w => w.id === me.id);
-      const manIndex = (i + round - 1) % men.length;
-      partner = men[manIndex];
+      partner = men[(i + round - 1) % men.length];
     } else {
       const j = men.findIndex(m => m.id === me.id);
-      const womanIndex = ((j - (round - 1)) % N + N) % N;
+      const womanIndex = ((j - (round - 1)) % women.length + women.length) % women.length;
       partner = women[womanIndex];
     }
 
@@ -968,23 +950,13 @@ bot.hears('🎲 Новая тема', async (ctx) => {
       const pairMsg = `🎲 <b>Секретная тема только для вашего столика:</b>\n\n${randomTopic}`;
       await bot.telegram.sendMessage(me.id, pairMsg, { parse_mode: 'HTML' });
       await bot.telegram.sendMessage(partner.id, pairMsg, { parse_mode: 'HTML' });
-      return ctx.reply("✅ Тема отправлена тебе и твоему собеседнику!");
+      return ctx.reply("✅ Тема отправлена тебе и собеседнику!");
     }
-
-  // --- ЛОГИКА ДЛЯ ОБЫЧНОГО УЖИНА (ДЛЯ ВСЕХ) ---
-  } else {
-    const bksForTopic = await db.query.bookings.findMany({ 
-      where: and(eq(schema.bookings.eventId, currentEvent.id), eq(schema.bookings.paid, true)) 
-    });
-    
-    const players: string[] = [];
-    for (const b of bksForTopic) {
-      const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
-      if (u?.name) players.push(u.name);
-    }
-
-    const starter = players.length > 0 ? players[Math.floor(Math.random() * players.length)] : "кто-то из вас";
-    await broadcastToEvent(currentEvent.id, `🎲 <b>Новая тема для вашего стола:</b>\n\n${randomTopic}\n\n🎙 <b>Начинает:</b> <u>${starter}</u>`);
+  } 
+  // --- ЛОГИКА ДЛЯ ОБЫЧНЫХ ИГР (Talk & Toast и т.д.) ---
+  else {
+    const starter = user.name || "кто-то из вас";
+    await broadcastToEvent(currentEvent.id, `🎲 <b>Новая тема для стола:</b>\n\n${randomTopic}\n\n🎙 <b>Начинает:</b> <u>${starter}</u>`);
     return ctx.reply("✅ Тема отправлена всем участникам!");
   }
 });
