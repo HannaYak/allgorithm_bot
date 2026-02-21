@@ -47,4 +47,5 @@ export const vouchers = pgTable('vouchers', {
   userId: integer('user_id').references(() => users.id),
   photoFileId: text('photo_file_id').notNull(),
   status: text('status').default('pending'), // 'pending', 'approved', 'rejected'
+  usedInEventId: integer('used_in_event_id').references(() => events.id),
 });
