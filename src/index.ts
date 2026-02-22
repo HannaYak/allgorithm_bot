@@ -585,7 +585,8 @@ const registerWizard = new Scenes.WizardScene(
 
     await ctx.reply('Теперь ты можешь записываться на любые игры клуба!', getMainKeyboard());
     return ctx.scene.leave();
-}
+ }
+);
 
 const editFactWizard = new Scenes.WizardScene(
   'EDIT_FACT_SCENE',
