@@ -41,7 +41,7 @@ if (!process.env.STRIPE_SECRET_KEY) throw new Error('STRIPE_SECRET_KEY is missin
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2023-10-16' });
 
 const GAME_PRICES: Record<string, string> = {
-  'talk_toast': 'price_1SUTjrHhXyjuCWwfhQ7zwxLQ', 
+  'talk_toast': 'price_1T427MHhXyjuCWwf7CK0DvCA', 
   'stock_know': 'price_1SUTkoHhXyjuCWwfxD89YIpP',
   'speed_dating': 'price_1SUTlVHhXyjuCWwfU1IzNMlf',
   'talk_toast_review': 'price_1SiDMGHhXyjuCWwfzysRSphU',
