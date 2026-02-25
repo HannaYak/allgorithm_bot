@@ -577,7 +577,7 @@ const registerWizard = new Scenes.WizardScene(
       const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
       if (event) {
         await ctx.reply(
-          `Вы выбрали: ${getGameName(event.type)} (${event.dateString})\nК оплате: 35 PLN`,
+          `Вы выбрали: ${getGameName(event.type)} (${event.dateString})\nК оплате: 50 PLN`,
           Markup.inlineKeyboard([[Markup.button.callback('💸 Перейти к оплате', `pay_event_${eventId}`)]])
         );
       }
