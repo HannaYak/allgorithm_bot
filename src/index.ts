@@ -41,7 +41,7 @@ if (!process.env.STRIPE_SECRET_KEY) throw new Error('STRIPE_SECRET_KEY is missin
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2023-10-16' });
 
 const GAME_PRICES: Record<string, string> = {
-  'talk_toast': 'price_1T427MHhXyjuCWwf7CK0DvCA', 
+  'talk_toast': 'price_1SUTjrHhXyjuCWwfhQ7zwxLQ', 
   'stock_know': 'price_1SUTkoHhXyjuCWwfxD89YIpP',
   'speed_dating': 'price_1SUTlVHhXyjuCWwfU1IzNMlf',
   'talk_toast_review': 'price_1SiDMGHhXyjuCWwfzysRSphU',
@@ -1329,12 +1329,10 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
     const eid = parseInt(ctx.match[1]);
     const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
     
-    // 1. Проверка регистрации
     if (!user?.name) {
         return ctx.scene.enter('REGISTER_SCENE', { returnToEvent: eid });
     }
 
-    // 2. Проверка бана
     if (user.strangeStory === 'BANNED') {
         return ctx.reply('❌ К сожалению, вы нарушили правила клуба Allgorithm и доступ к играм для вас ограничен. Обратитесь в Помощь.');
     }
@@ -1343,101 +1341,91 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
         const event = await db.query.events.findFirst({ where: eq(schema.events.id, eid) });
         if (!event) return;
 
-        // --- БЛОК ГЕНДЕРНОГО КОНТРОЛЯ ДЛЯ SPEED DATING ---
-        // Внутри bot.action(/pay_event_(\d+)/, ...)
+        // --- ГЕНДЕРНЫЙ КОНТРОЛЬ ---
         if (event.type === 'speed_dating') {
             const bookings = await db.query.bookings.findMany({ 
                 where: and(eq(schema.bookings.eventId, eid), eq(schema.bookings.paid, true)) 
             });
 
-            let menCount = 0;
-            let womenCount = 0;
-
+            let mC = 0, wC = 0;
             for (const b of bookings) {
                 const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
-        // Приводим к нижнему регистру и ищем корень
                 const g = (u?.gender || '').toLowerCase();
-        
-                if (g.includes('муж')) menCount++; // Поймет: Мужчина, Мужской, Мужик, Муж
-                else if (g.includes('жен')) womenCount++; // Поймет: Женщина, Женский, Жен
+                if (g.includes('муж')) mC++;
+                else if (g.includes('жен')) wC++;
             }
 
-            const limitPerGender = Math.floor(event.maxPlayers / 2);
+            const limit = Math.floor(event.maxPlayers / 2);
             const userG = (user.gender || '').toLowerCase();
 
-
-            // Внутри проверки лимита для speed_dating:
-            if (userG.includes('муж') && menCount >= limitPerGender) {
+            if (userG.includes('муж') && mC >= limit) {
                 return ctx.reply(`❌ Места для мужчин на эту дату закончились.`, 
                     Markup.inlineKeyboard([[Markup.button.callback('⏳ Встать в лист ожидания', `waitlist_add_${eid}`)]]));
             }
-            if (userG.includes('жен') && womenCount >= limitPerGender) {
+            if (userG.includes('жен') && wC >= limit) {
                 return ctx.reply(`❌ Места для девушек на эту дату закончились.`, 
                     Markup.inlineKeyboard([[Markup.button.callback('⏳ Встать в лист ожидания', `waitlist_add_${eid}`)]]));
             }
         }
-    
 
-
-          
-        // Уведомление админу о намерении оплатить
         await bot.telegram.sendMessage(ADMIN_ID, `⚠️ Юзер ${user.name} (@${ctx.from!.username}) нажал «Оплатить» на игру №${eid}.`).catch(()=>{});
 
-        // 3. Каждая 5-я игра БЕСПЛАТНО
-        const activeBookings = await db.query.bookings.findMany({
-          where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.paid, true))
+        // --- БЕЗОПАСНЫЙ РАСЧЕТ ЛОЯЛЬНОСТИ ---
+        const gamesAlreadyPlayed = user.gamesPlayed || 0;
+        const myPaidBookings = await db.query.bookings.findMany({
+            where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.paid, true))
+        });
+        
+        // Считаем только уникальные мероприятия
+        const futureUniqueGames = new Set(myPaidBookings.map(b => b.eventId)).size;
+        const totalProgress = gamesAlreadyPlayed + futureUniqueGames;
+
+        // Если это 5-я игра
+        if (totalProgress > 0 && (totalProgress + 1) % 5 === 0) {
+            const doubleCheck = await db.query.bookings.findFirst({
+                where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.eventId, eid))
             });
 
-// Считаем: сколько сыграно + на сколько уже записан
-        const totalIntents = (user.gamesPlayed || 0) + activeBookings.length;
-
-          if ((totalIntents + 1) % 5 === 0) {
-    // Проверяем, нет ли уже текущей бесплатной записи в процессе
-    // (Логика: если сумма + 1 делится на 5, значит именно ЭТА запись должна быть бесплатной)
-        await db.insert(schema.bookings).values({ userId: user.id, eventId: eid, paid: true });
-        await db.update(schema.events).set({ currentPlayers: (event.currentPlayers || 0) + 1 }).where(eq(schema.events.id, eid));
-            
-            return ctx.replyWithHTML(
-                `🎁 <b>Поздравляем! Это твоя 5-я игра, она БЕСПЛАТНАЯ!</b>\n\n` +
-                `📍 <b>Важные правила:</b>\n` +
-                `• <b>Отмена и перенос:</b> Возможны только за <b>36 часов</b> до начала.\n` +
-                `• <b>Атмосфера:</b> Мы за уважение и классный вайб. 🥂\n` +
-                `• <b>Локация:</b> Адрес и инструкция придут за <b>3 часа</b> до начала игры.\n\n` +
-                `Напоминаем, что еда и напитки оплачиваются отдельно. До встречи! 🎉`
-            );
+            if (!doubleCheck) {
+                await db.insert(schema.bookings).values({ userId: user.id, eventId: eid, paid: true });
+                await db.update(schema.events).set({ currentPlayers: (event.currentPlayers || 0) + 1 }).where(eq(schema.events.id, eid));
+                
+                return ctx.replyWithHTML(
+                    `🎁 <b>Поздравляем! Это твоя 5-я игра, она БЕСПЛАТНАЯ!</b>\n\n` +
+                    `📍 <b>Важные правила:</b>\n` +
+                    `• Отмена возможна за 36 часов.\n` +
+                    `• Инструкция придет за 3 часа до начала.\n\n` +
+                    `Напоминаем, что еда и напитки оплачиваются отдельно. До встречи! 🎉`
+                );
+            } else {
+                return ctx.reply("✅ Ты уже записан на эту игру! Проверь раздел «Мои записи».");
+            }
         }
 
-        // 4. Проверка активных ваучеров
+        // --- ПРОВЕРКА ВАУЧЕРОВ ---
         const activeVoucher = await db.query.vouchers.findFirst({ 
             where: and(eq(schema.vouchers.userId, user.id), or(eq(schema.vouchers.status, 'approved_10'), eq(schema.vouchers.status, 'approved_free'))) 
         });
 
-          if (activeVoucher?.status === 'approved_free') {
+        if (activeVoucher?.status === 'approved_free') {
+            const doubleCheck = await db.query.bookings.findFirst({
+                where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.eventId, eid))
+            });
+            if (doubleCheck) return ctx.reply("✅ Ты уже записан на эту игру!");
+
             await db.insert(schema.bookings).values({ userId: user.id, eventId: eid, paid: true });
             await db.update(schema.events).set({ currentPlayers: (event.currentPlayers || 0) + 1 }).where(eq(schema.events.id, eid));
-    
-    // ИСПРАВЛЕНИЕ: Мы помечаем, что этот ваучер привязан именно к ЭТОЙ игре (eid)
-            await db.update(schema.vouchers)
-                .set({ status: 'used', usedInEventId: eid }) // Добавь это поле в БД
-                .where(eq(schema.vouchers.id, activeVoucher.id));
+            await db.update(schema.vouchers).set({ status: 'used', usedInEventId: eid }).where(eq(schema.vouchers.id, activeVoucher.id));
             
-            return ctx.replyWithHTML(
-                `🎫 <b>Оплачено FREE ваучером! Ты в игре!</b>\n\n` +
-                `📍 <b>Важные правила:</b>\n` +
-                `• <b>Отмена и перенос:</b> Возможны только за <b>36 часов</b> до начала.\n` +
-                `• <b>Атмосфера:</b> Мы за уважение и классный вайб. 🥂\n` +
-                `• <b>Локация:</b> Адрес и инструкция придут за <b>3 часа</b> до начала игры.\n\n` +
-                `Напоминаем, что еда и напитки оплачиваются отдельно. До встречи! 😎`
-            );
+            return ctx.replyWithHTML(`🎫 <b>Оплачено FREE ваучером! Ты в игре!</b>\n\nИнструкция придет за 3 часа до начала. 🥂`);
         }
 
-        // 5. Оплата через Stripe
+        // --- ОПЛАТА STRIPE ---
         const sessionMetadata: any = { telegramId: ctx.from!.id.toString(), eventId: eid.toString() };
         let discounts = [];
-        
         if (activeVoucher?.status === 'approved_10') {
             discounts = [{ coupon: STRIPE_COUPON_ID }];
-            sessionMetadata.voucherId = activeVoucher.id.toString(); // Привет, Ханна Gemini! ❤️
+            sessionMetadata.voucherId = activeVoucher.id.toString();
         }
 
         const stripeSession = await stripe.checkout.sessions.create({
@@ -1451,21 +1439,15 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
             cancel_url: `https://t.me/${ctx.botInfo.username}`,
         });
 
-        // 1. Сначала определяем базовую цену игры
         let finalPrice = event.type.includes('review') ? 25 : 50;
+        if (activeVoucher?.status === 'approved_10' && !event.type.includes('review')) finalPrice = 40;
 
-// 2. Если есть ваучер на -10 PLN, вычитаем его (только для обычных игр, например)
-        if (activeVoucher?.status === 'approved_10' && !event.type.includes('review')) {
-            finalPrice = 40;
-        }
-
-// 3. Отправляем сообщение с правильной цифрой
         await ctx.reply(
-            `К оплате: ${finalPrice} PLN, скорее нажимай оплатить, чтобы найти своих! 🥂`, 
+            `К оплате: ${finalPrice} PLN. Скорее нажимай оплатить, чтобы найти своих! 🥂`, 
             Markup.inlineKeyboard([
                 [Markup.button.url('💸 Оплатить (Apple/Google Pay, BLIK...)', stripeSession.url!)], 
                 [Markup.button.callback('✅ Я оплатил', `confirm_pay_${eid}`)]
-          ])
+            ])
         );
 
     } catch (e) { 
@@ -1813,6 +1795,30 @@ bot.command('reschedule', async (ctx) => {
     }
 });
 
+bot.command('set_games', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    const parts = ctx.message.text.split(' ');
+    
+    if (parts.length < 3) return ctx.reply('Используй: /set_games [TG_ID] [Кол-во]');
+
+    const targetTgId = parseInt(parts[1]);
+    const count = parseInt(parts[2]);
+
+    try {
+        const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, targetTgId) });
+        if (!user) return ctx.reply('❌ Юзер не найден в базе.');
+
+        await db.update(schema.users)
+            .set({ gamesPlayed: count })
+            .where(eq(schema.users.id, user.id));
+
+        await ctx.reply(`✅ Статистика игрока ${user.name} обновлена. Теперь у него ${count} сыгранных встреч.`);
+        await bot.telegram.sendMessage(targetTgId, `✨ Организатор обновил ваш статус лояльности. Теперь у вас в профиле: <b>${count} сыгранных встреч</b>.`, { parse_mode: 'HTML' });
+    } catch (e) {
+        ctx.reply('❌ Ошибка при обновлении.');
+    }
+});
+
 bot.command('load_dating', (ctx) => SD.loadDatingCommand(ctx, bot));
 
 // Команда для проверки: кто прямо сейчас находится в "мозгах" бота
@@ -1905,6 +1911,27 @@ bot.command('cancel_with_voucher', async (ctx) => {
         console.error(e);
         ctx.reply('❌ Ошибка при выполнении отмены с ваучером.');
     }
+});
+
+bot.command('check_user', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    const parts = ctx.message.text.split(' ');
+    if (parts.length < 2) return ctx.reply('Используй: /check_user [TG_ID]');
+
+    const targetTgId = parseInt(parts[1]);
+    const u = await db.query.users.findFirst({ where: eq(schema.users.telegramId, targetTgId) });
+    
+    if (!u) return ctx.reply('Юзер не найден.');
+
+    const bookings = await db.query.bookings.findMany({ where: eq(schema.bookings.userId, u.id) });
+    const paidCount = bookings.filter(b => b.paid).length;
+
+    let report = `👤 <b>Инфо: ${u.name}</b>\n`;
+    report += `📈 Игр в профиле (gamesPlayed): <b>${u.gamesPlayed || 0}</b>\n`;
+    report += `🎟 Всего оплат в базе (bookings): <b>${paidCount}</b>\n`;
+    report += `🧩 Итого для бота: <b>${(u.gamesPlayed || 0) + paidCount}</b>`;
+
+    ctx.replyWithHTML(report);
 });
 
 bot.command('kick', async (ctx) => {
