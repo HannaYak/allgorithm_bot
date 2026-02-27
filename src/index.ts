@@ -644,7 +644,7 @@ const editFactWizard = new Scenes.WizardScene(
 const addEventWizard = new Scenes.WizardScene(
   'ADD_EVENT_SCENE',
   async (ctx) => {
-    await ctx.reply('Введите тип игры (talk_toast, stock_know, speed_dating):');
+    await ctx.reply('Введите тип игры (talk_toast, stock_know, speed_dating, talk_thematic):');
     return ctx.wizard.next();
   },
   async (ctx) => {
@@ -1029,10 +1029,11 @@ bot.action('back_to_cabinet', (ctx) => ctx.deleteMessage());
 bot.hears('🎮 Игры', (ctx) => {
   ctx.reply('Выберите игру:', Markup.inlineKeyboard([
     [Markup.button.callback('Talk & Toast 🥂', 'game_talk')],
+    [Markup.button.callback('Тематический Talk 🎭', 'game_thematic')], // НОВАЯ КНОПКА
     [Markup.button.callback('Stock & Know 🧠', 'game_stock')],
     [Markup.button.callback('Быстрые свидания 💘', 'game_dating')]
   ]));
-});
+});;
 
 bot.hears('🎲 Новая тема', async (ctx) => {
   const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
@@ -1219,6 +1220,30 @@ bot.action('game_dating', (ctx) => {
   });
 });
 
+bot.action('game_thematic', (ctx) => {
+  const text = `🎭 <b>Тематический Talk and Toast</b>\n\n` +
+    `<b>Что это?</b>\n` +
+    `Стоимость: <b>35 zł</b> (Special Price!)\n` +
+    `Продолжительность: 2 часа\n\n` +
+    `Тот же уютный ужин TAlK&TOAST, но с фокусом на одну глубокую тему: отношения, карьера, психология или даже кино. Вопросы в этот вечер будут из специального пула.\n\n` +
+    `<b>Зачем идти?</b>\n` +
+    `• Погрузиться в конкретную тему с новыми людьми.\n` +
+    `• Поделиться своим опытом и услышать других.\n` +
+    `• Вечер всё так же модерирует бот, создавая идеальный вайб ✨\n\n` +
+    `🍲 <b>Важно:</b> Еда и напитки оплачиваются отдельно на месте.`;
+
+  return ctx.editMessageText(text, { 
+    parse_mode: 'HTML', 
+    ...Markup.inlineKeyboard([
+      [Markup.button.callback('📅 Посмотреть темы и даты', 'book_thematic')], 
+      [Markup.button.callback('🔙 Назад', 'back_to_games')]
+    ]) 
+  });
+});
+
+// А эта кнопка запустит функцию бронирования, которую мы уже прописали
+bot.action('book_thematic', async (ctx) => bookGame(ctx, 'talk_thematic'));
+
 bot.action('book_talk', async (ctx) => bookGame(ctx, 'talk_toast'));
 bot.action('book_stock', async (ctx) => bookGame(ctx, 'stock_know'));
 bot.action('book_dating', async (ctx) => bookGame(ctx, 'speed_dating'));
@@ -1288,7 +1313,15 @@ bot.action(/cv_(.+)_(.+)/, async (ctx) => {
   );
 }); // <--- Теперь функция закрыта правильно здесь// <-- Теперь функция закрыта правильно
 
-bot.action('back_to_games', (ctx) => { ctx.deleteMessage(); ctx.reply('Выберите игру:', Markup.inlineKeyboard([[Markup.button.callback('Talk & Toast 🥂', 'game_talk')], [Markup.button.callback('Stock & Know 🧠', 'game_stock')], [Markup.button.callback('Fast Dates 💘', 'game_dating')]])); });
+bot.action('back_to_games', (ctx) => { 
+  ctx.deleteMessage(); 
+  ctx.reply('Выберите игру:', Markup.inlineKeyboard([
+    [Markup.button.callback('Talk & Toast 🥂', 'game_talk')], 
+    [Markup.button.callback('Тематический Talk 🎭', 'game_thematic')], // И ТУТ
+    [Markup.button.callback('Stock & Know 🧠', 'game_stock')], 
+    [Markup.button.callback('Быстрые свидания 💘', 'game_dating')]
+  ])); 
+});
 
 bot.action('my_games', async (ctx) => {
     const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
