@@ -44,7 +44,8 @@ const GAME_PRICES: Record<string, string> = {
   'talk_toast': 'price_1T427MHhXyjuCWwf7CK0DvCA', 
   'talk_thematic': 'price_1T427MHhXyjuCWwf7CK0DvCA',
   'stock_know': 'price_1SUTkoHhXyjuCWwfxD89YIpP',
-  'speed_dating': 'price_1SUTlVHhXyjuCWwfU1IzNMlf',
+  'speed_dating_25_35': 'price_1SUTlVHhXyjuCWwfU1IzNMlf', // ID товара на 50 PLN
+  'speed_dating_35_45': 'price_1SUTlVHhXyjuCWwfU1IzNMlf',
   'talk_toast_review': 'price_1SiDMGHhXyjuCWwfzysRSphU',
   'stock_know_review': 'price_1SiDKoHhXyjuCWwfwg24Y7mF',
 };
@@ -55,7 +56,8 @@ const PROCESSED_AUTO_ACTIONS = new Set<string>();
 const BEAUTY_NAMES: Record<string, string> = {
   'talk_toast': 'Talk & Toast 🥂',
   'stock_know': 'Stock & Know 🧠',
-  'speed_dating': 'Быстрые свидания 💘',
+  'speed_dating_25_35': 'Speed Dating (25-35 лет) 💘',
+  'speed_dating_35_45': 'Speed Dating (35-45 лет) 💘',
   'talk_thematic': 'Тематический ужин 🎭',
   'talk_toast_review': 'Talk & Toast 🎥 (со съёмкой)',
   'stock_know_review': 'Stock & Know 🎥 (со съёмкой)'
@@ -644,7 +646,7 @@ const editFactWizard = new Scenes.WizardScene(
 const addEventWizard = new Scenes.WizardScene(
   'ADD_EVENT_SCENE',
   async (ctx) => {
-    await ctx.reply('Введите тип игры (talk_toast, stock_know, speed_dating, talk_thematic):');
+    await ctx.reply('Введите тип игры (talk_toast, stock_know, speed_dating, talk_thematic, speed_dating_25_35, speed_dating_35_45):');
     return ctx.wizard.next();
   },
   async (ctx) => {
@@ -1160,7 +1162,7 @@ bot.hears('🆘 Помощь', (ctx) => {
 bot.action('game_talk', (ctx) => {
   const text = `🥂 <b>Talk and Toast</b>\n\n` +
     `<b>Что это?</b>\n` +
-    `Стоимость: 50 zł\n` +
+    `Стоимость: 35 zł\n` +
     `Продолжительность: 2 часа\n\n` +
     `Это не свидания и не нетворкинг — это лёгкая, дружеская атмосфера, где каждый чувствует себя комфортно и непринуждённо ✨\n\n` +
     `<b>Как это работает?</b>\n` +
@@ -1251,7 +1253,11 @@ bot.action('book_dating', async (ctx) => bookGame(ctx, 'speed_dating'));
 async function bookGame(ctx: any, type: string) {
   const events = await db.query.events.findMany({ 
     where: and(
-      or(eq(schema.events.type, type), eq(schema.events.type, `${type}_review`)), 
+      or(
+        eq(schema.events.type, 'speed_dating'), // на всякий случай старый тип
+        eq(schema.events.type, 'speed_dating_25_35'),
+        eq(schema.events.type, 'speed_dating_35_45')
+      ), 
       eq(schema.events.isActive, true)
     ) 
   });
@@ -1269,6 +1275,22 @@ async function bookGame(ctx: any, type: string) {
         ...Markup.inlineKeyboard([...buttons, [Markup.button.callback('🔙 Назад', 'back_to_games')]]) 
     });
   }
+
+  const buttons = events.map(e => {
+    // Определяем красивую подпись возраста
+    let ageLabel = "";
+    if (e.type.includes('25')) ageLabel = " (25-35 лет)";
+    if (e.type.includes('35')) ageLabel = " (35-45 лет)";
+
+    const label = `📅 ${e.dateString}${ageLabel}`;
+    return [Markup.button.callback(`${label} (${e.currentPlayers}/${e.maxPlayers})`, `pay_event_${e.id}`)];
+  });
+
+  ctx.editMessageText('🔥 <b>Выбери свою возрастную группу и дату:</b>', {
+    parse_mode: 'HTML',
+    ...Markup.inlineKeyboard([...buttons, [Markup.button.callback('🔙 Назад', 'back_to_games')]])
+  });
+}
 
   if (type === 'talk_toast') {
     const uniqueTitles = new Set<string>(); 
@@ -1442,7 +1464,7 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
         if (!event) return;
 
         // 2. ГЕНДЕРНЫЙ КОНТРОЛЬ (для свиданий)
-        if (event.type === 'speed_dating') {
+        if (event.type.startsWith('speed_dating')) {
             const bookings = await db.query.bookings.findMany({ 
                 where: and(eq(schema.bookings.eventId, eid), eq(schema.bookings.paid, true)) 
             });
