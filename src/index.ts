@@ -1251,10 +1251,12 @@ bot.action('book_stock', async (ctx) => bookGame(ctx, 'stock_know'));
 bot.action('book_dating', async (ctx) => bookGame(ctx, 'speed_dating'));
 
 async function bookGame(ctx: any, type: string) {
+  // 1. УМНЫЙ ПОИСК: Ищем ивенты нужного типа + их review-версии + группы свиданий
   const events = await db.query.events.findMany({ 
     where: and(
       or(
-        eq(schema.events.type, 'speed_dating'), // на всякий случай старый тип
+        eq(schema.events.type, type),
+        eq(schema.events.type, `${type}_review`),
         eq(schema.events.type, 'speed_dating_25_35'),
         eq(schema.events.type, 'speed_dating_35_45')
       ), 
@@ -1262,51 +1264,49 @@ async function bookGame(ctx: any, type: string) {
     ) 
   });
 
-  if (events.length === 0) return ctx.reply(`Расписание формируется!`);
+  if (events.length === 0) return ctx.reply(`Расписание формируется! ✨`);
 
-  // ЕСЛИ ТЕМАТИЧЕСКИЙ — ПРОПУСКАЕМ ВЫБОР КУХНИ
+  // 2. ЛОГИКА ДЛЯ ТЕМАТИЧЕСКОГО ТАК&ТОСТ (Пропускаем кухни)
   if (type === 'talk_thematic') {
-    const buttons = events.map(e => {
+    const thematicButtons = events.map(e => {
       const { title } = parseEventDesc(e.description);
       return [Markup.button.callback(`📅 ${e.dateString} — ТЕМА: ${title}`, `pay_event_${e.id}`)];
     });
     return ctx.editMessageText('🎯 <b>Выберите тему и дату:</b>', { 
         parse_mode: 'HTML', 
-        ...Markup.inlineKeyboard([...buttons, [Markup.button.callback('🔙 Назад', 'back_to_games')]]) 
+        ...Markup.inlineKeyboard([...thematicButtons, [Markup.button.callback('🔙 Назад', 'back_to_games')]]) 
     });
   }
 
-  const buttons = events.map(e => {
-    // Определяем красивую подпись возраста
+  // 3. ЛОГИКА ДЛЯ ОБЫЧНОГО ТАК&ТОСТ (С выбором кухни)
+  if (type === 'talk_toast') {
+    const uniqueTitles = new Set<string>(); 
+    events.forEach(e => uniqueTitles.add(parseEventDesc(e.description).title));
+    const kitchenBtns = Array.from(uniqueTitles).map(t => [Markup.button.callback(t, `cv_${TYPE_MAP[type]}_${encodeCat(t)}`)]);
+    return ctx.editMessageText('Выбери направление кухни:', { 
+        parse_mode: 'HTML', 
+        ...Markup.inlineKeyboard([...kitchenBtns, [Markup.button.callback('🔙 Назад', 'back_to_games')]]) 
+    });
+  }
+
+  // 4. ЛОГИКА ДЛЯ СВИДАНИЙ (С возрастными метками) И ОСТАЛЬНЫХ ИГР
+  const finalButtons = events.map(e => {
     let ageLabel = "";
     if (e.type.includes('25')) ageLabel = " (25-35 лет)";
     if (e.type.includes('35')) ageLabel = " (35-45 лет)";
 
-    const label = `📅 ${e.dateString}${ageLabel}`;
-    return [Markup.button.callback(`${label} (${e.currentPlayers}/${e.maxPlayers})`, `pay_event_${e.id}`)];
-  });
-
-  ctx.editMessageText('🔥 <b>Выбери свою возрастную группу и дату:</b>', {
-    parse_mode: 'HTML',
-    ...Markup.inlineKeyboard([...buttons, [Markup.button.callback('🔙 Назад', 'back_to_games')]])
-  });
-}
-
-  if (type === 'talk_toast') {
-    const uniqueTitles = new Set<string>(); 
-    events.forEach(e => uniqueTitles.add(parseEventDesc(e.description).title));
-    const btns = Array.from(uniqueTitles).map(t => [Markup.button.callback(t, `cv_${TYPE_MAP[type]}_${encodeCat(t)}`)]);
-    return ctx.editMessageText('Выбери направление кухни:', { parse_mode: 'HTML', ...Markup.inlineKeyboard([...btns, [Markup.button.callback('🔙', 'back_to_games')]]) });
-  }
-
-  const buttons = events.map(e => {
     const isReview = e.type.includes('review');
-    const label = isReview ? `🎥 ${e.dateString} (-50% ЗА ОБЗОР)` : `📅 ${e.dateString}`;
+    const label = isReview ? `🎥 ${e.dateString}${ageLabel} (-50% ЗА ОБЗОР)` : `📅 ${e.dateString}${ageLabel}`;
     return [Markup.button.callback(`${label} (${e.currentPlayers}/${e.maxPlayers})`, `pay_event_${e.id}`)];
   });
 
-  ctx.editMessageText('Выбери дату:', Markup.inlineKeyboard([...buttons, [Markup.button.callback('🔙 Назад', 'back_to_games')]]));
-}
+  const headerText = type.includes('dating') ? '🔥 <b>Выбери возрастную группу:</b>' : 'Выбери дату:';
+
+  return ctx.editMessageText(headerText, {
+    parse_mode: 'HTML',
+    ...Markup.inlineKeyboard([...finalButtons, [Markup.button.callback('🔙 Назад', 'back_to_games')]])
+  });
+} // <--- Вот здесь функция ЗАКРЫВАЕТСЯ. И больше никаких скобок в середине!
 
 bot.action(/cv_(.+)_(.+)/, async (ctx) => {
  const type = REV_TYPE_MAP[ctx.match[1]]; 
