@@ -1324,25 +1324,24 @@ bot.hears('🆘 Помощь', (ctx) => {
 
 // --- 8. ЛОГИКА ИГР ---
 
-bot.action('game_talk', (ctx) => {
+// --- 8. ЛОГИКА ИГР (ЧИСТАЯ ВЕРСИЯ БЕЗ ДУБЛЕЙ) ---
+
+bot.action('game_talk', async (ctx) => {
+  await ctx.deleteMessage().catch(() => {}); // Удаляем меню, чтобы не плодить сообщения
   const text = `🥂 <b>Talk and Toast</b>\n\n` +
     `<b>Что это?</b>\n` +
-    `Стоимость: 35 zł\n` +
-    `Продолжительность: 2 часа\n\n` +
-    `Это не свидания и не нетворкинг — это лёгкая, дружеская атмосфера, где каждый чувствует себя комфортно и непринуждённо ✨\n\n` +
+    `Стоимость: 35 zł | 2 часа\n\n` +
+    `Это лёгкая атмосфера, где каждый чувствует себя комфортно ✨\n\n` +
     `<b>Как это работает?</b>\n` +
-    `В этом формате <b>нет физического ведущего</b> — весь вечер модерирует наш бот. Это позволяет создать максимально естественную атмосферу без лишнего пафоса.\n\n` +
-    `В первые минуты встречи бот автоматически вышлет Вам первую тему для обсуждения. Как только вы будете готовы двигаться дальше, получить следующую глубокую тему можно нажав на клавишу <b>«Новая тема»</b> 🎲\n\n` +
+    `В этом формате <b>нет физического ведущего</b> — вечер модерирует наш бот. Это создаёт естественную атмосферу.\n\n` +
+    `Бот вышлет первую тему автоматически. Как только будете готовы двигаться дальше, жмите <b>«Новая тема»</b> 🎲\n\n` +
     `<b>Зачем это?</b>\n` +
-    `• Вы сможете просто хорошо провести вечер в интересной компании 🍷\n` +
-    `• Найти новых друзей, деловых партнёров и даже вторую половинку 🤝\n` +
-    `• Открыть для себя новый ресторан и попробовать необычные блюда 🍝\n\n` +
-    `<b>Почему стоит пойти?</b>\n` +
-    `• Новые знакомства с людьми, с которыми вы бы никогда не встретились 🌍\n` +
-    `• Вам не нужно ничего организовывать — бот-модератор сделает всё за вас! 😎\n\n` +
-    `🍲 <b>Важно:</b> Еда и напитки оплачиваются отдельно по меню ресторана. При покупке билета на игру со съемкой «🎥» (скидка -50%), вы даете согласие на использование вашего изображения в соцсетях.`;
+    `• Провести вечер в интересной компании 🍷\n` +
+    `• Найти друзей или вторую половинку 🤝\n` +
+    `• Открыть для себя новый ресторан 🍝\n\n` +
+    `🍲 <b>Важно:</b> Еда и напитки оплачиваются отдельно. При покупке билета на игру со съемкой «🎥» (скидка -50%), вы даете согласие на использование вашего изображения.`;
 
-return ctx.replyWithPhoto('AgACAgIAAxkBAAJsRGmoFX63eK46h-x3AAHfWeMpkr2TGgACViRrG7zLQEkaecNIGDJ2ZAEAAwIAA3kAAzoE', { 
+  return ctx.replyWithPhoto('AgACAgIAAxkBAAJsRGmoFX63eK46h-x3AAHfWeMpkr2TGgACViRrG7zLQEkaecNIGDJ2ZAEAAwIAA3kAAzoE', { 
     caption: text,
     parse_mode: 'HTML', 
     ...Markup.inlineKeyboard([
@@ -1352,17 +1351,14 @@ return ctx.replyWithPhoto('AgACAgIAAxkBAAJsRGmoFX63eK46h-x3AAHfWeMpkr2TGgACViRrG
   });
 });
 
-bot.action('game_stock', (ctx) => {
+bot.action('game_stock', async (ctx) => {
+  await ctx.deleteMessage().catch(() => {}); // Удаляем меню
   const text = `🧠 <b>Stock and Know</b>\n\n` +
-    `<b>Что это?</b>\n\n` + 
-    `Стоимость: 50 zł\n` +
-    `Продолжительность: 2 часа\n\n` +
-    `Интеллектуальная игра, где ставят на знания! 🎓 Здесь важно не только содержание вашего багажа знаний, но и умение уверенно делать ставки. Это остроумная битва, где сплетены искусство блефа и эрудиция 🎭\n\n` +
-    `<b>Зачем это?</b>\n• Шанс найти новые знакомства без фильтров 👀\n• Незабываемые эмоции от командной игры 🔥\n• Проверка знаний, удачи и остроумия 🍀\n• Расширение кругозора 🌍\n\n` +
-    `<b>Как работает?</b>\nВ начале раунда все делают обязательную ставку 💰. Ведущий задает вопрос, вы записываете ответ (менять нельзя!). Затем, в зависимости от азарта, вы можете повышать ставки (даже ва-банк!). Ведущий дает 3 подсказки 💡 — после каждой можно менять ставку. Побеждает тот, кто ближе всех к истине!\n\n` +
-    `⏳ <b>Время:</b> 2 часа\n👥 <b>Игроков:</b> до 8\n🍲 <b>Меню:</b> Еда и напитки оплачиваются отдельно. При покупке билета на игру со съемкой «🎥» (скидка -50%), вы даете согласие на использование вашего изображения в соцсетях.`;
+    `Интеллектуальная игра, где ставят на знания! 🎓 Здесь важно умение уверенно делать ставки и искусство блефа.\n\n` +
+    `<b>Как работает?</b>\nВ начале раунда все делают ставку 💰. Ведущий задает вопрос, вы пишете ответ. Можно повышать ставки после подсказок 💡. Побеждает тот, кто ближе всех к истине!\n\n` +
+    `⏳ <b>Время:</b> 2 часа | 👥 <b>Игроков:</b> до 8\n🍲 <b>Меню:</b> Оплачивается отдельно.`;
   
-return ctx.replyWithPhoto('AgACAgIAAxkBAAJsUGmoFtbbg9aMyA-abyEBurU0cEywAAJzJGsbvMtASQJe0v_wl_aHAQADAgADeQADOgQ', { 
+  return ctx.replyWithPhoto('AgACAgIAAxkBAAJsUGmoFtbbg9aMyA-abyEBurU0cEywAAJzJGsbvMtASQJe0v_wl_aHAQADAgADeQADOgQ', { 
     caption: text,
     parse_mode: 'HTML', 
     ...Markup.inlineKeyboard([
@@ -1372,15 +1368,14 @@ return ctx.replyWithPhoto('AgACAgIAAxkBAAJsUGmoFtbbg9aMyA-abyEBurU0cEywAAJzJGsbv
   });
 });
 
-bot.action('game_dating', (ctx) => {
+bot.action('game_dating', async (ctx) => {
+  await ctx.deleteMessage().catch(() => {}); // Удаляем меню
   const text = `💘 <b>Быстрые свидания</b>\n\n` +
-    `Стоимость: 50 zł\n` +
-    `Продолжительность: 1 час 15 минут\n\n` +
-    `<b>Что это?</b>\n🗣️ 12 человек (6Ж + 6М), 6 уютных столиков и 10-минутные раунды. Бот сам выдаст номера, запустит таймер и перетасует пары 📲. Тебе нужно только отмечать симпатии в карточке — если мэтч, бот пришлёт контакты! ✨\n\n` +
-    `<b>Зачем это?</b>\n• 🚀 <b>Шесть шансов</b> на знакомство за час.\n• 💬 <b>Без неловких моментов</b> — бот сам подскажет тему.\n• 🎯 <b>Только мэтчи:</b> контакты только при взаимной симпатии.\n• 🛡️ <b>Безопасно:</b> никто не узнает твой номер без твоего «Да».\n\n` +
-    `<b>Как это работает?</b>\nБот присваивает каждому номер 🎫. Каждые 10 минут пары меняются 🔄. Отмечай симпатии в боте ❤️. Если чувства взаимны, я соединю вас после игры! 🥂\n\n`;
+    `🗣️ 12 человек, 6 столиков и 10-минутные раунды. Бот сам выдаст номера, запустит таймер и перетасует пары 📲.\n\n` +
+    `<b>Преимущества:</b>\n• 🚀 <b>6 шансов</b> на знакомство за час.\n• 💬 <b>Без пауз</b> — бот подскажет тему.\n• 🎯 <b>Только мэтчи:</b> контакты только при взаимности.\n\n` +
+    `🥂 <b>Стоимость:</b> 50 zł | <b>Время:</b> 1 ч 15 мин`;
     
-return ctx.replyWithPhoto('AgACAgIAAxkBAAJsVWmoFu2cuiFaxNIpnbhFctKuaikYAAJ0JGsbvMtASZReRS5fzrhPAQADAgADeQADOgQ', { 
+  return ctx.replyWithPhoto('AgACAgIAAxkBAAJsVWmoFu2cuiFaxNIpnbhFctKuaikYAAJ0JGsbvMtASZReRS5fzrhPAQADAgADeQADOgQ', { 
     caption: text,
     parse_mode: 'HTML', 
     ...Markup.inlineKeyboard([
@@ -1390,26 +1385,32 @@ return ctx.replyWithPhoto('AgACAgIAAxkBAAJsVWmoFu2cuiFaxNIpnbhFctKuaikYAAJ0JGsbv
   });
 });
 
-bot.action('game_thematic', (ctx) => {
+bot.action('game_thematic', async (ctx) => {
+  await ctx.deleteMessage().catch(() => {}); // Удаляем меню
   const text = `🎭 <b>Тематический Talk and Toast</b>\n\n` +
-    `<b>Что это?</b>\n` +
-    `Стоимость: <b>35 zł</b> (Special Price!)\n` +
-    `Продолжительность: 2 часа\n\n` +
-    `Тот же уютный ужин TAlK&TOAST, но с фокусом на одну глубокую тему: отношения, карьера, психология или даже кино. Вопросы в этот вечер будут из специального пула.\n\n` +
-    `<b>Зачем идти?</b>\n` +
-    `• Погрузиться в конкретную тему с новыми людьми.\n` +
-    `• Поделиться своим опытом и услышать других.\n` +
-    `• Вечер всё так же модерирует бот, создавая идеальный вайб ✨\n\n` +
-    `🍲 <b>Важно:</b> Еда и напитки оплачиваются отдельно на месте.`;
+    `Тот же уютный ужин, но с фокусом на одну глубокую тему: отношения, карьера, психология или кино. Вопросы в этот вечер будут из специального пула.\n\n` +
+    `<b>Зачем идти?</b>\n• Погрузиться в тему с новыми людьми.\n• Вечер всё так же модерирует бот, создавая идеальный вайб ✨\n\n` +
+    `💰 <b>Цена:</b> 35 zł (Special!)`;
 
-return ctx.replyWithPhoto('AgACAgIAAxkBAAJsWGmoFvsm3BqPsINmVcp2zenyXWFhAAJ1JGsbvMtASX1oH3lkXAGfAQADAgADeQADOgQ', { 
+  return ctx.replyWithPhoto('AgACAgIAAxkBAAJsWGmoFvsm3BqPsINmVcp2zenyXWFhAAJ1JGsbvMtASX1oH3lkXAGfAQADAgADeQADOgQ', { 
     caption: text,
     parse_mode: 'HTML', 
     ...Markup.inlineKeyboard([
-      [Markup.button.callback('📅 Посмотреть темы и даты', 'book_thematic')], 
+      [Markup.button.callback('📅 Посмотреть даты', 'book_thematic')], 
       [Markup.button.callback('🔙 Назад', 'back_to_games')]
     ]) 
   });
+});
+
+// ОБНОВЛЕННАЯ КНОПКА НАЗАД
+bot.action('back_to_games', async (ctx) => { 
+  await ctx.deleteMessage().catch(() => {}); // Удаляем старое (фото или меню)
+  return ctx.reply('Выберите игру:', Markup.inlineKeyboard([
+    [Markup.button.callback('Talk & Toast 🥂', 'game_talk')], 
+    [Markup.button.callback('Тематический Talk 🎭', 'game_thematic')], 
+    [Markup.button.callback('Stock & Know 🧠', 'game_stock')], 
+    [Markup.button.callback('Быстрые свидания 💘', 'game_dating')]
+  ])); 
 });
 
 // А эта кнопка запустит функцию бронирования, которую мы уже прописали
@@ -1508,15 +1509,6 @@ bot.action(/cv_(.+)_(.+)/, async (ctx) => {
   );
 }); // <--- Теперь функция закрыта правильно здесь// <-- Теперь функция закрыта правильно
 
-bot.action('back_to_games', (ctx) => { 
-  ctx.deleteMessage(); 
-  ctx.reply('Выберите игру:', Markup.inlineKeyboard([
-    [Markup.button.callback('Talk & Toast 🥂', 'game_talk')], 
-    [Markup.button.callback('Тематический Talk 🎭', 'game_thematic')], // И ТУТ
-    [Markup.button.callback('Stock & Know 🧠', 'game_stock')], 
-    [Markup.button.callback('Быстрые свидания 💘', 'game_dating')]
-  ])); 
-});
 
 bot.action('my_games', async (ctx) => {
     const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
