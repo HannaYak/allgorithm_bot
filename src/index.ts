@@ -2633,6 +2633,17 @@ async function handleSuccessfulPayment(session: any) {
     }
   }
 
+  // ВРЕМЕННЫЙ ПОМОЩНИК ДЛЯ ПОЛУЧЕНИЯ file_id
+bot.on('photo', async (ctx) => {
+    // Берем самое качественное фото из массива
+    const photo = ctx.message.photo[ctx.message.photo.length - 1];
+    const fileId = photo.file_id;
+    
+    await ctx.reply(`Вот ID твоего фото (скопируй его):`);
+    await ctx.reply(`<code>${fileId}</code>`, { parse_mode: 'HTML' });
+    console.log(`Получен file_id: ${fileId}`);
+});
+
 // 6. Пишем юзеру радостную весть
  // 6. Пишем юзеру радостную весть
   // 6. Пишем юзеру радостную весть
