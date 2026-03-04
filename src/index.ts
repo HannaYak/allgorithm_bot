@@ -1151,26 +1151,31 @@ bot.hears('👤 Личный кабинет', async (ctx) => {
 
 // И обработчик для новой кнопки:
 bot.action('start_edit_fact', (ctx) => { ctx.deleteMessage(); ctx.scene.enter('EDIT_FACT_SCENE'); });
-
 bot.action('referral_info', async (ctx) => {
     const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
     if (!user) return;
+
+    // 1. Удаляем старое текстовое меню, чтобы прислать красивый флаер
+    await ctx.deleteMessage().catch(() => {});
+
     const refLink = `https://t.me/${ctx.botInfo.username}?start=ref_${user.id}`;
     
     const msg = `🤝 <b>Скидка обоим!</b>\n\n` +
-                `• Друг получает <b>-10 PLN</b> на первый билет.\n` +
-                `• Ты получаешь <b>-10 PLN</b> после его первой игры!\n\n` +
-                `Твоя ссылка: <code>${refLink}</code>\n\n` +
-                `<i>Нажми кнопку ниже, чтобы отправить приглашение другу прямо в Telegram!</i> 👇`;
+                `• Твой друг получит <b>-10 PLN</b> на первый билет.\n` +
+                `• Ты получишь <b>-10 PLN</b> на баланс сразу после его первой игры!\n\n` +
+                `Твоя личная ссылка: <code>${refLink}</code>\n\n` +
+                `<i>Нажми кнопку ниже, чтобы отправить этот стильный флаер другу!</i> 👇`;
 
     const shareText = `Привет! Иду на крутую игру в клуб "Алгоритм", присоединяйся! По этой ссылке получишь -10 PLN на первый билет: ${refLink}`;
 
-    await ctx.editMessageText(msg, { 
-        parse_mode: 'HTML', 
+    // 2. Отправляем флаер с подписью и кнопками
+    return ctx.replyWithPhoto('AgACAgIAAxkBAAEbulxpqF13xc1Ll6oTFzs2lLFSsCSTrgACbhxrGyHmQUmzdlJFv-CV-QEAAwIAA3kAAzoE', {
+        caption: msg,
+        parse_mode: 'HTML',
         ...Markup.inlineKeyboard([
-            [Markup.button.url('🚀 Переслать другу', `https://t.me/share/url?url=${encodeURIComponent(shareText)}`)],
-            [Markup.button.callback('⬅️ Назад', 'back_to_cabinet')]
-        ]) 
+            [Markup.button.url('🚀 Переслать приглашение', `https://t.me/share/url?url=${encodeURIComponent(shareText)}`)],
+            [Markup.button.callback('⬅️ Назад в кабинет', 'back_to_cabinet')]
+        ])
     });
 });
 
