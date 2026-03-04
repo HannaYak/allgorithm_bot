@@ -1435,13 +1435,15 @@ bot.action('book_stock', async (ctx) => bookGame(ctx, 'stock_know'));
 bot.action('book_dating', async (ctx) => bookGame(ctx, 'speed_dating'));
 
 async function bookGame(ctx: any, type: string) {
-  // 1. УМНЫЙ ПОИСК: Ищем строго то, что попросил юзер
+  // 1. УДАЛЯЕМ СООБЩЕНИЕ С ФОТО (Чтобы не было ошибки редактирования)
+  await ctx.deleteMessage().catch(() => {});
+
+  // 2. УМНЫЙ ПОИСК (Твоя логика поиска ревью и подтипов свиданий)
   const events = await db.query.events.findMany({ 
     where: and(
       or(
         eq(schema.events.type, type),
         eq(schema.events.type, `${type}_review`),
-        // Если юзер нажал "Свидания", ищем только подтипы свиданий
         ...(type === 'speed_dating' ? [
             eq(schema.events.type, 'speed_dating_25_35'),
             eq(schema.events.type, 'speed_dating_35_45')
@@ -1453,33 +1455,31 @@ async function bookGame(ctx: any, type: string) {
 
   if (events.length === 0) return ctx.reply(`Расписание формируется! ✨`);
 
-  // 2. ЛОГИКА ДЛЯ ТЕМАТИЧЕСКОГО (Пропуск кухни)
+  // 3. ЛОГИКА ДЛЯ ТЕМАТИЧЕСКОГО (Пропуск кухни)
   if (type === 'talk_thematic') {
     const thematicButtons = events.map(e => {
       const { title } = parseEventDesc(e.description);
       return [Markup.button.callback(`📅 ${e.dateString} — ТЕМА: ${title}`, `pay_event_${e.id}`)];
     });
-    return ctx.editMessageText('🎯 <b>Выберите тему и дату:</b>', { 
-        parse_mode: 'HTML', 
-        ...Markup.inlineKeyboard([...thematicButtons, [Markup.button.callback('🔙 Назад', 'back_to_games')]]) 
-    });
+    // Используем reply, так как старое сообщение удалено
+    return ctx.replyWithHTML('🎯 <b>Выберите тему и дату:</b>', 
+      Markup.inlineKeyboard([...thematicButtons, [Markup.button.callback('🔙 Назад', 'back_to_games')]])
+    );
   }
 
-  // 3. ЛОГИКА ДЛЯ ОБЫЧНОГО TNT (Выбор кухни)
+  // 4. ЛОГИКА ДЛЯ ОБЫЧНОГО TNT (Выбор кухни)
   if (type === 'talk_toast') {
     const uniqueTitles = new Set<string>(); 
     events.forEach(e => uniqueTitles.add(parseEventDesc(e.description).title));
     const kitchenBtns = Array.from(uniqueTitles).map(t => [Markup.button.callback(t, `cv_${TYPE_MAP[type]}_${encodeCat(t)}`)]);
-    return ctx.editMessageText('Выбери направление кухни:', { 
-        parse_mode: 'HTML', 
-        ...Markup.inlineKeyboard([...kitchenBtns, [Markup.button.callback('🔙 Назад', 'back_to_games')]]) 
-    });
+    return ctx.replyWithHTML('<b>Выбери направление кухни:</b>', 
+      Markup.inlineKeyboard([...kitchenBtns, [Markup.button.callback('🔙 Назад', 'back_to_games')]])
+    );
   }
 
-  // 4. ЛОГИКА ДЛЯ СВИДАНИЙ И STOCK & KNOW
+  // 5. ЛОГИКА ДЛЯ СВИДАНИЙ И STOCK & KNOW
   const finalButtons = events.map(e => {
     let ageLabel = "";
-    // ИСПОЛЬЗУЕМ СТРОГОЕ СРАВНЕНИЕ, чтобы 25 не превращалось в 35
     if (e.type === 'speed_dating_25_35') ageLabel = " (25-35 лет)";
     else if (e.type === 'speed_dating_35_45') ageLabel = " (35-45 лет)";
 
@@ -1488,12 +1488,11 @@ async function bookGame(ctx: any, type: string) {
     return [Markup.button.callback(`${label} (${e.currentPlayers}/${e.maxPlayers})`, `pay_event_${e.id}`)];
   });
 
-  const headerText = type === 'speed_dating' ? '🔥 <b>Выбери возрастную группу:</b>' : 'Выберите удобную дату:';
+  const headerText = type === 'speed_dating' ? '🔥 <b>Выбери возрастную группу:</b>' : '<b>Выберите удобную дату:</b>';
 
-  return ctx.editMessageText(headerText, {
-    parse_mode: 'HTML',
-    ...Markup.inlineKeyboard([...finalButtons, [Markup.button.callback('🔙 Назад', 'back_to_games')]])
-  });
+  return ctx.replyWithHTML(headerText, 
+    Markup.inlineKeyboard([...finalButtons, [Markup.button.callback('🔙 Назад', 'back_to_games')]])
+  );
 }
 
 bot.action(/cv_(.+)_(.+)/, async (ctx) => {
