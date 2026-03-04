@@ -1674,6 +1674,21 @@ bot.action(/confirm_pay_(\d+)/, async (ctx) => {
 
 // --- 10. ВАУЧЕРЫ (ИСПРАВЛЕННЫЕ) ---
 
+// --- ВСПОМОГАТЕЛЬНЫЙ КОД ДЛЯ ФОТО (ПОТОМ УДАЛИШЬ) ---
+bot.on('photo', async (ctx, next) => {
+    // Если ты НЕ в режиме SOS и НЕ в режиме ваучера, просто выдаем ID
+    const sess = ctx.session as any;
+    if (!sess?.waitingForSupport && !sess?.waitingForVoucher) {
+        const photo = ctx.message.photo[ctx.message.photo.length - 1];
+        await ctx.reply(`ID твоего фото:`);
+        await ctx.reply(`<code>${photo.file_id}</code>`, { parse_mode: 'HTML' });
+        return; // Останавливаем тут, чтобы не ушло в поддержку
+    }
+    return next(); // Если ждем ваучер или SOS — идем дальше
+});
+
+// ПРЯМО ПОД ЭТИМ ДОЛЖЕН ИДТИ ТВОЙ СТАРЫЙ bot.on('message', ...)
+
 bot.action('upload_voucher', (ctx) => { 
     ctx.reply('📸 Отправь фото ваучера прямо сюда, а администратор одобрит его в течение нескольких минут.'); 
     (ctx.session as any).waitingForVoucher = true; 
@@ -2633,16 +2648,7 @@ async function handleSuccessfulPayment(session: any) {
     }
   }
 
-  // ВРЕМЕННЫЙ ПОМОЩНИК ДЛЯ ПОЛУЧЕНИЯ file_id
-bot.on('photo', async (ctx) => {
-    // Берем самое качественное фото из массива
-    const photo = ctx.message.photo[ctx.message.photo.length - 1];
-    const fileId = photo.file_id;
-    
-    await ctx.reply(`Вот ID твоего фото (скопируй его):`);
-    await ctx.reply(`<code>${fileId}</code>`, { parse_mode: 'HTML' });
-    console.log(`Получен file_id: ${fileId}`);
-});
+
 
 // 6. Пишем юзеру радостную весть
  // 6. Пишем юзеру радостную весть
