@@ -661,8 +661,7 @@ const PENDING_PAYMENTS = new Map<string, { time: DateTime, notified: boolean }>(
 // Храним использованные вопросы для каждой игры, чтобы не повторяться
 const USED_TOPICS_BY_EVENT = new Map<number, Set<string>>();
 
-// История спикеров для Talk & Toast
-const SPEAKERS_HISTORY: Record<number, number> = {};
+
 
 
 const STOCK_STATE = {
