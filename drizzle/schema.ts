@@ -49,3 +49,11 @@ export const vouchers = pgTable('vouchers', {
   status: text('status').default('pending'), // 'pending', 'approved', 'rejected'
   usedInEventId: integer('used_in_event_id').references(() => events.id),
 });
+
+export const secretLikes = pgTable('secret_likes', {
+  id: serial('id').primaryKey(),
+  eventId: integer('event_id').references(() => events.id),
+  userId: integer('user_id').references(() => users.id),
+  targetUserId: integer('target_user_id').references(() => users.id),
+  createdAt: timestamp('created_at').defaultNow(),
+});
