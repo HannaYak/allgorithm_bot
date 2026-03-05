@@ -8,7 +8,7 @@ import 'dotenv/config';
 import Stripe from 'stripe';
 import { DateTime } from 'luxon';
 import * as SD from './speedDating';
-
+import { users, events, bookings, vouchers, secretLikes } from '../drizzle/schema';
 
 
 // --- 1. НАСТРОЙКИ ---
@@ -657,7 +657,12 @@ async function notifyNextInWaitlist(eventId: number, eventType: string, dateStri
 
 const PENDING_PAYMENTS = new Map<string, { time: DateTime, notified: boolean }>();
 // Храним использованные вопросы для каждой конкретной игры (eventId -> Set вопросов)
+
+// Храним использованные вопросы для каждой игры, чтобы не повторяться
 const USED_TOPICS_BY_EVENT = new Map<number, Set<string>>();
+
+// История спикеров для Talk & Toast
+const SPEAKERS_HISTORY: Record<number, number> = {};
 
 
 const STOCK_STATE = {
@@ -1072,18 +1077,41 @@ async function runAutoQuiz(eventId: number) {
 
 async function autoCloseEvent(eventId: number) {
   await db.update(schema.events).set({ isActive: false }).where(eq(schema.events.id, eventId));
-  const bks = await db.query.bookings.findMany({ where: and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true)) });
+  const bks = await db.query.bookings.findMany({ 
+    where: and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true)) 
+  });
+  
   for (const b of bks) {
     const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
-    if (u) {
-      await db.update(schema.users).set({ gamesPlayed: (u.gamesPlayed || 0) + 1 }).where(eq(schema.users.id, u.id));
-      bot.telegram.sendMessage(u.telegramId, 
+    if (!u) continue;
+
+    // Твоя стандартная логика начисления баллов
+    await db.update(schema.users).set({ gamesPlayed: (u.gamesPlayed || 0) + 1 }).where(eq(schema.users.id, u.id));
+    
+    await bot.telegram.sendMessage(u.telegramId,
         `✨ <b>Это был прекрасный вечер!</b>\n\n` +
         `Надеемся, тебе было так же тепло и интересно, как и нам. В твой личный кабинет добавлен балл лояльности — напомню, что каждая 5-я встреча у нас бесплатная 🥂\n\n` +
         `Будем очень рады узнать твои впечатления. Если захочешь поделиться парой слов, просто напиши нам в <b>🆘 Помощь</b>.\n\n` +
         `Кстати, если у тебя останется вдохновение на короткий видео-отзыв (кружочек или отметка в сторис), с нас приятный бонус: <b>скидка -10 PLN</b> на следующую игру 📸\n\n` +
-        `До новой встречи в Алгоритме!`, { parse_mode: 'HTML' }
-);
+        `До новой встречи в Алгоритме!`, 
+        { parse_mode: 'HTML' }
+    ).catch(() => {});
+
+    // НОВАЯ ЛОГИКА: Кнопки для выбора тайного мэтча
+    const others = bks.filter(bk => bk.userId !== u.id);
+    const buttons = [];
+    for (const ob of others) {
+        const target = await db.query.users.findFirst({ where: eq(schema.users.id, ob.userId) });
+        if (target?.name) {
+            buttons.push(Markup.button.callback(target.name, `secret_like_${eventId}_${target.id}`));
+        }
+    }
+
+    if (buttons.length > 0) {
+        await bot.telegram.sendMessage(u.telegramId, 
+            `🤫 <b>Тайный мэтч</b>\n\nБыл ли сегодня кто-то, с кем хочется увидеться снова? (бизнес, дружба или что-то большее).\n\nВыбери людей (можно нескольких), и если это взаимно — я пришлю вам контакты! ☕️`,
+            { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons, { columns: 2 }) }
+        ).catch(() => {});
     }
   }
 }
@@ -1190,10 +1218,51 @@ bot.hears('🎮 Игры', (ctx) => {
   ]));
 });;
 
+bot.action(/secret_like_(\d+)_(\d+)/, async (ctx) => {
+  const eventId = parseInt(ctx.match[1]);
+  const targetId = parseInt(ctx.match[2]);
+  const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
+  if (!user) return;
+
+  // Проверяем, не нажимал ли уже
+  const existing = await db.query.secretLikes.findFirst({ 
+    where: and(
+        eq(schema.secretLikes.eventId, eventId), 
+        eq(schema.secretLikes.userId, user.id), 
+        eq(schema.secretLikes.targetUserId, targetId)
+    ) 
+  });
+  if (existing) return ctx.answerCbQuery("Уже в твоем списке! ❤️");
+
+  // Записываем симпатию
+  await db.insert(schema.secretLikes).values({ eventId, userId: user.id, targetUserId: targetId });
+  await ctx.answerCbQuery("Выбор принят! Тсс... 🤫");
+
+  // Проверяем взаимность
+  const mutual = await db.query.secretLikes.findFirst({ 
+    where: and(
+        eq(schema.secretLikes.eventId, eventId), 
+        eq(schema.secretLikes.userId, targetId), 
+        eq(schema.secretLikes.targetUserId, user.id)
+    ) 
+  });
+  
+  if (mutual) {
+    const target = await db.query.users.findFirst({ where: eq(schema.users.id, targetId) });
+    const matchMsg = `🎉 <b>У вас ТАЙНЫЙ МЭТЧ!</b>\n\nВы оба выбрали друг друга. Кажется, это отличный повод выпить кофе! ☕️\n\nКонтакты: @${target?.username || 'скрыто'}`;
+    await ctx.reply(matchMsg, { parse_mode: 'HTML' });
+    await bot.telegram.sendMessage(target!.telegramId, 
+        `🎉 <b>У вас ТАЙНЫЙ МЭТЧ!</b>\n\nВы оба выбрали друг друга. Контакты: @${user.username || 'скрыто'} ☕️`, 
+        { parse_mode: 'HTML' }
+    ).catch(() => {});
+  }
+});
+
 bot.hears('🎲 Новая тема', async (ctx) => {
   const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
   if (!user) return;
 
+  // 1. Ищем записи пользователя
   const myBookings = await db.query.bookings.findMany({
     where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.paid, true))
   });
@@ -1201,6 +1270,7 @@ bot.hears('🎲 Новая тема', async (ctx) => {
   let currentEvent = null;
   const nowWarsaw = DateTime.now().setZone('Europe/Warsaw');
 
+  // 2. Ищем игру, которая идет прямо сейчас (окно 4 часа)
   for (const b of myBookings) {
     const event = await db.query.events.findFirst({
       where: and(eq(schema.events.id, b.eventId), eq(schema.events.isActive, true))
@@ -1217,13 +1287,13 @@ bot.hears('🎲 Новая тема', async (ctx) => {
 
   if (!currentEvent) return ctx.reply("❌ Кнопка доступна только во время активной игры.");
 
-  // Инициализируем список использованных тем для этой конкретной игры
+  // 3. Инициализируем «память» для этой игры (чтобы темы не повторялись)
   if (!USED_TOPICS_BY_EVENT.has(currentEvent.id)) {
     USED_TOPICS_BY_EVENT.set(currentEvent.id, new Set());
   }
   const usedSet = USED_TOPICS_BY_EVENT.get(currentEvent.id)!;
 
-  // --- 1. ЛОГИКА ДЛЯ СВИДАНИЙ (Speed Dating) ---
+  // --- ЛОГИКА ДЛЯ СВИДАНИЙ (Speed Dating) ---
   if (currentEvent.type === 'speed_dating') {
     const round = SD.FAST_DATES_STATE.currentRound;
     const ps = Array.from(SD.FAST_DATES_STATE.participants.values());
@@ -1231,11 +1301,11 @@ bot.hears('🎲 Новая тема', async (ctx) => {
 
     if (!me || ps.length === 0) return ctx.reply("❌ Ошибка: Участники не загружены.");
 
-    // Фильтруем темы, чтобы не повторялись для пары в этот вечер
+    // Фильтруем темы
     const available = CONVERSATION_TOPICS.filter(t => !usedSet.has(t));
-    const pool = available.length > 0 ? available : CONVERSATION_TOPICS; // Если всё кончилось, берем заново
+    const pool = available.length > 0 ? available : CONVERSATION_TOPICS; 
     const randomTopic = pool[Math.floor(Math.random() * pool.length)];
-    usedSet.add(randomTopic); // Запоминаем
+    usedSet.add(randomTopic); 
 
     const women = ps.filter(p => p.gender.toLowerCase().includes('жен')).sort((a,b) => a.num - b.num);
     const men = ps.filter(p => p.gender.toLowerCase().includes('муж')).sort((a,b) => a.num - b.num);
@@ -1255,14 +1325,14 @@ bot.hears('🎲 Новая тема', async (ctx) => {
       await bot.telegram.sendMessage(me.id, pairMsg, { parse_mode: 'HTML', ...getMainKeyboard(true) });
       await bot.telegram.sendMessage(partner.id, pairMsg, { parse_mode: 'HTML', ...getMainKeyboard(true) });
       return ctx.reply("✅ Тема отправлена тебе и твоему собеседнику!");
+    } else {
+      return ctx.reply("❌ Собеседник не найден.");
     }
   } 
 
-  // --- 2. ЛОГИКА ДЛЯ ОБЫЧНЫХ И ТЕМАТИЧЕСКИХ ИГР (Talk & Toast) ---
+  // --- ЛОГИКА ДЛЯ ОБЫЧНЫХ И ТЕМАТИЧЕСКИХ ИГР (Talk & Toast / Thematic) ---
   else {
     const poolRaw = (currentEvent.type === 'talk_thematic') ? THEMATIC_QUESTIONS_POOL : CONVERSATION_TOPICS;
-    
-    // Фильтруем пул: убираем то, что уже озвучивали СЕГОДНЯ
     const available = poolRaw.filter(t => !usedSet.has(t));
     
     if (available.length === 0) {
@@ -1270,8 +1340,9 @@ bot.hears('🎲 Новая тема', async (ctx) => {
     }
 
     const randomTopic = available[Math.floor(Math.random() * available.length)];
-    usedSet.add(randomTopic); // Запоминаем для текущего eventId
+    usedSet.add(randomTopic); 
 
+    // Выбор спикера
     const allParticipants = await db.query.bookings.findMany({
       where: and(eq(schema.bookings.eventId, currentEvent.id), eq(schema.bookings.paid, true))
     });
