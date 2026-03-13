@@ -57,3 +57,14 @@ export const secretLikes = pgTable('secret_likes', {
   targetUserId: integer('target_user_id').references(() => users.id),
   createdAt: timestamp('created_at').defaultNow(),
 });
+
+export const promoCodes = pgTable('promo_codes', {
+  id: serial('id').primaryKey(),
+  code: text('code').notNull().unique(), // Сам код, например 'SPRING_FREE'
+  type: text('type').notNull(), // 'free' или 'discount_10'
+  maxUses: integer('max_uses').default(1), // Сколько человек могут забрать
+  currentUses: integer('current_uses').default(0),
+  expiresAt: timestamp('expires_at'), // До какой даты действует
+  eventId: integer('event_id').references(() => events.id), // Ограничение на конкретную игру
+  isActive: boolean('is_active').default(true),
+});
