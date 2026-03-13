@@ -954,7 +954,7 @@ setInterval(async () => {
         
         if (event.type === 'speed_dating') return; 
 
-        let needsTopic = (event.type.includes('talk_toast'));
+        let needsTopic = event.type.startsWith('talk_');
         let msg = `🥂 <b>Игра "${title}" начинается!</b>\n\nРады всех видеть! Представьтесь для начала друг другу (имя и ваше хобби или специальность).`;
         
         if (needsTopic) {
