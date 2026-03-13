@@ -4,9 +4,8 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "echo 'Build finished'",
-    "start": "drizzle-kit push:pg && tsx src/index.ts",
-    "generate": "drizzle-kit generate",
-    "migrate": "drizzle-kit migrate"
+    "start": "tsx src/index.ts",
+    "db:push": "drizzle-kit push:pg"
   },
   "dependencies": {
     "telegraf": "^4.16.3",
