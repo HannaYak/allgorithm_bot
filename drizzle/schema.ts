@@ -58,13 +58,14 @@ export const secretLikes = pgTable('secret_likes', {
   createdAt: timestamp('created_at').defaultNow(),
 });
 
+// В drizzle/schema.ts
 export const promoCodes = pgTable('promo_codes', {
   id: serial('id').primaryKey(),
-  code: text('code').notNull().unique(), // Сам код, например 'SPRING_FREE'
-  type: text('type').notNull(), // 'free' или 'discount_10'
-  maxUses: integer('max_uses').default(1), // Сколько человек могут забрать
+  code: text('code').notNull().unique(),
+  type: text('type').notNull(),
+  maxUses: integer('max_uses').default(1),
   currentUses: integer('current_uses').default(0),
-  expiresAt: timestamp('expires_at'), // До какой даты действует
-  eventId: integer('event_id').references(() => events.id), // Ограничение на конкретную игру
+  expiresAt: timestamp('expires_at'),
+  eventIds: text('event_ids'), // Теперь тут будет строка типа "12,15,18"
   isActive: boolean('is_active').default(true),
 });
