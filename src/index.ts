@@ -1738,15 +1738,24 @@ bot.command('quiet_address', async (ctx) => {
 
 bot.action(/pay_event_(\d+)/, async (ctx) => {
     const eid = parseInt(ctx.match[1]);
+    const event = await db.query.events.findFirst({ where: eq(schema.events.id, eid) });
     const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
-    
-    // 1. Базовые проверки
+
+    if (!event) return;
+
+    // 1. СТРОГИЙ ЗАМОК ДЛЯ ВСЕХ ИГР (Проверка лимита)
+    if (event.currentPlayers >= event.maxPlayers) {
+        return ctx.reply(`❌ Ой, пока ты заполнял анкету, места на эту игру закончились!`, 
+            Markup.inlineKeyboard([[Markup.button.callback('⏳ Встать в лист ожидания', `waitlist_add_${eid}`)]]));
+    }
+
+    // 2. Базовые проверки юзера
     if (!user?.name) {
         return ctx.scene.enter('REGISTER_SCENE', { returnToEvent: eid });
     }
 
     if (user.strangeStory === 'BANNED') {
-        return ctx.reply('❌ К сожалению, вы нарушили правила клуба Allgorithm и доступ к играм для вас ограничен. Обратитесь в Помощь.');
+        return ctx.reply('❌ К сожалению, вы нарушили правила клуба Allgorithm и доступ к играм для вас ограничен.');
     }
 
     try {
@@ -1930,45 +1939,50 @@ bot.action(/waitlist_add_(\d+)/, async (ctx) => {
 bot.action(/confirm_pay_(\d+)/, async (ctx) => {
     const eid = parseInt(ctx.match[1]);
     try {
+        // 1. Ищем оплату в Stripe
         const sessions = await stripe.checkout.sessions.list({ limit: 100 });
         const paid = sessions.data.find(s => s.metadata?.telegramId === ctx.from!.id.toString() && s.metadata?.eventId === eid.toString() && s.payment_status === 'paid');
         
         if (!paid) return ctx.reply('🔍 Оплата не найдена. Подождите 10 сек.');
-        const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
-        if (!user) return;
 
-        // ПРОВЕРКА НА ДУБЛЬ
+        // 2. Достаем данные игрока и игры ОДИН РАЗ
+        const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
+        const event = await db.query.events.findFirst({ where: eq(schema.events.id, eid) });
+
+        if (!user || !event) return ctx.reply('❌ Ошибка: данные не найдены.');
+
+        // 3. ПРОВЕРКА НА ДУБЛЬ (чтобы не начислить +1 дважды, если он жмет кнопку много раз)
         const existing = await db.query.bookings.findFirst({ 
             where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.eventId, eid)) 
         });
+        if (existing?.paid) return ctx.editMessageText('✅ Ты уже в списке участников! Инструкция придет за 3 часа.');
 
-        if (existing) {
-            return ctx.editMessageText('✅ Вы уже в списке участников! Инструкция придет за 3 часа.');
+        // 4. ЖЕСТКАЯ ПРОВЕРКА ЛИМИТА (Финальный забор)
+        if (event.currentPlayers >= event.maxPlayers) {
+             return ctx.reply("🚨 Ой! Кажется, пока шла оплата, последний слот заняли. Напиши в поддержку (SOS), мы перенесем тебя или вернем деньги!");
         }
 
+        // 5. ТОЛЬКО ТЕПЕРЬ ЗАПИСЫВАЕМ В БАЗУ
         PENDING_PAYMENTS.delete(`${user.id}`);
         await db.insert(schema.bookings).values({ userId: user.id, eventId: eid, paid: true });
-
-        const event = await db.query.events.findFirst({ where: eq(schema.events.id, eid) });
-        if (event) {
-            // Прибавляем только если это новая запись
-            await db.update(schema.events).set({ currentPlayers: (event.currentPlayers || 0) + 1 }).where(eq(schema.events.id, eid));
-        }
+        await db.update(schema.events).set({ currentPlayers: (event.currentPlayers || 0) + 1 }).where(eq(schema.events.id, eid));
         
+        // 6. ОТПРАВЛЯЕМ ПОДТВЕРЖДЕНИЕ
         await ctx.editMessageText(
             `🎉 <b>Оплата подтверждена! Ты в игре!</b>\n\n` +
             `📍 <b>Важные правила (коротко):</b>\n` +
-            `• <b>Отмена и перенос:</b> Возможны только за <b>36 часов</b> до начала. Позже сумма «сгорает».\n` +
-            `• <b>Атмосфера:</b> Мы за уважение и классный вайб. 🥂\n` +
-            `• <b>Локация:</b> Адрес и инструкция придут за <b>3 часа</b> до начала игры.\n\n` +
-            `🤫 <b>Кстати!</b> Для нашей секретной викторины нам нужна твоя история. Пожалуйста, зайди в 👤 <b>Личный кабинет</b> -> <b>Добавить историю</b> и напиши один забавный или странный факт о себе. Это сделает вечер в разы круче! ✨\n\n` +
-            `Напоминаем, что еда и напитки оплачиваются отдельно.\n\n` +
+            `• <b>Отмена и перенос:</b> Возможны только за <b>36 часов</b> до начала.\n` +
+            `• <b>Локация:</b> Адрес придет за <b>3 часа</b> до начала игры.\n\n` +
+            `🤫 <b>Кстати!</b> Напиши свою историю в кабинете для викторины! ✨\n\n` +
             `До встречи! 😎`, 
             { parse_mode: 'HTML' }
         );
-    } catch (e) { ctx.reply('Ошибка проверки.'); }
+
+    } catch (e) { 
+        console.error(e);
+        ctx.reply('Ошибка проверки платежа.'); 
+    }
 });
-  
 // --- 10. ВАУЧЕРЫ ---
 
 // --- 10. ВАУЧЕРЫ (ИСПРАВЛЕННЫЕ) ---
@@ -2877,6 +2891,9 @@ bot.on('message', async (ctx, next) => {
             
             // Важно обновить счетчик игроков в самой игре
             const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
+            if (event && event.currentPlayers >= event.maxPlayers) {
+    return ctx.reply('❌ К сожалению, на эту игру только что заняли последнее место. Промокод не использован, попробуй другую дату!');
+}
             await db.update(schema.events)
                 .set({ currentPlayers: (event?.currentPlayers || 0) + 1 })
                 .where(eq(schema.events.id, eventId));
@@ -2990,6 +3007,11 @@ async function handleSuccessfulPayment(session: any) {
   const event = await db.query.events.findFirst({ where: eq(schema.events.id, parseInt(eventId)) });
   
   if (!user || !event) return;
+  if (event.currentPlayers >= event.maxPlayers) {
+      await bot.telegram.sendMessage(user.telegramId, "🚨 Ошибка: места закончились, пока вы оплачивали. Напишите в поддержку для возврата денег.");
+      await bot.telegram.sendMessage(ADMIN_ID, `⚠️ OVERBOOKING! Юзер ${user.name} оплатил №${event.id}, но мест нет.`);
+      return; 
+  }
 
   // Если запись уже создана кнопкой "Я оплатил", выходим и ничего не прибавляем!
   const existing = await db.query.bookings.findFirst({ 
