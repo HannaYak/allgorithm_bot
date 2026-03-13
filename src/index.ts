@@ -253,6 +253,42 @@ const THEMATIC_QUESTIONS_POOL = [
 
 const SPEAKERS_HISTORY: Record<number, number> = {};
 
+// В src/index.ts
+
+const addPromoWizard = new Scenes.WizardScene(
+  'ADD_PROMO_SCENE',
+  async (ctx) => {
+    await ctx.reply('Введите промокод (одним словом, например: FREE_FRIDAY):');
+    return ctx.wizard.next();
+  },
+  async (ctx) => {
+    (ctx.wizard.state as any).code = ctx.message.text.toUpperCase();
+    await ctx.reply('ID игры, на которую действует код (или 0, если на любую):');
+    return ctx.wizard.next();
+  },
+  async (ctx) => {
+    (ctx.wizard.state as any).eventId = parseInt(ctx.message.text);
+    await ctx.reply('Количество билетов (макс. использований):');
+    return ctx.wizard.next();
+  },
+  async (ctx) => {
+    const state = ctx.wizard.state as any;
+    const max = parseInt(ctx.message.text);
+    
+    await db.insert(schema.promoCodes).values({
+      code: state.code,
+      type: 'free',
+      maxUses: max,
+      eventId: state.eventId === 0 ? null : state.eventId,
+      // Можно добавить шаг с датой, но для простоты — +3 дня от текущей
+      expiresAt: DateTime.now().plus({ days: 3 }).toJSDate() 
+    });
+
+    await ctx.reply(`✅ Промокод ${state.code} на ${max} билетов создан!`);
+    return ctx.scene.leave();
+  }
+);
+
 const STOCK_QUESTIONS = [
 {
     question: "Война между Англией и Францией вошла в историю как «Столетняя война». Однако историки знают, что на самом деле конфликт длился с перерывами дольше. Сколько лет шла Столетняя война?",
@@ -867,7 +903,7 @@ const msgEventWizard = new Scenes.WizardScene(
 );
 
 // Регистрация всех сцен и подключение сессий
-const stage = new Scenes.Stage<any>([registerWizard, addEventWizard, msgEventWizard, editFactWizard]);
+const stage = new Scenes.Stage<any>([registerWizard, addEventWizard, msgEventWizard, editFactWizard, addPromoWizard]);
 bot.use(session()); 
 bot.use(stage.middleware());
 
@@ -1819,6 +1855,9 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
         }
 
         // 6. ОПЛАТА STRIPE
+        // ... (вся твоя логика расчета цены и Stripe выше)
+
+        // 6. ОПЛАТА STRIPE
         const stripeSession = await stripe.checkout.sessions.create({
             payment_method_types: ['card', 'blik', 'revolut_pay'],
             line_items: [{ price: GAME_PRICES[event.type], quantity: 1 }],
@@ -1830,10 +1869,12 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
             cancel_url: `https://t.me/${ctx.botInfo.username}`,
         });
 
+        // ОСТАВЛЯЕМ ТОЛЬКО ЭТОТ ОТВЕТ (убрали лишний дубль выше)
         await ctx.reply(
             `К оплате: ${finalPrice} PLN. Скорее нажимай оплатить, чтобы найти своих! 🥂`, 
             Markup.inlineKeyboard([
                 [Markup.button.url('💸 Оплатить (Apple/Google Pay, BLIK...)', stripeSession.url!)], 
+                [Markup.button.callback('🎟 Ввести промокод', `apply_promo_${eid}`)], // Кнопка на месте
                 [Markup.button.callback('✅ Я оплатил', `confirm_pay_${eid}`)]
             ])
         );
@@ -1845,6 +1886,14 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
     
     PENDING_PAYMENTS.set(`${user.id}`, { time: DateTime.now(), notified: false });
 });
+
+bot.action(/apply_promo_(\d+)/, async (ctx) => {
+  const eid = parseInt(ctx.match[1]);
+  (ctx.session as any).waitingForPromo = eid;
+  await ctx.reply('Напиши промокод прямо сюда 👇');
+});
+
+// Внутри bot.on('message') добавь проверку промокода:
 
 bot.action(/waitlist_add_(\d+)/, async (ctx) => {
     const eid = parseInt(ctx.match[1]);
@@ -2013,6 +2062,7 @@ bot.action('admin_events_menu', (ctx) => {
         parse_mode: 'HTML',
         ...Markup.inlineKeyboard([
             [Markup.button.callback('➕ Добавить игру', 'admin_add_event')],
+            [Markup.button.callback('🎟 Создать промокод', 'admin_add_promo')],
             [Markup.button.callback('📢 Рассылка по игре (Дата)', 'admin_msg_event')], // ТВОЯ РАССЫЛКА
             [Markup.button.callback('💘 ПУЛЬТ Speed Dating', 'admin_fd_panel')],     // ТВОЙ ПУЛЬТ СВИДАНИЙ
             [Markup.button.callback('🧠 ПУЛЬТ Stock & Know', 'admin_stock_list')],   // ТВОЙ ПУЛЬТ СТОКА
@@ -2088,6 +2138,8 @@ bot.action('admin_msg_event', (ctx) => ctx.scene.enter('MSG_EVENT_SCENE'));
 bot.command('menu', (ctx) => {
   return ctx.reply('Главное меню восстановлено! 🥂', getMainKeyboard());
 });
+
+bot.action('admin_add_promo', (ctx) => ctx.scene.enter('ADD_PROMO_SCENE'));
 
 // --- Исправленные команды админа ---
 
@@ -2786,6 +2838,48 @@ bot.on('message', async (ctx, next) => {
     const text = (ctx.message as any).text;
 
     if (!userId) return next();
+
+    // 1. Сначала проверяем "ждущие" состояния (Промо, Поддержка, Рассылки)
+    
+    // ПРОВЕРКА ПРОМОКОДА (ставим выше всего, чтобы сработало сразу)
+    if (sess?.waitingForPromo && text) {
+        const codeInput = text.toUpperCase();
+        const eventId = sess.waitingForPromo;
+
+        const promo = await db.query.promoCodes.findFirst({
+            where: and(
+                eq(schema.promoCodes.code, codeInput),
+                eq(schema.promoCodes.isActive, true)
+            )
+        });
+
+        if (!promo || promo.currentUses >= promo.maxUses || (promo.expiresAt && promo.expiresAt < new Date())) {
+            // Не сбрасываем sess.waitingForPromo, чтобы юзер мог попробовать еще раз или исправить опечатку
+            return ctx.reply('❌ Код не найден, истек или все билеты уже разобрали. Попробуй другой или нажми /menu для отмены.');
+        }
+
+        if (promo.eventId && promo.eventId !== eventId) {
+            return ctx.reply('❌ Этот код действует на другую игру. Проверь код и напиши еще раз.');
+        }
+
+        const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
+        if (user) {
+            await db.insert(schema.bookings).values({ userId: user.id, eventId: eventId, paid: true });
+            await db.update(schema.promoCodes)
+                .set({ currentUses: promo.currentUses + 1 })
+                .where(eq(schema.promoCodes.id, promo.id));
+            
+            // Важно обновить счетчик игроков в самой игре
+            const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
+            await db.update(schema.events)
+                .set({ currentPlayers: (event?.currentPlayers || 0) + 1 })
+                .where(eq(schema.events.id, eventId));
+            
+            await ctx.reply('🎉 Поздравляем! Твой счастливый билет активирован. Ты в игре! 🥂');
+        }
+        sess.waitingForPromo = null; // Сбрасываем состояние после успеха
+        return;
+    }
   
       if (sess?.waitingForSupport) {
         const adminHeader = `🆘 <b>ВОПРОС В ПОДДЕРЖКУ</b>\n\nОт: ${ctx.from.first_name} (@${ctx.from.username || 'нет'})\nID: <code>${ctx.from.id}</code>\n\n<code>/reply ${ctx.from.id} </code>`;
@@ -2812,17 +2906,39 @@ bot.on('message', async (ctx, next) => {
         }
 
         if (sess?.waitingForGlobalBroadcast && userId === ADMIN_ID) {
-            const allUsers = await db.query.users.findMany();
-            let count = 0;
-            for (const u of allUsers) {
-                try {
-                    await ctx.telegram.sendMessage(u.telegramId, `📢 <b>Объявление Алгоритма:</b>\n\n${text}`, { parse_mode: 'HTML' });
-                    count++;
-                } catch (e) { }
+    const allUsers = await db.query.users.findMany();
+    const now = DateTime.now().setZone('Europe/Warsaw');
+    let count = 0;
+
+    for (const u of allUsers) {
+        // Проверяем, есть ли у пользователя оплаченные записи на будущие игры
+        const upcomingBookings = await db.query.bookings.findMany({
+            where: and(eq(schema.bookings.userId, u.id), eq(schema.bookings.paid, true))
+        });
+
+        let isRegisteredSoon = false;
+        for (const b of upcomingBookings) {
+            const ev = await db.query.events.findFirst({ where: eq(schema.events.id, b.eventId) });
+            if (ev) {
+                const eventDate = DateTime.fromFormat(ev.dateString, "dd.MM.yyyy HH:mm", { zone: 'Europe/Warsaw' });
+                // Если игра будет в ближайшие 7 дней — помечаем как "занят"
+                if (eventDate > now && eventDate.diff(now, 'days').days < 7) {
+                    isRegisteredSoon = true;
+                    break;
+                }
             }
-            sess.waitingForGlobalBroadcast = false;
-            return ctx.reply(`✅ Рассылка завершена! Отправлено: ${count} чел.`);
         }
+
+        if (isRegisteredSoon) continue; // Пропускаем тех, кто уже идет в ближайшее время
+
+        try {
+            await ctx.telegram.sendMessage(u.telegramId, `📢 <b>Объявление Алгоритма:</b>\n\n${text}`, { parse_mode: 'HTML' });
+            count++;
+        } catch (e) { }
+    }
+    sess.waitingForGlobalBroadcast = false;
+    return ctx.reply(`✅ Рассылка завершена! Отправлено: ${count} чел. (записанные на ближайшие дни исключены).`);
+}
 
         // Ставки Stock & Know
         if (STOCK_STATE.currentQuestionIndex !== -1 && !isNaN(parseInt(text)) && !text.startsWith('/')) {
@@ -2839,6 +2955,7 @@ bot.on('message', async (ctx, next) => {
             }
         }
     }
+
     return next();
     // 2. Поддержка (SOS) — ТЕПЕРЬ ПРИНИМАЕТ ВСЁ (текст, фото, видео, кружочки)
 
