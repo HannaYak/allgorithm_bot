@@ -263,11 +263,13 @@ const addPromoWizard = new Scenes.WizardScene(
   },
   async (ctx) => {
     (ctx.wizard.state as any).code = ctx.message.text.toUpperCase();
-    await ctx.reply('ID игры, на которую действует код (или 0, если на любую):');
+    await ctx.reply('Введите ID игр через запятую (например: 12,15,18) или 0 для всех:');
     return ctx.wizard.next();
   },
   async (ctx) => {
-    (ctx.wizard.state as any).eventId = parseInt(ctx.message.text);
+    // Убираем пробелы и сохраняем как строку
+    const input = ctx.message.text.replace(/\s/g, ''); 
+    (ctx.wizard.state as any).eventIds = input === '0' ? null : input;
     await ctx.reply('Количество билетов (макс. использований):');
     return ctx.wizard.next();
   },
@@ -279,12 +281,11 @@ const addPromoWizard = new Scenes.WizardScene(
       code: state.code,
       type: 'free',
       maxUses: max,
-      eventId: state.eventId === 0 ? null : state.eventId,
-      // Можно добавить шаг с датой, но для простоты — +3 дня от текущей
+      eventIds: state.eventIds, // Сохраняем строку с ID
       expiresAt: DateTime.now().plus({ days: 3 }).toJSDate() 
     });
 
-    await ctx.reply(`✅ Промокод ${state.code} на ${max} билетов создан!`);
+    await ctx.reply(`✅ Промокод ${state.code} создан для игр: ${state.eventIds || 'Все'}!`);
     return ctx.scene.leave();
   }
 );
@@ -2858,9 +2859,14 @@ bot.on('message', async (ctx, next) => {
             return ctx.reply('❌ Код не найден, истек или все билеты уже разобрали. Попробуй другой или нажми /menu для отмены.');
         }
 
-        if (promo.eventId && promo.eventId !== eventId) {
-            return ctx.reply('❌ Этот код действует на другую игру. Проверь код и напиши еще раз.');
-        }
+        if (promo.eventIds) {
+    // Превращаем строку "12,15,18" в массив чисел [12, 15, 18]
+    const allowedIds = promo.eventIds.split(',').map(id => parseInt(id));
+    
+    if (!allowedIds.includes(eventId)) {
+        return ctx.reply('❌ Этот код не действует на выбранную игру. Проверь ID и попробуй снова.');
+    }
+}
 
         const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
         if (user) {
