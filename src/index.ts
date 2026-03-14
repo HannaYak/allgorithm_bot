@@ -44,7 +44,7 @@ const GAME_PRICES: Record<string, string> = {
   'talk_toast': 'price_1T427MHhXyjuCWwf7CK0DvCA', 
   'talk_thematic': 'price_1T427MHhXyjuCWwf7CK0DvCA',
   'stock_know': 'price_1SUTkoHhXyjuCWwfxD89YIpP',
-  'speed_dating_25_35': 'price_1SUTlVHhXyjuCWwfU1IzNMlf', // ID товара на 50 PLN
+  'speed_dating_25_35': 'price_1TAwaRHhXyjuCWwfuds9Sbvd', // ID товара на 50 PLN
   'speed_dating_35_45': 'price_1SUTlVHhXyjuCWwfU1IzNMlf',
   'talk_toast_review': 'price_1SiDMGHhXyjuCWwfzysRSphU',
   'stock_know_review': 'price_1SiDKoHhXyjuCWwfwg24Y7mF',
