@@ -1075,23 +1075,26 @@ async function autoCloseEvent(eventId: number) {
     ).catch(() => {});
 
     // НОВАЯ ЛОГИКА: Кнопки для выбора тайного мэтча
-    if (!event.type.startsWith('speed_dating')) { const others = bks.filter(bk => bk.userId !== u.id);
-    const buttons = [];
-    for (const ob of others) {
-        const target = await db.query.users.findFirst({ where: eq(schema.users.id, ob.userId) });
-        if (target?.name) {
-            buttons.push(Markup.button.callback(target.name, `secret_like_${eventId}_${target.id}`));
+   // НОВАЯ ЛОГИКА: Кнопки для выбора тайного мэтча
+    if (!event.type.startsWith('speed_dating')) { 
+        const others = bks.filter(bk => bk.userId !== u.id);
+        const buttons = [];
+        for (const ob of others) {
+            const target = await db.query.users.findFirst({ where: eq(schema.users.id, ob.userId) });
+            if (target?.name) {
+                buttons.push(Markup.button.callback(target.name, `secret_like_${eventId}_${target.id}`));
+            }
         }
-    }
 
-    if (buttons.length > 0) {
-        await bot.telegram.sendMessage(u.telegramId, 
-            `🤫 <b>Тайный мэтч</b>\n\nБыл ли сегодня кто-то, с кем хочется увидеться снова? (бизнес, дружба или что-то большее).\n\nВыбери людей (можно нескольких), и если это взаимно — я пришлю вам контакты! ☕️`,
-            { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons, { columns: 2 }) }
-        ).catch(() => {});}
-    }
-  }
-}
+        if (buttons.length > 0) {
+            await bot.telegram.sendMessage(u.telegramId, 
+                `🤫 <b>Тайный мэтч</b>\n\n...`,
+                { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons, { columns: 2 }) }
+            ).catch(() => {});
+        }
+    } // <--- ПРОВЕРЬ ЭТУ СКОБКУ. Она должна закрывать IF.
+  } // <--- ПРОВЕРЬ ЭТУ СКОБКУ. Она должна закрывать цикл FOR.
+ // <--- ПРОВЕРЬ ЭТУ СКОБКУ. Она должна закрывать саму функцию autoCloseEvent.
 // --- 7. ОБРАБОТЧИКИ ---
 
 bot.start(async (ctx) => {
