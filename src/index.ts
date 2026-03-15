@@ -912,7 +912,7 @@ setInterval(async () => {
             where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true)) 
         });
 
-        if (event.type === 'speed_dating') {
+        if (event.type.startsWith('speed_dating')) {
             const men: any[] = [], women: any[] = [];
             
             // 1. Сортируем оплативших по полу
@@ -962,7 +962,7 @@ setInterval(async () => {
         PROCESSED_AUTO_ACTIONS.add(`start_greet_${event.id}`);
         const { title } = parseEventDesc(event.description);
         
-        if (event.type === 'speed_dating') return; 
+        if (event.type.startsWith('speed_dating')) return;
 
         let needsTopic = event.type.startsWith('talk_');
         let msg = `🥂 <b>Игра "${title}" начинается!</b>\n\nРады всех видеть! Представьтесь для начала друг другу (имя и ваше хобби или специальность).`;
@@ -1052,14 +1052,15 @@ async function runAutoQuiz(eventId: number) {
 }
 
 async function autoCloseEvent(eventId: number) {
+  const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
+  if (!event) return;
+
   await db.update(schema.events).set({ isActive: false }).where(eq(schema.events.id, eventId));
+  
   const bks = await db.query.bookings.findMany({ 
     where: and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true)) 
   });
-  
-  for (const b of bks) {
-    const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
-    if (!u) continue;
+  // ... дальше твой код
 
     // Твоя стандартная логика начисления баллов
     await db.update(schema.users).set({ gamesPlayed: (u.gamesPlayed || 0) + 1 }).where(eq(schema.users.id, u.id));
@@ -1074,7 +1075,7 @@ async function autoCloseEvent(eventId: number) {
     ).catch(() => {});
 
     // НОВАЯ ЛОГИКА: Кнопки для выбора тайного мэтча
-    const others = bks.filter(bk => bk.userId !== u.id);
+    if (!event.type.startsWith('speed_dating')) { const others = bks.filter(bk => bk.userId !== u.id);
     const buttons = [];
     for (const ob of others) {
         const target = await db.query.users.findFirst({ where: eq(schema.users.id, ob.userId) });
@@ -1087,7 +1088,7 @@ async function autoCloseEvent(eventId: number) {
         await bot.telegram.sendMessage(u.telegramId, 
             `🤫 <b>Тайный мэтч</b>\n\nБыл ли сегодня кто-то, с кем хочется увидеться снова? (бизнес, дружба или что-то большее).\n\nВыбери людей (можно нескольких), и если это взаимно — я пришлю вам контакты! ☕️`,
             { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons, { columns: 2 }) }
-        ).catch(() => {});
+        ).catch(() => {});}
     }
   }
 }
@@ -1270,7 +1271,7 @@ bot.hears('🎲 Новая тема', async (ctx) => {
   const usedSet = USED_TOPICS_BY_EVENT.get(currentEvent.id)!;
 
   // --- ЛОГИКА ДЛЯ СВИДАНИЙ (Speed Dating) ---
-  if (currentEvent.type === 'speed_dating') {
+  if (currentEvent.type.startsWith('speed_dating')) {
     const round = SD.FAST_DATES_STATE.currentRound;
     const ps = Array.from(SD.FAST_DATES_STATE.participants.values());
     const me = ps.find(p => p.id === ctx.from.id);
