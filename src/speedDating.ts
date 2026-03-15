@@ -199,13 +199,13 @@ export async function handleNewTopic(ctx: any, bot: any) {
     const ps = Array.from(FAST_DATES_STATE.participants.values());
     const me = ps.find(p => p.id === ctx.from.id);
 
-    if (!me || ps.length === 0) return ctx.reply("❌ Ошибка: Участники игры не найдены в системе.");
+    if (!me || ps.length === 0) return ctx.reply("❌ Участники не загружены. Используй /load_dating");
 
-    const women = ps.filter(p => p.gender === 'Женщина').sort((a,b) => a.num - b.num);
-    const men = ps.filter(p => p.gender === 'Мужчина').sort((a,b) => a.num - b.num);
+    const women = ps.filter(p => p.gender.includes('Жен')).sort((a,b) => a.num - b.num);
+    const men = ps.filter(p => p.gender.includes('Муж')).sort((a,b) => a.num - b.num);
     
     let partner;
-    if (me.gender === 'Женщина') {
+    if (me.gender.includes('Жен')) {
       const i = women.findIndex(w => w.id === me.id);
       partner = men[(i + round - 1) % men.length];
     } else {
@@ -216,10 +216,10 @@ export async function handleNewTopic(ctx: any, bot: any) {
 
     if (partner) {
       const randomTopic = CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)];
-      const pairMsg = `🎲 <b>Секретная тема только для вашего столика:</b>\n\n${randomTopic}`;
-      await bot.telegram.sendMessage(me.id, pairMsg, { parse_mode: 'HTML' });
-      await bot.telegram.sendMessage(partner.id, pairMsg, { parse_mode: 'HTML' });
-      return ctx.reply("✅ Новая тема отправлена тебе и твоему собеседнику!");
+      const pairMsg = `🎲 <b>Секретная тема только для вашей пары:</b>\n\n${randomTopic}`;
+      await bot.telegram.sendMessage(me.id, pairMsg, { parse_mode: 'HTML' }).catch(()=>{});
+      await bot.telegram.sendMessage(partner.id, pairMsg, { parse_mode: 'HTML' }).catch(()=>{});
+      return ctx.reply("✅ Новая тема отправлена тебе и собеседнику!");
     }
 }
 
