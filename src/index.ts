@@ -44,7 +44,7 @@ const GAME_PRICES: Record<string, string> = {
   'talk_toast': 'price_1T427MHhXyjuCWwf7CK0DvCA', 
   'talk_thematic': 'price_1T427MHhXyjuCWwf7CK0DvCA',
   'stock_know': 'price_1SUTkoHhXyjuCWwfxD89YIpP',
-  'speed_dating_25_35': 'price_1TAwaRHhXyjuCWwfuds9Sbvd', // ID товара на 50 PLN
+  'speed_dating_25_35': 'price_1SUTlVHhXyjuCWwfU1IzNMlf', // ID товара на 50 PLN
   'speed_dating_35_45': 'price_1SUTlVHhXyjuCWwfU1IzNMlf',
   'talk_toast_review': 'price_1SiDMGHhXyjuCWwfzysRSphU',
   'stock_know_review': 'price_1SiDKoHhXyjuCWwfwg24Y7mF',
@@ -1435,7 +1435,7 @@ bot.action('game_stock', async (ctx) => {
 bot.action('game_dating', async (ctx) => {
   await ctx.deleteMessage().catch(() => {}); // Удаляем меню
   const text = `💘 <b>Быстрые свидания</b>\n\n` +
-    `Стоимость: 25 zł только на игру 15.03.2026 | Продолжительность: 1 час 15 минут\n\n` +
+    `Стоимость: 50 zł | Продолжительность: 1 час 15 минут\n\n` +
     `<b>Что это?</b>\n🗣️ 12 человек (6Ж + 6М), 6 столиков и 10-минутные раунды. Бот сам выдаст номера, запустит таймер и перетасует пары 📲. Тебе нужно только отмечать симпатии в карточке — если мэтч, бот пришлёт контакты! ✨\n\n` +
     `<b>Зачем это?</b>\n• 🚀 <b>Шесть шансов</b> на знакомство за час.\n• 💬 <b>Без пауз</b> — бот подскажет тему.\n• 🎯 <b>Только мэтчи:</b> контакты только при взаимной симпатии.\n• 🛡️ <b>Безопасно:</b> никто не узнает твой номер без твоего «Да».\n\n` +
     `<b>Как это работает?</b>\nБот присваивает каждому номер 🎫. Каждые 10 минут пары меняются 🔄. Отмечай симпатии в боте ❤️. Если чувства взаимны, я соединю вас после игры! 🥂`;
@@ -1742,7 +1742,7 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
             basePrice = 35; // Цена для всех Talk & Toast
         } 
       else if (event.type.startsWith('speed_dating')) {
-          basePrice = 25; // ВОТ ТУТ МЕНЯЕМ: теперь для всех свиданий база 25
+          basePrice = 50; // ВОТ ТУТ МЕНЯЕМ: теперь для всех свиданий база 25
         }
 
         // 4. БЕЗОПАСНЫЙ РАСЧЕТ ЛОЯЛЬНОСТИ (5-я игра)
