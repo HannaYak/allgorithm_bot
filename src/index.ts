@@ -1063,7 +1063,7 @@ async function autoCloseEvent(eventId: number) {
     where: and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true)) 
   });
 
-  // --- ВОТ ЭТОГО ЦИКЛА У ТЕБЯ НЕ ХВАТАЛО ---
+  // 3. Проходим по каждому участнику
   for (const b of bks) {
     const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
     if (!u) continue;
@@ -1073,6 +1073,7 @@ async function autoCloseEvent(eventId: number) {
       .set({ gamesPlayed: (u.gamesPlayed || 0) + 1 })
       .where(eq(schema.users.id, u.id));
     
+    // Шлем прощальное сообщение
     await bot.telegram.sendMessage(u.telegramId,
         `✨ <b>Это был прекрасный вечер!</b>\n\n` +
         `Надеемся, тебе было так же тепло и интересно, как и нам. В твой личный кабинет добавлен балл лояльности — напомню, что каждая 5-я встреча у нас бесплатная 🥂\n\n` +
@@ -1082,11 +1083,11 @@ async function autoCloseEvent(eventId: number) {
         { parse_mode: 'HTML' }
     ).catch(() => {});
 
-    // НОВАЯ ЛОГИКА: Кнопки для выбора тайного мэтча
-   // НОВАЯ ЛОГИКА: Кнопки для выбора тайного мэтча
+    // 4. Тайный мэтч (только для обычных игр)
     if (!event.type.startsWith('speed_dating')) { 
         const others = bks.filter(bk => bk.userId !== u.id);
         const buttons = [];
+        
         for (const ob of others) {
             const target = await db.query.users.findFirst({ where: eq(schema.users.id, ob.userId) });
             if (target?.name) {
@@ -1096,13 +1097,13 @@ async function autoCloseEvent(eventId: number) {
 
         if (buttons.length > 0) {
             await bot.telegram.sendMessage(u.telegramId, 
-                `🤫 <b>Тайный мэтч</b>\n\n...`,
+                `🤫 <b>Тайный мэтч</b>\n\nКто из участников тебе особенно приглянулся? Нажми на имя, и если это взаимно — я пришлю вам контакты друг друга! ✨`,
                 { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons, { columns: 2 }) }
             ).catch(() => {});
         }
-    } // <--- ПРОВЕРЬ ЭТУ СКОБКУ. Она должна закрывать IF.
-  } // <--- ПРОВЕРЬ ЭТУ СКОБКУ. Она должна закрывать цикл FOR.
- // <--- ПРОВЕРЬ ЭТУ СКОБКУ. Она должна закрывать саму функцию autoCloseEvent.
+    }
+  } // Закрытие цикла for
+} // <--- ВОТ ЭТА СКОБКА БЫЛА ПРОПУЩЕНА! Теперь функция закрыта.
 // --- 7. ОБРАБОТЧИКИ ---
 
 bot.start(async (ctx) => {
