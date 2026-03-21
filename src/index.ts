@@ -1055,15 +1055,23 @@ async function autoCloseEvent(eventId: number) {
   const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
   if (!event) return;
 
+  // 1. Деактивируем игру
   await db.update(schema.events).set({ isActive: false }).where(eq(schema.events.id, eventId));
   
+  // 2. Достаем всех оплативших участников
   const bks = await db.query.bookings.findMany({ 
     where: and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true)) 
   });
-  // ... дальше твой код
 
-    // Твоя стандартная логика начисления баллов
-    await db.update(schema.users).set({ gamesPlayed: (u.gamesPlayed || 0) + 1 }).where(eq(schema.users.id, u.id));
+  // --- ВОТ ЭТОГО ЦИКЛА У ТЕБЯ НЕ ХВАТАЛО ---
+  for (const b of bks) {
+    const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+    if (!u) continue;
+
+    // Начисляем балл лояльности
+    await db.update(schema.users)
+      .set({ gamesPlayed: (u.gamesPlayed || 0) + 1 })
+      .where(eq(schema.users.id, u.id));
     
     await bot.telegram.sendMessage(u.telegramId,
         `✨ <b>Это был прекрасный вечер!</b>\n\n` +
@@ -1301,13 +1309,11 @@ bot.hears('🎲 Новая тема', async (ctx) => {
     }
 
     if (partner) {
-      const pairMsg = `🎲 <b>Секретная тема только для вашего столика:</b>\n\n${randomTopic}`;
-      await bot.telegram.sendMessage(me.id, pairMsg, { parse_mode: 'HTML', ...getMainKeyboard(true) });
-      await bot.telegram.sendMessage(partner.id, pairMsg, { parse_mode: 'HTML', ...getMainKeyboard(true) });
-      return ctx.reply("✅ Тема отправлена тебе и твоему собеседнику!");
-    } else {
-      return ctx.reply("❌ Собеседник не найден.");
+      const pairMsg = `🎲 <b>Секретная тема только для вашего пары:</b>\n\n${randomTopic}`;
+      await bot.telegram.sendMessage(me.id, pairMsg, { parse_mode: 'HTML', ...getMainKeyboard(true) }).catch(()=>{});
+      await bot.telegram.sendMessage(partner.id, pairMsg, { parse_mode: 'HTML', ...getMainKeyboard(true) }).catch(()=>{});
     }
+    return ctx.reply("✅ Тема отправлена паре!"); // Перенесли сюда
   } 
 
   // --- ЛОГИКА ДЛЯ ОБЫЧНЫХ И ТЕМАТИЧЕСКИХ ИГР (Talk & Toast / Thematic) ---
@@ -1747,11 +1753,7 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
 
         // 4. БЕЗОПАСНЫЙ РАСЧЕТ ЛОЯЛЬНОСТИ (5-я игра)
         const gamesAlreadyPlayed = user.gamesPlayed || 0;
-        const myPaidBookings = await db.query.bookings.findMany({
-            where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.paid, true))
-        });
-        const futureUniqueGames = new Set(myPaidBookings.map(b => b.eventId)).size;
-        const totalProgress = gamesAlreadyPlayed + futureUniqueGames;
+        const totalProgress = user.gamesPlayed || 0;
 
         if (totalProgress > 0 && (totalProgress + 1) % 5 === 0) {
             const doubleCheck = await db.query.bookings.findFirst({
