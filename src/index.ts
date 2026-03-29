@@ -932,9 +932,19 @@ setInterval(async () => {
                 SD.FAST_DATES_STATE.participants.set(women[i].telegramId, { id: women[i].telegramId, num: wNum, gender: 'Женщина', name: women[i].name });
                 SD.FAST_DATES_STATE.participants.set(men[i].telegramId, { id: men[i].telegramId, num: mNum, gender: 'Мужчина', name: men[i].name });
 
-                // Шлем каждому его личный номер
-                bot.telegram.sendMessage(women[i].telegramId, `💘 <b>Твой номер на сегодня: ${wNum}</b> (Столик №${i + 1})\n\nЖдем тебя!`).catch(()=>{});
-                bot.telegram.sendMessage(men[i].telegramId, `💘 <b>Твой номер на сегодня: ${mNum}</b> (Столик №${i + 1})\n\nЖдем тебя!`).catch(()=>{});
+                // Шлем каждому его личный номер + КНОПКУ ТЕМЫ ЗАРАНЕЕ
+                // В районе строки 530 (раздача номеров свиданий)
+                // Шлем каждому его личный номер + ВКЛЮЧАЕМ КНОПКУ ТЕМЫ
+                const kb = getMainKeyboard(true); // Форсируем кнопку темы
+                bot.telegram.sendMessage(women[i].telegramId, `💘 <b>Твой номер на сегодня: ${wNum}</b> (Столик №${i + 1})\n\nЖдем тебя!`, { 
+                    parse_mode: 'HTML', 
+                    reply_markup: kb.reply_markup 
+                }).catch(()=>{});
+                
+                bot.telegram.sendMessage(men[i].telegramId, `💘 <b>Твой номер на сегодня: ${mNum}</b> (Столик №${i + 1})\n\nЖдем тебя!`, { 
+                    parse_mode: 'HTML', 
+                    reply_markup: kb.reply_markup 
+                }).catch(()=>{});
             }
 
             // 3. Уведомляем админа, если кто-то остался без пары
@@ -958,50 +968,48 @@ setInterval(async () => {
 
       // 3. СТАРТ ИГРЫ (ПРИВЕТСТВИЕ + КНОПКА)
       // 3. СТАРТ ИГРЫ (ПРИВЕТСТВИЕ + КНОПКА)
+      // 3. СТАРТ ИГРЫ (ПРИВЕТСТВИЕ + КНОПКА)
       if (minutesSinceStart >= 0 && minutesSinceStart <= 10 && !PROCESSED_AUTO_ACTIONS.has(`start_greet_${event.id}`)) {
         PROCESSED_AUTO_ACTIONS.add(`start_greet_${event.id}`);
         const { title } = parseEventDesc(event.description);
         
-        if (event.type.startsWith('speed_dating')) return;
-
-        let needsTopic = event.type.startsWith('talk_');
-        let msg = `🥂 <b>Игра "${title}" начинается!</b>\n\nРады всех видеть! Представьтесь для начала друг другу (имя и ваше хобби или специальность).`;
+        // Кнопка нужна ТОЛЬКО для Talk-игр и Свиданий. Stock & Know — мимо.
+        const needsTopic = event.type.startsWith('talk_') || event.type.startsWith('speed_dating');
+        
+        let msg = `🥂 <b>Игра "${title}" начинается!</b>\n\nРады всех видеть! Представьтесь для начала друг другу.`;
         
         if (needsTopic) {
-            msg += `\n\n⏱ Через 1 минуту я пришлю первую тему и выберу того, кто начнет. Кнопка <b>"🎲 Новая тема"</b> уже в вашем меню! ✨`;
+            msg += `\n\nКнопка <b>"🎲 Новая тема"</b> уже в вашем меню! ✨`;
         }
 
         const bks = await db.query.bookings.findMany({ where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true)) });
         for (const b of bks) {
           const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
-          if (u) await bot.telegram.sendMessage(u.telegramId, msg, { parse_mode: 'HTML', ...getMainKeyboard(needsTopic) }).catch(()=>{});
+          if (u) {
+              await bot.telegram.sendMessage(u.telegramId, msg, { 
+                  parse_mode: 'HTML', 
+                  reply_markup: getMainKeyboard(needsTopic).reply_markup 
+              }).catch(()=>{});
+          }
         }
 
-        // --- УЛУЧШЕННАЯ ПЕРВАЯ ТЕМА (ЧЕРЕЗ 60 СЕКУНД) ---
-        if (needsTopic) {
+        // Авто-тема через минуту ТОЛЬКО для Talk-игр. 
+        // На свиданиях темы выдаются вручную кнопкой или в начале раундов.
+        if (event.type.startsWith('talk_')) {
           setTimeout(async () => {
-            // 1. Получаем список всех участников игры прямо сейчас
             const currentBks = await db.query.bookings.findMany({ 
                 where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true)) 
             });
-            
-            const playersNames: string[] = [];
+            const playersNames = [];
             for (const b of currentBks) {
                 const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
                 if (u?.name) playersNames.push(u.name);
             }
-
-            // 2. Выбираем случайного игрока, который начнет
-            const starter = playersNames.length > 0 
-                ? playersNames[Math.floor(Math.random() * playersNames.length)] 
-                : "того, кто чувствует себя самым смелым";
-
+            const starter = playersNames.length > 0 ? playersNames[Math.floor(Math.random() * playersNames.length)] : "того, кто смелее";
             const randomTopic = CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)];
-            
-            const topicMsg = `🎲 <b>Тема №1 для разогрева:</b>\n\n${randomTopic}\n\n🎙 <b>Начинает рассуждение:</b> <u>${starter}</u>`;
-            
+            const topicMsg = `🎲 <b>Тема №1 для разогрева:</b>\n\n${randomTopic}\n\n🎙 <b>Начинает:</b> <u>${starter}</u>`;
             await broadcastToEvent(event.id, topicMsg);
-          }, 60000); // Ровно 1 минута (60 000 мс)
+          }, 60000);
         }
       }
 
@@ -1163,7 +1171,34 @@ bot.hears('👤 Личный кабинет', async (ctx) => {
     [Markup.button.callback('🎮 Мои записи на игры', 'my_games')],
     [Markup.button.callback('🤝 Реферальная программа', 'referral_info')]
   ];
-  return ctx.replyWithHTML(msg, Markup.inlineKeyboard(buttons));
+  // 1. Проверяем, идет ли у юзера сейчас игра (в окне 4 часа от старта)
+  const nowW = DateTime.now().setZone('Europe/Warsaw');
+  let isPlayingNow = false;
+
+  const activeBks = await db.query.bookings.findMany({ 
+    where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.paid, true)) 
+  });
+
+  for (const b of activeBks) {
+    const ev = await db.query.events.findFirst({ 
+      where: and(eq(schema.events.id, b.eventId), eq(schema.events.isActive, true)) 
+    });
+    if (ev) {
+      const start = DateTime.fromFormat(ev.dateString, "dd.MM.yyyy HH:mm", { zone: 'Europe/Warsaw' });
+      const diffHours = nowW.diff(start, 'hours').hours;
+      // Если игра началась не более 4 часов назад — значит, юзер «в процессе»
+      if (diffHours >= 0 && diffHours <= 4) {
+        isPlayingNow = true;
+        break;
+      }
+    }
+  }
+
+  // 2. ВОТ ЭТА ФИНАЛЬНАЯ СТРОКА (замени старый return на это):
+  return ctx.replyWithHTML(msg, { 
+    ...Markup.inlineKeyboard(buttons), 
+    ...getMainKeyboard(isPlayingNow) // Бот сам поймет, рисовать ли кнопку "Новая тема"
+  });
 });
 
 // И обработчик для новой кнопки:
@@ -2527,6 +2562,71 @@ bot.command('status', async (ctx) => {
     }
 
     await ctx.replyWithHTML(report);
+});
+
+bot.command('broadcast_m35', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    
+    const parts = ctx.message.text.split(' ');
+    const messageText = parts.slice(1).join(' ');
+
+    if (!messageText) {
+        return ctx.reply('❌ Ошибка: Введи текст рассылки.\nПример: /broadcast_m35 Хэй, есть место для тебя!');
+    }
+
+    try {
+        const now = DateTime.now().setZone('Europe/Warsaw');
+        const tomorrow = now.plus({ days: 1 });
+
+        // 1. Ищем игры, которые будут СЕГОДНЯ или ЗАВТРА
+        const activeEvents = await db.query.events.findMany({ where: eq(schema.events.isActive, true) });
+        const excludedEventIds = activeEvents
+            .filter(ev => {
+                const evDate = DateTime.fromFormat(ev.dateString, "dd.MM.yyyy HH:mm", { zone: 'Europe/Warsaw' });
+                // Проверяем: совпадает ли день с СЕГОДНЯ или с ЗАВТРА
+                return evDate.isValid && (evDate.hasSame(now, 'day') || evDate.hasSame(tomorrow, 'day'));
+            })
+            .map(ev => ev.id);
+
+        // 2. Собираем ID тех, кто уже оплатил эти игры
+        const excludedUserIds = new Set<number>();
+        if (excludedEventIds.length > 0) {
+            const bookings = await db.query.bookings.findMany({
+                where: and(
+                    inArray(schema.bookings.eventId, excludedEventIds),
+                    eq(schema.bookings.paid, true)
+                )
+            });
+            bookings.forEach(b => excludedUserIds.add(b.userId));
+        }
+
+        // 3. Рассылка
+        const allUsers = await db.query.users.findMany();
+        let count = 0;
+
+        for (const u of allUsers) {
+            // Если человек в списке "сегодняшних" или "завтрашних" — скипаем
+            if (excludedUserIds.has(u.id)) continue;
+
+            const age = parseInt(u.birthDate || '0');
+            const gender = (u.gender || '').toLowerCase();
+
+            // ФИЛЬТР: Мужчины + Возраст 35-45
+            if (gender.includes('муж') && age >= 35 && age <= 45) {
+                try {
+                    await bot.telegram.sendMessage(u.telegramId, `📢 <b>Спецпредложение для тебя:</b>\n\n${messageText}`, { parse_mode: 'HTML' });
+                    count++;
+                } catch (e) {
+                    // Игнорируем заблокировавших бота
+                }
+            }
+        }
+
+        await ctx.reply(`✅ Рассылка завершена!\n🎯 Цель: Мужчины 35-45 лет.\n🚫 Исключены: Записанные на сегодня и завтра.\n📨 Отправлено: ${count} чел.`);
+    } catch (e) {
+        console.error(e);
+        ctx.reply('❌ Ошибка при выполнении рассылки.');
+    }
 });
 
 // 5. Управление Speed Dating и Stock
