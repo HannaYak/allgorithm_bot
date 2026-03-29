@@ -2384,25 +2384,57 @@ bot.command('check_user', async (ctx) => {
 bot.command('kick', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     const parts = ctx.message.text.split(' ');
+    
+    // Проверка формата
     if (parts.length < 3) return ctx.reply('Используй: /kick [TG_ID] [ID_Игры]');
+
     const targetTgId = parseInt(parts[1]);
     const eventId = parseInt(parts[2]);
+
+    if (isNaN(targetTgId) || isNaN(eventId)) {
+        return ctx.reply('❌ Ошибка: Введите числовые ID (например: /kick 1234567 12)');
+    }
+
     try {
+        // 1. Ищем юзера по его Telegram ID
         const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, targetTgId) });
+        if (!user) return ctx.reply(`❌ Юзер с TG ID ${targetTgId} не найден в базе Allgorithm.`);
+
+        // 2. Ищем игру
         const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
-        const booking = await db.query.bookings.findFirst({ where: and(eq(schema.bookings.userId, user!.id), eq(schema.bookings.eventId, eventId)) });
-        if (booking) {
-            await db.delete(schema.bookings).where(eq(schema.bookings.id, booking.id));
-            await db.update(schema.events).set({ currentPlayers: Math.max(0, (event!.currentPlayers || 0) - 1) }).where(eq(schema.events.id, eventId));
-            await ctx.reply(`✅ Удален.`);
-            await notifyNextInWaitlist(eventId, event!.type, event!.dateString);
+        if (!event) return ctx.reply(`❌ Игра №${eventId} не существует.`);
+
+        // 3. Ищем запись этого юзера на эту игру
+        const booking = await db.query.bookings.findFirst({ 
+            where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.eventId, eventId)) 
+        });
+
+        if (!booking) {
+            return ctx.reply(`❌ Ошибка: Юзер ${user.name} не записан на игру №${eventId}.`);
         }
+
+        // 4. Удаляем запись
+        await db.delete(schema.bookings).where(eq(schema.bookings.id, booking.id));
+
+        // 5. ПЕРЕСЧИТЫВАЕМ СЧЕТЧИК (берем реальное кол-во людей в базе)
+        const realBookingsCount = await db.select().from(schema.bookings).where(and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true)));
+        
+        await db.update(schema.events)
+            .set({ currentPlayers: realBookingsCount.length })
+            .where(eq(schema.events.id, eventId));
+
+        await ctx.reply(`✅ Удалено! Юзер ${user.name} исключен из игры №${eventId}.\n📊 Текущий состав: ${realBookingsCount.length}/${event.maxPlayers}`);
+
+        // --- ВНИМАНИЕ ПРО ВАЙТЛИСТ ---
+        // Если ты НЕ ХОЧЕШЬ, чтобы бот звал новых людей (чтобы не было дисбаланса), 
+        // строку ниже оставляй закомментированной:
+        // await notifyNextInWaitlist(eventId, event.type, event.dateString);
+
     } catch (e) { 
-        console.error(e);
-        ctx.reply('❌ Ошибка'); 
+        console.error("Ошибка в команде kick:", e);
+        ctx.reply('❌ Произошла ошибка. Проверь консоль Render.'); 
     }
 });
-
 // Обработчик кнопки "Записи" - показывает список игр
 bot.action('admin_bookings', async (ctx) => {
     const events = await db.query.events.findMany({ where: eq(schema.events.isActive, true) });
