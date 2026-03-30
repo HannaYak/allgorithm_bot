@@ -2975,6 +2975,8 @@ bot.action(/stock_send_phase_(\d+)/, async (ctx) => {
 
 // --- 12. ГЛАВНЫЙ ОБРАБОТЧИК СООБЩЕНИЙ ---
 
+// --- 12. ГЛАВНЫЙ ОБРАБОТЧИК СООБЩЕНИЙ ---
+
 bot.on('message', async (ctx, next) => {
     const userId = ctx.from?.id;
     const sess = ctx.session as any;
@@ -2982,9 +2984,7 @@ bot.on('message', async (ctx, next) => {
 
     if (!userId) return next();
 
-    // 1. Сначала проверяем "ждущие" состояния (Промо, Поддержка, Рассылки)
-    
-    // ПРОВЕРКА ПРОМОКОДА (ставим выше всего, чтобы сработало сразу)
+    // 1. ПРОВЕРКА ПРОМОКОДА
     if (sess?.waitingForPromo && text) {
         const codeInput = text.toUpperCase();
         const eventId = sess.waitingForPromo;
@@ -2997,108 +2997,83 @@ bot.on('message', async (ctx, next) => {
         });
 
         if (!promo || promo.currentUses >= promo.maxUses || (promo.expiresAt && promo.expiresAt < new Date())) {
-            // Не сбрасываем sess.waitingForPromo, чтобы юзер мог попробовать еще раз или исправить опечатку
             return ctx.reply('❌ Код не найден, истек или все билеты уже разобрали. Попробуй другой или нажми /menu для отмены.');
         }
 
         if (promo.eventIds) {
-    // Превращаем строку "12,15,18" в массив чисел [12, 15, 18]
-    const allowedIds = promo.eventIds.split(',').map(id => parseInt(id));
-    
-    if (!allowedIds.includes(eventId)) {
-        return ctx.reply('❌ Этот код не действует на выбранную игру. Проверь И и попробуй снова.');
-    }
-}
+            const allowedIds = promo.eventIds.split(',').map(id => parseInt(id));
+            if (!allowedIds.includes(eventId)) {
+                return ctx.reply('❌ Этот код не действует на выбранную игру. Проверь ID и попробуй снова.');
+            }
+        }
 
         const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
-        if (user) {
+        const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
+
+        if (user && event) {
+            const realBookingsCount = await db.select().from(schema.bookings)
+                .where(and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true)));
+
+            if (realBookingsCount.length >= event.maxPlayers) {
+                return ctx.reply('❌ К сожалению, пока ты вводил код, на эту игру заняли последнее место. Попробуй другую дату!');
+            }
+
             await db.insert(schema.bookings).values({ userId: user.id, eventId: eventId, paid: true });
             await db.update(schema.events)
-        .set({ currentPlayers: realBookingsCount.length + 1 })
-        .where(eq(schema.events.id, eventId));
-    
-    await ctx.reply('🎉 Поздравляем! Билет активирован. Ты в игре! 🥂');
-  } // закрывает if (user)
-  sess.waitingForPromo = null; 
-  return; 
- // <--- ВОТ ЭТА СКОБКА ДОЛЖНА БЫТЬ ЗДЕСЬ! Она закрывает блок промокода.
-            
+                .set({ currentPlayers: realBookingsCount.length + 1 })
+                .where(eq(schema.events.id, eventId));
 
-
-const realBookingsCount = await db.select().from(schema.bookings)
-    .where(and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true)));
-
-if (event && realBookingsCount.length >= event.maxPlayers) {
-    return ctx.reply('❌ К сожалению, пока ты вводил код, на эту игру заняли последнее место. Попробуй другую дату!');
-}
-
-// И при записи обновляем счетчик ПРАВИЛЬНО:
-await db.insert(schema.bookings).values({ userId: user.id, eventId: eventId, paid: true });
-await db.update(schema.events)
-    .set({ currentPlayers: realBookingsCount.length + 1 })
-        .where(eq(schema.events.id, eventId));
+            await ctx.reply('🎉 Поздравляем! Билет активирован. Ты в игре! 🥂');
+            sess.waitingForPromo = null;
+        }
+        return; 
     }
-    return; // <--- Добавь это
-} // <--- И ЭТУ СКОБКУ! Она закроет блок промокода.
 
-if (sess?.waitingForSupport) {
+    // 2. ПОДДЕРЖКА (SOS)
+    if (sess?.waitingForSupport) {
         const adminHeader = `🆘 <b>ВОПРОС В ПОДДЕРЖКУ</b>\n\nОт: ${ctx.from.first_name} (@${ctx.from.username || 'нет'})\nID: <code>${ctx.from.id}</code>\n\n<code>/reply ${ctx.from.id} </code>`;
         await ctx.telegram.sendMessage(ADMIN_ID, adminHeader, { parse_mode: 'HTML' });
-
-        // Копируем ЛЮБОЕ сообщение пользователя админу
         await ctx.copyMessage(ADMIN_ID);
-
         ctx.reply('✅ Ваше сообщение отправлено! Администратор ответит в ближайшее время.');
         sess.waitingForSupport = false;
         return;
     }
 
-    // 1. Рассылка и ставки (работают только если есть ТЕКСТ)
+    // 3. ОБРАБОТКА ТЕКСТА (РАССЫЛКИ И СТАВКИ)
     if (text) {
         // Глобальная рассылка (для админа)
-        if (sess?.waitingForBroadcast && userId === ADMIN_ID) {
-            const users = await db.query.users.findMany();
-            for (const u of users) { 
-                try { await ctx.telegram.copyMessage(u.telegramId, ctx.chat!.id, ctx.message.message_id); } catch(e) {} 
-            }
-            sess.waitingForBroadcast = false;
-            return ctx.reply(`✅ Рассылка окончена!`);
-        }
-
         if (sess?.waitingForGlobalBroadcast && userId === ADMIN_ID) {
-    const allUsers = await db.query.users.findMany();
-    const now = DateTime.now().setZone('Europe/Warsaw');
-    let count = 0;
+            const allUsers = await db.query.users.findMany();
+            const now = DateTime.now().setZone('Europe/Warsaw');
+            let count = 0;
 
-    for (const u of allUsers) {
-        // Проверяем, есть ли у пользователя оплаченные записи на будущие игры
-        const upcomingBookings = await db.query.bookings.findMany({
-            where: and(eq(schema.bookings.userId, u.id), eq(schema.bookings.paid, true))
-        });
+            for (const u of allUsers) {
+                const upcomingBookings = await db.query.bookings.findMany({
+                    where: and(eq(schema.bookings.userId, u.id), eq(schema.bookings.paid, true))
+                });
 
-        let isRegisteredSoon = false;
-        for (const b of upcomingBookings) {
-            const ev = await db.query.events.findFirst({ where: eq(schema.events.id, b.eventId) });
-            if (ev) {
-                const eventDate = DateTime.fromFormat(ev.dateString, "dd.MM.yyyy HH:mm", { zone: 'Europe/Warsaw' });
-                // Если игра будет в ближайшие 7 дней — помечаем как "занят"
-                if (eventDate > now && eventDate.diff(now, 'days').days < 7) {
-                    isRegisteredSoon = true;
-                    break;
+                let isRegisteredSoon = false;
+                for (const b of upcomingBookings) {
+                    const ev = await db.query.events.findFirst({ where: eq(schema.events.id, b.eventId) });
+                    if (ev) {
+                        const eventDate = DateTime.fromFormat(ev.dateString, "dd.MM.yyyy HH:mm", { zone: 'Europe/Warsaw' });
+                        if (eventDate > now && eventDate.diff(now, 'days').days < 7) {
+                            isRegisteredSoon = true;
+                            break;
+                        }
+                    }
                 }
+
+                if (isRegisteredSoon) continue;
+
+                try {
+                    await ctx.telegram.sendMessage(u.telegramId, `📢 <b>Объявление Алгоритма:</b>\n\n${text}`, { parse_mode: 'HTML' });
+                    count++;
+                } catch (e) { }
             }
+            sess.waitingForGlobalBroadcast = false;
+            return ctx.reply(`✅ Рассылка завершена! Отправлено: ${count} чел.`);
         }
-
-        if (isRegisteredSoon) continue; // Пропускаем тех, кто уже идет в ближайшее время
-
-        try {
-            await ctx.telegram.sendMessage(u.telegramId, `📢 <b>Объявление Алгоритма:</b>\n\n${text}`, { parse_mode: 'HTML' });
-            count++;
-        } catch (e) { }
-    }
-    sess.waitingForGlobalBroadcast = false;
-    return ctx.reply(`✅ Рассылка завершена! Отправлено: ${count} чел. (записанные на ближайшие дни исключены).`);
-}
 
         // Ставки Stock & Know
         if (STOCK_STATE.currentQuestionIndex !== -1 && !isNaN(parseInt(text)) && !text.startsWith('/')) {
@@ -3107,18 +3082,17 @@ if (sess?.waitingForSupport) {
                 if (!STOCK_STATE.playerAnswers.has(userId)) {
                     STOCK_STATE.playerAnswers.set(userId, parseInt(text));
                     await ctx.reply(`✅ Игрок №${player.num}, твоя ставка ${text} принята! 🎰`);
-                    await bot.telegram.sendMessage(ADMIN_ID, `📈 Ставка от Игрока №${player.num} (${player.name}): <b>${text}</b>`).catch(()=>{});
+                    await bot.telegram.sendMessage(ADMIN_ID, `📈 Ставка от №${player.num} (${player.name}): <b>${text}</b>`).catch(()=>{});
                     return;
                 } else {
-                    return ctx.reply(`⚠️ Игрок №${player.num}, ты уже сделал ставку в этом раунде!`);
+                    return ctx.reply(`⚠️ Игрок №${player.num}, ты уже сделал ставку!`);
                 }
             }
         }
     }
 
     return next();
-    // 2. Поддержка (SOS) — ТЕПЕРЬ ПРИНИМАЕТ ВСЁ (текст, фото, видео, кружочки)
-
+});
 
 
 
