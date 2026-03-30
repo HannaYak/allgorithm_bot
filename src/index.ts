@@ -3006,7 +3006,7 @@ bot.on('message', async (ctx, next) => {
     const allowedIds = promo.eventIds.split(',').map(id => parseInt(id));
     
     if (!allowedIds.includes(eventId)) {
-        return ctx.reply('❌ Этот код не действует на выбранную игру. Проверь ID и попробуй снова.');
+        return ctx.reply('❌ Этот код не действует на выбранную игру. Проверь И и попробуй снова.');
     }
 }
 
@@ -3017,9 +3017,7 @@ bot.on('message', async (ctx, next) => {
                 .set({ currentUses: promo.currentUses + 1 })
                 .where(eq(schema.promoCodes.id, promo.id));
             
-            // Важно обновить счетчик игроков в самой игре
-            // Находим блок: if (event && event.currentPlayers >= event.maxPlayers)
-// ЗАМЕНЯЕМ НА ЭТО:
+
 
 const realBookingsCount = await db.select().from(schema.bookings)
     .where(and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true)));
@@ -3033,6 +3031,7 @@ await db.insert(schema.bookings).values({ userId: user.id, eventId: eventId, pai
 await db.update(schema.events)
     .set({ currentPlayers: realBookingsCount.length + 1 }) // Берем реальное число из базы
     .where(eq(schema.events.id, eventId));
+        }
   
       if (sess?.waitingForSupport) {
         const adminHeader = `🆘 <b>ВОПРОС В ПОДДЕРЖКУ</b>\n\nОт: ${ctx.from.first_name} (@${ctx.from.username || 'нет'})\nID: <code>${ctx.from.id}</code>\n\n<code>/reply ${ctx.from.id} </code>`;
