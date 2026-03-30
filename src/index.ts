@@ -2164,22 +2164,24 @@ bot.command('book', async (ctx) => {
 
         if (!user || !event) return ctx.reply('❌ Ошибка: Юзер или Игра не найдены.');
 
-        // Считаем реальное кол-во людей перед добавлением
-        const realBookings = await db.select().from(schema.bookings).where(and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true)));
+        // Проверяем реальное количество перед добавлением
+        const realCount = await db.select().from(schema.bookings)
+            .where(and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true)));
 
-        if (realBookings.length >= event.maxPlayers) {
-            await ctx.reply(`⚠️ <b>ВНИМАНИЕ: ОВЕРБУКИНГ!</b>\nВ игре уже ${realBookings.length}/${event.maxPlayers} чел. Я добавлю юзера, но мест больше нет!`);
+        if (realCount.length >= event.maxPlayers) {
+            await ctx.reply(`⚠️ ВНИМАНИЕ: В игре уже ${realCount.length}/${event.maxPlayers} чел. Ты уверена?`);
         }
 
         await db.insert(schema.bookings).values({ userId: user.id, eventId: event.id, paid: true });
         
-        // Пересчитываем счетчик в таблице events по реальному количеству в bookings
-        await db.update(schema.events).set({ currentPlayers: realBookings.length + 1 }).where(eq(schema.events.id, eventId));
+        // Обновляем счетчик по факту (строки в базе + 1)
+        await db.update(schema.events)
+            .set({ currentPlayers: realCount.length + 1 })
+            .where(eq(schema.events.id, eventId));
 
-        await ctx.reply(`✅ Пользователь ${user.name} добавлен на игру №${eventId}!`);
-        await bot.telegram.sendMessage(targetTgId, '🎉 Организатор подтвердил вашу запись на игру! Место встречи придёт за 3 часа до ивента. До встречи! ✨');
+        await ctx.reply(`✅ Добавлен! Всего в игре: ${realCount.length + 1}/${event.maxPlayers}`);
     } catch (e) {
-        ctx.reply('❌ Ошибка: Скорее всего, этот пользователь уже записан.');
+        ctx.reply('❌ Ошибка: Возможно, он уже записан.');
     }
 });
 
@@ -2375,6 +2377,50 @@ bot.command('check_user', async (ctx) => {
     report += `🧩 Итого для бота: <b>${(u.gamesPlayed || 0) + paidCount}</b>`;
 
     ctx.replyWithHTML(report);
+});
+
+bot.command('sync_all_stats', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    await ctx.reply('⏳ Начинаю глубокую синхронизацию статистики по ПРОШЕДШИМ играм...');
+
+    try {
+        const allUsers = await db.query.users.findMany();
+        const now = DateTime.now().setZone('Europe/Warsaw');
+        let updatedCount = 0;
+
+        for (const u of allUsers) {
+            // 1. Берем ВСЕ оплаченные записи юзера из базы
+            const allPaid = await db.query.bookings.findMany({
+                where: and(eq(schema.bookings.userId, u.id), eq(schema.bookings.paid, true))
+            });
+
+            let playedCount = 0;
+
+            // 2. Проверяем каждую запись: прошла ли уже эта игра?
+            for (const b of allPaid) {
+                const ev = await db.query.events.findFirst({ where: eq(schema.events.id, b.eventId) });
+                if (ev) {
+                    const evDate = DateTime.fromFormat(ev.dateString, "dd.MM.yyyy HH:mm", { zone: 'Europe/Warsaw' });
+                    // Считаем только те игры, которые уже начались или закончились
+                    if (evDate <= now) {
+                        playedCount++;
+                    }
+                }
+            }
+
+            // 3. Если цифра в кабинете отличается от реальности — исправляем
+            if (u.gamesPlayed !== playedCount) {
+                await db.update(schema.users)
+                    .set({ gamesPlayed: playedCount })
+                    .where(eq(schema.users.id, u.id));
+                updatedCount++;
+            }
+        }
+        await ctx.reply(`✅ Синхронизация завершена!\n\nИсправлено профилей: ${updatedCount}.\nТе, кого ты кикнула через /kick, в этот счет не попали. 😎`);
+    } catch (e) {
+        console.error("Ошибка синхронизации:", e);
+        ctx.reply('❌ Что-то пошло не так при расчете. Проверь логи Render.');
+    }
 });
 
 bot.command('kick', async (ctx) => {
@@ -2972,19 +3018,21 @@ bot.on('message', async (ctx, next) => {
                 .where(eq(schema.promoCodes.id, promo.id));
             
             // Важно обновить счетчик игроков в самой игре
-            const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
-            if (event && event.currentPlayers >= event.maxPlayers) {
-    return ctx.reply('❌ К сожалению, на эту игру только что заняли последнее место. Промокод не использован, попробуй другую дату!');
+            // Находим блок: if (event && event.currentPlayers >= event.maxPlayers)
+// ЗАМЕНЯЕМ НА ЭТО:
+
+const realBookingsCount = await db.select().from(schema.bookings)
+    .where(and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true)));
+
+if (event && realBookingsCount.length >= event.maxPlayers) {
+    return ctx.reply('❌ К сожалению, пока ты вводил код, на эту игру заняли последнее место. Попробуй другую дату!');
 }
-            await db.update(schema.events)
-                .set({ currentPlayers: (event?.currentPlayers || 0) + 1 })
-                .where(eq(schema.events.id, eventId));
-            
-            await ctx.reply('🎉 Поздравляем! Твой счастливый билет активирован. Ты в игре! 🥂');
-        }
-        sess.waitingForPromo = null; // Сбрасываем состояние после успеха
-        return;
-    }
+
+// И при записи обновляем счетчик ПРАВИЛЬНО:
+await db.insert(schema.bookings).values({ userId: user.id, eventId: eventId, paid: true });
+await db.update(schema.events)
+    .set({ currentPlayers: realBookingsCount.length + 1 }) // Берем реальное число из базы
+    .where(eq(schema.events.id, eventId));
   
       if (sess?.waitingForSupport) {
         const adminHeader = `🆘 <b>ВОПРОС В ПОДДЕРЖКУ</b>\n\nОт: ${ctx.from.first_name} (@${ctx.from.username || 'нет'})\nID: <code>${ctx.from.id}</code>\n\n<code>/reply ${ctx.from.id} </code>`;
