@@ -3112,7 +3112,7 @@ await db.update(schema.events)
     return next();
     // 2. Поддержка (SOS) — ТЕПЕРЬ ПРИНИМАЕТ ВСЁ (текст, фото, видео, кружочки)
 
-});
+};
 
 bot.command('reply', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
