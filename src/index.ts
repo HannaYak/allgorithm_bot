@@ -1060,29 +1060,29 @@ async function runAutoQuiz(eventId: number) {
 }
 
 async function autoCloseEvent(eventId: number) {
-  const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
-  if (!event) return;
+  const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
+  if (!event) return;
 
-  // 1. Деактивируем игру
-  await db.update(schema.events).set({ isActive: false }).where(eq(schema.events.id, eventId));
-  
-  // 2. Достаем всех оплативших участников
-  const bks = await db.query.bookings.findMany({ 
-    where: and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true)) 
-  });
+  // 1. Деактивируем игру
+  await db.update(schema.events).set({ isActive: false }).where(eq(schema.events.id, eventId));
+  
+  // 2. Достаем всех оплативших
+  const bks = await db.query.bookings.findMany({ 
+    where: and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true)) 
+  });
 
-  // 3. Проходим по каждому участнику
-  for (const b of bks) {
-    const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
-    if (!u) continue;
+  // 3. Проходим по каждому и начисляем балл
+  for (const b of bks) {
+    const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+    if (!u) continue;
 
-    // Начисляем балл лояльности
-    await db.update(schema.users)
-      .set({ gamesPlayed: (u.gamesPlayed || 0) + 1 })
-      .where(eq(schema.users.id, u.id));
-    
-    // Шлем прощальное сообщение
-    await bot.telegram.sendMessage(u.telegramId,
+    // ОБНОВЛЯЕМ БАЛЛЫ ЗДЕСЬ
+    await db.update(schema.users)
+      .set({ gamesPlayed: (u.gamesPlayed || 0) + 1 })
+      .where(eq(schema.users.id, u.id));
+    
+    // Шлем сообщение
+    await bot.telegram.sendMessage(u.telegramId,
         `✨ <b>Это был прекрасный вечер!</b>\n\n` +
         `Надеемся, тебе было так же тепло и интересно, как и нам. В твой личный кабинет добавлен балл лояльности — напомню, что каждая 5-я встреча у нас бесплатная 🥂\n\n` +
         `Будем очень рады узнать твои впечатления. Если захочешь поделиться парой слов, просто напиши нам в <b>🆘 Помощь</b>.\n\n` +
@@ -1092,25 +1092,23 @@ async function autoCloseEvent(eventId: number) {
     ).catch(() => {});
 
     // 4. Тайный мэтч (только для обычных игр)
-    if (!event.type.startsWith('speed_dating')) { 
-        const others = bks.filter(bk => bk.userId !== u.id);
-        const buttons = [];
-        
-        for (const ob of others) {
-            const target = await db.query.users.findFirst({ where: eq(schema.users.id, ob.userId) });
-            if (target?.name) {
-                buttons.push(Markup.button.callback(target.name, `secret_like_${eventId}_${target.id}`));
-            }
-        }
-
-        if (buttons.length > 0) {
-            await bot.telegram.sendMessage(u.telegramId, 
-                `🤫 <b>Тайный мэтч</b>\n\nКто из участников тебе особенно приглянулся? Нажми на имя, и если это взаимно — я пришлю вам контакты друг друга! ✨`,
-                { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons, { columns: 2 }) }
-            ).catch(() => {});
-        }
-    }
-  } // Закрытие цикла for
+    if (!event.type.startsWith('speed_dating')) { 
+        const others = bks.filter(bk => bk.userId !== u.id);
+        const buttons = [];
+        for (const ob of others) {
+            const target = await db.query.users.findFirst({ where: eq(schema.users.id, ob.userId) });
+            if (target?.name) {
+                buttons.push(Markup.button.callback(target.name, `secret_like_${eventId}_${target.id}`));
+            }
+        }
+        if (buttons.length > 0) {
+            await bot.telegram.sendMessage(u.telegramId, 
+                `🤫 <b>Тайный мэтч</b>\n\nКто тебе сегодня понравился? Если это взаимно, я пришлю контакты! ✨`,
+                { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons, { columns: 2 }) }
+            ).catch(() => {});
+        }
+    }
+  }
 } // <--- ВОТ ЭТА СКОБКА БЫЛА ПРОПУЩЕНА! Теперь функция закрыта.
 // --- 7. ОБРАБОТЧИКИ ---
 
@@ -1138,67 +1136,47 @@ await ctx.replyWithVideo('BAACAgIAAxkBAAEbuMBpqC-A-TdzEp0aJFuvbm6Mjw7HNgACvZMAAi
 });
 
 bot.hears('👤 Личный кабинет', async (ctx) => {
-  const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
-  if (!user) return;
+  try {
+    const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
+    if (!user) return ctx.reply('Нажми /start');
 
-  const userVouchers = await db.query.vouchers.findMany({ 
-    where: and(
-        eq(schema.vouchers.userId, user.id), 
-        or(eq(schema.vouchers.status, 'approved_10'), eq(schema.vouchers.status, 'approved_free'))
-    ) 
-  });
+    const userVouchers = await db.query.vouchers.findMany({ 
+      where: and(
+          eq(schema.vouchers.userId, user.id), 
+          or(eq(schema.vouchers.status, 'approved_10'), eq(schema.vouchers.status, 'approved_free'))
+      ) 
+    });
 
-  const count10 = userVouchers.filter(v => v.status === 'approved_10').length;
-  const countFree = userVouchers.filter(v => v.status === 'approved_free').length;
+    const count10 = userVouchers.filter(v => v.status === 'approved_10').length;
+    const countFree = userVouchers.filter(v => v.status === 'approved_free').length;
 
-  // Внутри обработки Личного кабинета (Раздел 7)
-// Считаем прогресс (остаток от деления на 5)
-  const progress = (user.gamesPlayed || 0) % 5;
-  const stars = '🟩'.repeat(progress) + '⬜'.repeat(5 - progress);
+    // Считаем прогресс (защита от пустых данных)
+    const played = user.gamesPlayed || 0;
+    const progress = played % 5;
+    const stars = '🟩'.repeat(progress) + '⬜'.repeat(5 - progress);
 
-    let msg = `👤 <b>Имя:</b> ${user.name || 'Не заполнено'}\n` +
-              `🎫 <b>Скидки (-10 PLN):</b> ${count10} шт.\n` +
-              `🎁 <b>Бесплатные игры:</b> ${countFree} шт.\n\n` +
-              `🏆 <b>Путь к бесплатной игре:</b>\n` +
-              `${stars} (${progress}/5)\n` +
-              `<i>Сыграй еще ${5 - progress}, и следующая за наш счёт!</i> 🥂\n\n` +
-              `📖 <b>Твоя история:</b> ${user.fact ? '✅ Заполнена' : '❌ Не заполнена'}`;
+    let msg = `👤 <b>Имя:</b> ${user.name || 'Не заполнено'}\n` +
+              `🎫 <b>Скидки (-10 PLN):</b> ${count10} шт.\n` +
+              `🎁 <b>Бесплатные игры:</b> ${countFree} шт.\n\n` +
+              `🏆 <b>Путь к бесплатной игре:</b>\n` +
+              `${stars} (${progress}/5)\n` +
+              `<i>Сыграно всего встреч: ${played}</i>\n\n` +
+              `📖 <b>Твоя история:</b> ${user.fact ? '✅ Заполнена' : '❌ Не заполнена'}`;
 
-  const buttons = [
-    [Markup.button.callback(user.name ? '✏️ Изменить анкету' : '📝 Заполнить анкету', 'start_registration')],
-    [Markup.button.callback(user.fact ? '✏️ Изменить историю' : '📝 Добавить историю', 'start_edit_fact')],
-    [Markup.button.callback('📸 У меня есть ваучер', 'upload_voucher')],
-    [Markup.button.callback('🎮 Мои записи на игры', 'my_games')],
-    [Markup.button.callback('🤝 Реферальная программа', 'referral_info')]
-  ];
-  // 1. Проверяем, идет ли у юзера сейчас игра (в окне 4 часа от старта)
-  const nowW = DateTime.now().setZone('Europe/Warsaw');
-  let isPlayingNow = false;
+    const buttons = [
+      [Markup.button.callback(user.name ? '✏️ Изменить анкету' : '📝 Заполнить анкету', 'start_registration')],
+      [Markup.button.callback(user.fact ? '✏️ Изменить историю' : '📝 Добавить историю', 'start_edit_fact')],
+      [Markup.button.callback('📸 У меня есть ваучер', 'upload_voucher')],
+      [Markup.button.callback('🎮 Мои записи на игры', 'my_games')],
+      [Markup.button.callback('🤝 Реферальная программа', 'referral_info')]
+    ];
 
-  const activeBks = await db.query.bookings.findMany({ 
-    where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.paid, true)) 
-  });
-
-  for (const b of activeBks) {
-    const ev = await db.query.events.findFirst({ 
-      where: and(eq(schema.events.id, b.eventId), eq(schema.events.isActive, true)) 
-    });
-    if (ev) {
-      const start = DateTime.fromFormat(ev.dateString, "dd.MM.yyyy HH:mm", { zone: 'Europe/Warsaw' });
-      const diffHours = nowW.diff(start, 'hours').hours;
-      // Если игра началась не более 4 часов назад — значит, юзер «в процессе»
-      if (diffHours >= 0 && diffHours <= 4) {
-        isPlayingNow = true;
-        break;
-      }
-    }
-  }
-
-  // 2. ВОТ ЭТА ФИНАЛЬНАЯ СТРОКА (замени старый return на это):
-  return ctx.replyWithHTML(msg, { 
-    ...Markup.inlineKeyboard(buttons), 
-    ...getMainKeyboard(isPlayingNow) // Бот сам поймет, рисовать ли кнопку "Новая тема"
-  });
+    // Отправляем Inline-кнопки. Обычная клавиатура (getMainKeyboard) и так останется снизу, её не надо сюда пихать.
+    return ctx.replyWithHTML(msg, Markup.inlineKeyboard(buttons));
+  } catch (e) {
+    console.error(e);
+    ctx.reply('Ошибка загрузки кабинета.');
+  }
 });
 
 // И обработчик для новой кнопки:
@@ -2203,6 +2181,24 @@ bot.command('book', async (ctx) => {
     } catch (e) {
         ctx.reply('❌ Ошибка: Скорее всего, этот пользователь уже записан.');
     }
+});
+
+bot.command('add_game_point', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    const parts = ctx.message.text.split(' ');
+    if (parts.length < 2) return ctx.reply('Используй: /add_game_point [TG_ID]');
+
+    const targetId = parseInt(parts[1]);
+    try {
+        const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, targetId) });
+        if (!user) return ctx.reply('Юзер не найден в базе.');
+
+        await db.update(schema.users)
+            .set({ gamesPlayed: (user.gamesPlayed || 0) + 1 })
+            .where(eq(schema.users.id, user.id));
+
+        await ctx.reply(`✅ Юзеру ${user.name} добавлен 1 балл. Всего: ${(user.gamesPlayed || 0) + 1}`);
+    } catch (e) { ctx.reply('Ошибка начисления.'); }
 });
 
 bot.command('reschedule', async (ctx) => {
