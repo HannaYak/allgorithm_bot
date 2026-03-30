@@ -3013,9 +3013,15 @@ bot.on('message', async (ctx, next) => {
         const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
         if (user) {
             await db.insert(schema.bookings).values({ userId: user.id, eventId: eventId, paid: true });
-            await db.update(schema.promoCodes)
-                .set({ currentUses: promo.currentUses + 1 })
-                .where(eq(schema.promoCodes.id, promo.id));
+            await db.update(schema.events)
+        .set({ currentPlayers: realBookingsCount.length + 1 })
+        .where(eq(schema.events.id, eventId));
+    
+    await ctx.reply('🎉 Поздравляем! Билет активирован. Ты в игре! 🥂');
+  } // закрывает if (user)
+  sess.waitingForPromo = null; 
+  return; 
+} // <--- ВОТ ЭТА СКОБКА ДОЛЖНА БЫТЬ ЗДЕСЬ! Она закрывает блок промокода.
             
 
 
@@ -3029,11 +3035,13 @@ if (event && realBookingsCount.length >= event.maxPlayers) {
 // И при записи обновляем счетчик ПРАВИЛЬНО:
 await db.insert(schema.bookings).values({ userId: user.id, eventId: eventId, paid: true });
 await db.update(schema.events)
-    .set({ currentPlayers: realBookingsCount.length + 1 }) // Берем реальное число из базы
-    .where(eq(schema.events.id, eventId));
-        }
-  
-      if (sess?.waitingForSupport) {
+    .set({ currentPlayers: realBookingsCount.length + 1 })
+        .where(eq(schema.events.id, eventId));
+    }
+    return; // <--- Добавь это
+} // <--- И ЭТУ СКОБКУ! Она закроет блок промокода.
+
+if (sess?.waitingForSupport) {
         const adminHeader = `🆘 <b>ВОПРОС В ПОДДЕРЖКУ</b>\n\nОт: ${ctx.from.first_name} (@${ctx.from.username || 'нет'})\nID: <code>${ctx.from.id}</code>\n\n<code>/reply ${ctx.from.id} </code>`;
         await ctx.telegram.sendMessage(ADMIN_ID, adminHeader, { parse_mode: 'HTML' });
 
@@ -3111,7 +3119,7 @@ await db.update(schema.events)
     return next();
     // 2. Поддержка (SOS) — ТЕПЕРЬ ПРИНИМАЕТ ВСЁ (текст, фото, видео, кружочки)
 
-};
+
 
 bot.command('reply', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
