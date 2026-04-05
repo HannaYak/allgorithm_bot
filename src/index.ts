@@ -1664,7 +1664,7 @@ bot.action(/exec_canc_(\d+)/, async (ctx) => {
         .set({ currentPlayers: Math.max(0, (event.currentPlayers || 0) - 1) })
         .where(eq(schema.events.id, event.id));
 
-    await ctx.editMessageTextawait ctx.editMessageText(
+    await ctx.editMessageText(
     `✅ <b>Запись успешно отменена</b>\n\n` +
     `Жаль, что не получится встретиться в этот раз! Твоё место освобождено для ребят из листа ожидания.\n\n` +
     `🧧 <b>Твой возврат:</b> Для возрата средст напишите в поддржку(кнопка SOS)\n\n` +
