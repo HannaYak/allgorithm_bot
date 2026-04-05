@@ -1629,7 +1629,7 @@ bot.action(/exec_canc_(\d+)/, async (ctx) => {
     // 3. Проверка времени (36 часов)
     const eventDate = DateTime.fromFormat(event.dateString, "dd.MM.yyyy HH:mm", { zone: 'Europe/Warsaw' });
     if (eventDate.diffNow('hours').hours < 36) {
-        return ctx.replyreturn ctx.replyWithHTML(
+        return ctx.replyWithHTML(
     `⚠️ <b>Ой, кажется, уже поздновато...</b>\n\n` +
     `Согласно правилам клуба, отмена с возвратом возможна не позднее чем за <b>36 часов</b> до начала встречи. На этом этапе мы уже забронировали место и подготовили всё для твоего участия.\n\n`
 );
