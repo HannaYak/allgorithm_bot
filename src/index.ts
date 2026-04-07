@@ -1113,7 +1113,7 @@ async function autoCloseEvent(eventId: number) {
 // --- 7. ОБРАБОТЧИКИ ---
 
 bot.start(async (ctx) => {
-  const payload = ctx.startPayload; // Используем встроенный метод для ref_
+  const payload = ctx.startPayload; // Более надежный способ достать ref_
   let user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
 
   if (!user) {
@@ -1134,12 +1134,13 @@ bot.start(async (ctx) => {
       await db.insert(schema.vouchers).values({ userId: newUser.id, status: 'approved_10' }); 
       await ctx.reply('🎁 Тебе начислена скидка 10 PLN на первую игру от друга!');
     }
-  } else if (payload?.startsWith('ref_') && !user.invitedBy && (user.gamesPlayed || 0) === 0) {
-    // Если юзер был в боте, но не играл и пришел по ссылке — записываем пригласителя
+  } 
+  // ВОТ ЭТОТ БЛОК НУЖЕН ДЛЯ ТЕБЯ И ТВОИХ ТЕСТЕРОВ:
+  else if (payload?.startsWith('ref_') && !user.invitedBy && (user.gamesPlayed || 0) === 0) {
     const referrerId = parseInt(payload.replace('ref_', ''));
     await db.update(schema.users).set({ invitedBy: referrerId }).where(eq(schema.users.id, user.id));
     await db.insert(schema.vouchers).values({ userId: user.id, status: 'approved_10' });
-    await ctx.reply('🎁 Тебе начислена скидка 10 PLN на первую игру от друга!');
+    await ctx.reply('🎁 Ссылка сработала! Тебе начислена скидка 10 PLN на первую игру.');
   }
 
   await ctx.replyWithVideo('BAACAgIAAxkBAAEbuMBpqC-A-TdzEp0aJFuvbm6Mjw7HNgACvZMAAiHmQUmNoDZW0EAWyToE').catch(() => {});
