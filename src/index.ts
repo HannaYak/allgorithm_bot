@@ -1182,31 +1182,48 @@ bot.hears('👤 Личный кабинет', async (ctx) => {
 // И обработчик для новой кнопки:
 bot.action('start_edit_fact', (ctx) => { ctx.deleteMessage(); ctx.scene.enter('EDIT_FACT_SCENE'); });
 bot.action('referral_info', async (ctx) => {
-    const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
-    if (!user) return;
+    try {
+        // 1. Убираем "часики" (загрузку) на кнопке. Без этого Telegram думает, что бот завис.
+        await ctx.answerCbQuery().catch(() => {});
 
-    // 1. Удаляем старое текстовое меню, чтобы прислать красивый флаер
-    await ctx.deleteMessage().catch(() => {});
+        const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
+        if (!user) {
+            return ctx.reply('❌ Сначала нажми /start');
+        }
 
-    const refLink = `https://t.me/${ctx.botInfo.username}?start=ref_${user.id}`;
-    
-    const msg = `🤝 <b>Скидка обоим!</b>\n\n` +
-                `• Твой друг получит <b>-10 PLN</b> на первый билет.\n` +
-                `• Ты получишь <b>-10 PLN</b> на баланс сразу после его первой игры!\n\n` +
-                `Твоя личная ссылка: <code>${refLink}</code>\n\n` +
-                `<i>Нажми кнопку ниже, чтобы отправить этот стильный флаер другу!</i> 👇`;
+        // 2. Удаляем старое меню
+        await ctx.deleteMessage().catch(() => {});
 
-    const shareText = `Привет! Иду на крутую игру в клуб "Алгоритм", присоединяйся! По этой ссылке получишь -10 PLN на первый билет: ${refLink}`;
+        const refLink = `https://t.me/${ctx.botInfo.username}?start=ref_${user.id}`;
+        const msg = `🤝 <b>Скидка обоим!</b>\n\n` +
+                    `• Твой друг получит <b>-10 PLN</b> на первый билет.\n` +
+                    `• Ты получишь <b>-10 PLN</b> на баланс сразу после его первой игры!\n\n` +
+                    `Твоя личная ссылка: <code>${refLink}</code>\n\n` +
+                    `<i>Нажми кнопку ниже, чтобы отправить этот стильный флаер другу!</i> 👇`;
 
-    // 2. Отправляем флаер с подписью и кнопками
-    return ctx.replyWithPhoto('AgACAgIAAxkBAAEbulxpqF13xc1Ll6oTFzs2lLFSsCSTrgACbhxrGyHmQUmzdlJFv-CV-QEAAwIAA3kAAzoE', {
-        caption: msg,
-        parse_mode: 'HTML',
-        ...Markup.inlineKeyboard([
-            [Markup.button.url('🚀 Переслать приглашение', `https://t.me/share/url?url=${encodeURIComponent(shareText)}`)],
-            [Markup.button.callback('⬅️ Назад в кабинет', 'back_to_cabinet')]
-        ])
-    });
+        const shareText = `Привет! Иду на крутую игру в клуб "Алгоритм", присоединяйся! По этой ссылке получишь -10 PLN на первый билет: ${refLink}`;
+
+        // 3. Отправляем фото. Если file_id невалиден (например, из другого бота), сработает catch и отправит хотя бы текст.
+        await ctx.replyWithPhoto('AgACAgIAAxkBAAEbulxpqF13xc1Ll6oTFzs2lLFSsCSTrgACbhxrGyHmQUmzdlJFv-CV-QEAAwIAA3kAAzoE', {
+            caption: msg,
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([
+                [Markup.button.url('🚀 Переслать приглашение', `https://t.me/share/url?url=${encodeURIComponent(shareText)}`)],
+                [Markup.button.callback('⬅️ Назад в кабинет', 'back_to_cabinet')]
+            ])
+        }).catch(async (err) => {
+            console.error('Ошибка отправки фото рефералки:', err);
+            // Если фото не прошло, отправляем просто текст с кнопками
+            await ctx.replyWithHTML(msg, Markup.inlineKeyboard([
+                [Markup.button.url('🚀 Переслать приглашение', `https://t.me/share/url?url=${encodeURIComponent(shareText)}`)],
+                [Markup.button.callback('⬅️ Назад в кабинет', 'back_to_cabinet')]
+            ]));
+        });
+
+    } catch (e) {
+        console.error('Ошибка в referral_info:', e);
+        ctx.reply('❌ Что-то пошло не так при загрузке реферальной программы.');
+    }
 });
 
 bot.action('back_to_cabinet', (ctx) => ctx.deleteMessage());
