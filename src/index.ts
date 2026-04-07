@@ -728,7 +728,7 @@ const registerWizard = new Scenes.WizardScene(
       const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
       if (event) {
         await ctx.reply(
-          `Вы выбрали: ${getGameName(event.type)} (${event.dateString})\nК оплате: 50 PLN`,
+          `Вы выбрали: ${getGameName(event.type)} (${event.dateString})\n`,
           Markup.inlineKeyboard([[Markup.button.callback('💸 Перейти к оплате', `pay_event_${eventId}`)]])
         );
       }
@@ -1113,26 +1113,39 @@ async function autoCloseEvent(eventId: number) {
 // --- 7. ОБРАБОТЧИКИ ---
 
 bot.start(async (ctx) => {
+  const payload = ctx.startPayload; // Используем встроенный метод для ref_
   let user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
+
   if (!user) {
-    const startPayload = ctx.message.text.split(' ')[1]; 
-    let referrerId = 0;
-    if (startPayload?.startsWith('ref_')) referrerId = parseInt(startPayload.replace('ref_', ''));
-    const [newUser] = await db.insert(schema.users).values({ telegramId: ctx.from.id, username: ctx.from.username, firstName: ctx.from.first_name, isAdmin: ctx.from.id === ADMIN_ID, invitedBy: referrerId || null }).returning();
-    if (referrerId) { 
-        await db.insert(schema.vouchers).values({ userId: newUser.id, status: 'approved_10' }); 
-        await ctx.reply('🎁 Тебе начислена скидка 10 PLN на первую игру от друга!');
+    let referrerId = null;
+    if (payload?.startsWith('ref_')) {
+      referrerId = parseInt(payload.replace('ref_', ''));
     }
+
+    const [newUser] = await db.insert(schema.users).values({ 
+      telegramId: ctx.from.id, 
+      username: ctx.from.username, 
+      firstName: ctx.from.first_name, 
+      isAdmin: ctx.from.id === ADMIN_ID, 
+      invitedBy: referrerId 
+    }).returning();
+
+    if (referrerId) { 
+      await db.insert(schema.vouchers).values({ userId: newUser.id, status: 'approved_10' }); 
+      await ctx.reply('🎁 Тебе начислена скидка 10 PLN на первую игру от друга!');
+    }
+  } else if (payload?.startsWith('ref_') && !user.invitedBy && (user.gamesPlayed || 0) === 0) {
+    // Если юзер был в боте, но не играл и пришел по ссылке — записываем пригласителя
+    const referrerId = parseInt(payload.replace('ref_', ''));
+    await db.update(schema.users).set({ invitedBy: referrerId }).where(eq(schema.users.id, user.id));
+    await db.insert(schema.vouchers).values({ userId: user.id, status: 'approved_10' });
+    await ctx.reply('🎁 Тебе начислена скидка 10 PLN на первую игру от друга!');
   }
-await ctx.replyWithVideo('BAACAgIAAxkBAAEbuMBpqC-A-TdzEp0aJFuvbm6Mjw7HNgACvZMAAiHmQUmNoDZW0EAWyToE').catch((e) => {
-      console.error('Ошибка отправки видео:', e);
-  });
 
-  const welcomeText = `Привет! Я Ханна, и я рада, что ты теперь в системе <b>Allgorithm</b>. 🦾\n\n` +
+  await ctx.replyWithVideo('BAACAgIAAxkBAAEbuMBpqC-A-TdzEp0aJFuvbm6Mjw7HNgACvZMAAiHmQUmNoDZW0EAWyToE').catch(() => {});
+  return ctx.replyWithHTML(`Привет! Я Ханна, и я рада, что ты теперь в системе <b>Allgorithm</b>. 🦾\n\n` +
     `Мы создали это пространство для тех, кто устал от пустого шума и хочет качественных смыслов. Весна — идеальный момент, чтобы выйти из режима ожидания и стать главным героем своей социальной жизни. 🥂🌸\n\n` +
-    `Выбирай формат по душе в меню «🎮 Игры» и до встречи за столом!`;
-
-  return ctx.replyWithHTML(welcomeText, getMainKeyboard());
+    `Выбирай формат по душе в меню «🎮 Игры» и до встречи за столом!``, getMainKeyboard());
 });
 
 bot.hears('👤 Личный кабинет', async (ctx) => {
@@ -1869,7 +1882,7 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
 
         // ОСТАВЛЯЕМ ТОЛЬКО ЭТОТ ОТВЕТ (убрали лишний дубль выше)
         await ctx.reply(
-            `К оплате: ${finalPrice} PLN. Скорее нажимай оплатить, чтобы найти своих! 🥂`, 
+            `Скорее нажимай оплатить, чтобы найти своих! 🥂`, 
             Markup.inlineKeyboard([
                 [Markup.button.url('💸 Оплатить (Apple/Google Pay, BLIK...)', stripeSession.url!)], 
                 [Markup.button.callback('🎟 Ввести промокод', `apply_promo_${eid}`)], // Кнопка на месте
