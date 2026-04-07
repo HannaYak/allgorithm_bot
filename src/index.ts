@@ -1145,7 +1145,7 @@ bot.start(async (ctx) => {
   await ctx.replyWithVideo('BAACAgIAAxkBAAEbuMBpqC-A-TdzEp0aJFuvbm6Mjw7HNgACvZMAAiHmQUmNoDZW0EAWyToE').catch(() => {});
   return ctx.replyWithHTML(`Привет! Я Ханна, и я рада, что ты теперь в системе <b>Allgorithm</b>. 🦾\n\n` +
     `Мы создали это пространство для тех, кто устал от пустого шума и хочет качественных смыслов. Весна — идеальный момент, чтобы выйти из режима ожидания и стать главным героем своей социальной жизни. 🥂🌸\n\n` +
-    `Выбирай формат по душе в меню «🎮 Игры» и до встречи за столом!``, getMainKeyboard());
+    `Выбирай формат по душе в меню «🎮 Игры» и до встречи за столом!`, getMainKeyboard());
 });
 
 bot.hears('👤 Личный кабинет', async (ctx) => {
