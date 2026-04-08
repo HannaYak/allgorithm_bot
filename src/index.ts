@@ -1113,7 +1113,7 @@ async function autoCloseEvent(eventId: number) {
 // --- 7. ОБРАБОТЧИКИ ---
 
 bot.start(async (ctx) => {
-  const payload = ctx.startPayload; // Более надежный способ достать ref_
+  const payload = ctx.startPayload;
   let user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
 
   if (!user) {
@@ -1135,12 +1135,17 @@ bot.start(async (ctx) => {
       await ctx.reply('🎁 Тебе начислена скидка 10 PLN на первую игру от друга!');
     }
   } 
-  // ВОТ ЭТОТ БЛОК НУЖЕН ДЛЯ ТЕБЯ И ТВОИХ ТЕСТЕРОВ:
-  else if (payload?.startsWith('ref_') && !user.invitedBy && (user.gamesPlayed || 0) === 0) {
-    const referrerId = parseInt(payload.replace('ref_', ''));
-    await db.update(schema.users).set({ invitedBy: referrerId }).where(eq(schema.users.id, user.id));
-    await db.insert(schema.vouchers).values({ userId: user.id, status: 'approved_10' });
-    await ctx.reply('🎁 Ссылка сработала! Тебе начислена скидка 10 PLN на первую игру.');
+  // Упрощаем проверку для старых юзеров, чтобы ваучер ТОЧНО создался при тесте
+  else if (payload?.startsWith('ref_')) {
+    // Проверяем, нет ли уже ТАКОГО ЖЕ активного ваучера, чтобы не дублировать
+    const existingVoucher = await db.query.vouchers.findFirst({
+        where: and(eq(schema.vouchers.userId, user.id), eq(schema.vouchers.status, 'approved_10'))
+    });
+
+    if (!existingVoucher) {
+        await db.insert(schema.vouchers).values({ userId: user.id, status: 'approved_10' });
+        await ctx.reply('🎁 Реферальная ссылка активирована! Скидка -10 PLN добавлена в твой кабинет.');
+    }
   }
 
   await ctx.replyWithVideo('BAACAgIAAxkBAAEbuMBpqC-A-TdzEp0aJFuvbm6Mjw7HNgACvZMAAiHmQUmNoDZW0EAWyToE').catch(() => {});
