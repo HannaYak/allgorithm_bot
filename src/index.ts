@@ -1113,38 +1113,44 @@ async function autoCloseEvent(eventId: number) {
 // --- 7. ОБРАБОТЧИКИ ---
 
 bot.start(async (ctx) => {
-  const payload = ctx.startPayload;
-  let user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
+  const payload = ctx.startPayload; 
+  let user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
 
   if (!user) {
-    let referrerId = null;
-    if (payload?.startsWith('ref_')) {
-      referrerId = parseInt(payload.replace('ref_', ''));
-    }
-
+    let referrerId = (payload?.startsWith('ref_')) ? parseInt(payload.replace('ref_', '')) : null;
     const [newUser] = await db.insert(schema.users).values({ 
-      telegramId: ctx.from.id, 
-      username: ctx.from.username, 
-      firstName: ctx.from.first_name, 
-      isAdmin: ctx.from.id === ADMIN_ID, 
+      telegramId: ctx.from!.id, 
+      username: ctx.from!.username, 
+      firstName: ctx.from!.first_name, 
+      isAdmin: ctx.from!.id === ADMIN_ID, 
       invitedBy: referrerId 
     }).returning();
+    user = newUser;
+  }
 
-    if (referrerId) { 
-      await db.insert(schema.vouchers).values({ userId: newUser.id, status: 'approved_10' }); 
-      await ctx.reply('🎁 Тебе начислена скидка 10 PLN на первую игру от друга!');
+  // СТРОГАЯ ЛОГИКА РЕФЕРАЛКИ:
+  if (payload?.startsWith('ref_')) {
+    const inviterId = parseInt(payload.replace('ref_', ''));
+
+    // 1. Проверяем, не пытается ли юзер пригласить сам себя
+    if (user.id === inviterId) {
+      return ctx.reply('⛔️ Нельзя использовать собственную ссылку.');
     }
-  } 
-  // Упрощаем проверку для старых юзеров, чтобы ваучер ТОЧНО создался при тесте
-  else if (payload?.startsWith('ref_')) {
-    // Проверяем, нет ли уже ТАКОГО ЖЕ активного ваучера, чтобы не дублировать
-    const existingVoucher = await db.query.vouchers.findFirst({
+
+    // 2. Проверяем, была ли у него когда-либо скидка -10 (включая использованные)
+    const alreadyHadRef = await db.query.vouchers.findFirst({
         where: and(eq(schema.vouchers.userId, user.id), eq(schema.vouchers.status, 'approved_10'))
     });
 
-    if (!existingVoucher) {
+    // 3. Даем ваучер только если: нет истории игр AND не было такого ваучера ранее
+    if (!alreadyHadRef && (user.gamesPlayed || 0) === 0) {
         await db.insert(schema.vouchers).values({ userId: user.id, status: 'approved_10' });
-        await ctx.reply('🎁 Реферальная ссылка активирована! Скидка -10 PLN добавлена в твой кабинет.');
+        // Записываем кто пригласил, если еще не записано
+        if (!user.invitedBy) await db.update(schema.users).set({ invitedBy: inviterId }).where(eq(schema.users.id, user.id));
+        
+        await ctx.reply('🎁 Ссылка активирована! Тебе начислена скидка 10 PLN на первый билет. Она применится автоматически при оплате свиданий.');
+    } else {
+        await ctx.reply('⚠️ Скидка по реферальной ссылке доступна только один раз для новых участников.');
     }
   }
 
@@ -1873,7 +1879,10 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
 
         // 6. ОПЛАТА STRIPE
         // ... (вся твоя логика расчета цены и Stripe выше)
-
+if (refVoucher && basePrice > 35) {
+            discounts = [{ coupon: STRIPE_COUPON_ID }];
+            sessionMetadata.voucherId = refVoucher.id.toString();
+        }
         // 6. ОПЛАТА STRIPE
         const stripeSession = await stripe.checkout.sessions.create({
             payment_method_types: ['card', 'blik', 'revolut_pay'],
