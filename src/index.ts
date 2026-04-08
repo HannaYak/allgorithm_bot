@@ -1113,51 +1113,53 @@ async function autoCloseEvent(eventId: number) {
 // --- 7. ОБРАБОТЧИКИ ---
 
 bot.start(async (ctx) => {
-  const payload = ctx.startPayload; 
-  let user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
+  try {
+    const payload = ctx.startPayload; 
+    let user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
 
-  if (!user) {
-    let referrerId = (payload?.startsWith('ref_')) ? parseInt(payload.replace('ref_', '')) : null;
-    const [newUser] = await db.insert(schema.users).values({ 
-      telegramId: ctx.from!.id, 
-      username: ctx.from!.username, 
-      firstName: ctx.from!.first_name, 
-      isAdmin: ctx.from!.id === ADMIN_ID, 
-      invitedBy: referrerId 
-    }).returning();
-    user = newUser;
-  }
-
-  // СТРОГАЯ ЛОГИКА РЕФЕРАЛКИ:
-  if (payload?.startsWith('ref_')) {
-    const inviterId = parseInt(payload.replace('ref_', ''));
-
-    // 1. Проверяем, не пытается ли юзер пригласить сам себя
-    if (user.id === inviterId) {
-      return ctx.reply('⛔️ Нельзя использовать собственную ссылку.');
+    // 1. Если юзера нет — создаем
+    if (!user) {
+      const [newUser] = await db.insert(schema.users).values({ 
+        telegramId: ctx.from!.id, 
+        username: ctx.from!.username, 
+        firstName: ctx.from!.first_name, 
+        isAdmin: ctx.from!.id === ADMIN_ID 
+      }).returning();
+      user = newUser;
     }
 
-    // 2. Проверяем, была ли у него когда-либо скидка -10 (включая использованные)
-    const alreadyHadRef = await db.query.vouchers.findFirst({
-        where: and(eq(schema.vouchers.userId, user.id), eq(schema.vouchers.status, 'approved_10'))
-    });
+    // 2. РЕФЕРАЛЬНАЯ СИСТЕМА (СТРОГО 1 РАЗ)
+    if (payload?.startsWith('ref_')) {
+      const inviterId = parseInt(payload.replace('ref_', ''));
 
-    // 3. Даем ваучер только если: нет истории игр AND не было такого ваучера ранее
-    if (!alreadyHadRef && (user.gamesPlayed || 0) === 0) {
-        await db.insert(schema.vouchers).values({ userId: user.id, status: 'approved_10' });
-        // Записываем кто пригласил, если еще не записано
-        if (!user.invitedBy) await db.update(schema.users).set({ invitedBy: inviterId }).where(eq(schema.users.id, user.id));
+      // Проверяем: не приглашает ли сам себя?
+      if (user.id === inviterId) {
+        await ctx.reply('⛔️ Нельзя активировать скидку по собственной ссылке.');
+      } else {
+        // Проверяем: был ли у него КОГДА-ЛИБО любой ваучер или сыгранные игры?
+        const alreadyHadVoucher = await db.query.vouchers.findFirst({ where: eq(schema.vouchers.userId, user.id) });
         
-        await ctx.reply('🎁 Ссылка активирована! Тебе начислена скидка 10 PLN на первый билет. Она применится автоматически при оплате свиданий.');
-    } else {
-        await ctx.reply('⚠️ Скидка по реферальной ссылке доступна только один раз для новых участников.');
+        if (!alreadyHadVoucher && (user.gamesPlayed || 0) === 0) {
+          await db.insert(schema.vouchers).values({ userId: user.id, status: 'approved_10' });
+          await db.update(schema.users).set({ invitedBy: inviterId }).where(eq(schema.users.id, user.id));
+          await ctx.reply('🎁 Реферальная ссылка активирована! Скидка -10 PLN на первую игру добавлена в кабинет.');
+        } else {
+          await ctx.reply('⚠️ Эта ссылка доступна только новым участникам клуба (кто ещё не играл и не использовал скидки).');
+        }
+      }
     }
-  }
-
-  await ctx.replyWithVideo('BAACAgIAAxkBAAEbuMBpqC-A-TdzEp0aJFuvbm6Mjw7HNgACvZMAAiHmQUmNoDZW0EAWyToE').catch(() => {});
-  return ctx.replyWithHTML(`Привет! Я Ханна, и я рада, что ты теперь в системе <b>Allgorithm</b>. 🦾\n\n` +
+    
+await ctx.replyWithVideo('BAACAgIAAxkBAAEbuMBpqC-A-TdzEp0aJFuvbm6Mjw7HNgACvZMAAiHmQUmNoDZW0EAWyToE').catch(() => {});
+    
+    const welcomeText = `Привет! Я Ханна, и я рада, что ты теперь в системе <b>Allgorithm</b>. 🦾\n\n` +
     `Мы создали это пространство для тех, кто устал от пустого шума и хочет качественных смыслов. Весна — идеальный момент, чтобы выйти из режима ожидания и стать главным героем своей социальной жизни. 🥂🌸\n\n` +
-    `Выбирай формат по душе в меню «🎮 Игры» и до встречи за столом!`, getMainKeyboard());
+    `Выбирай формат по душе в меню «🎮 Игры» и до встречи за столом!`;
+      
+    return ctx.replyWithHTML(welcomeText, getMainKeyboard());
+
+  } catch (e) {
+    console.error("ОШИБКА В START:", e);
+  }
 });
 
 bot.hears('👤 Личный кабинет', async (ctx) => {
@@ -1879,10 +1881,7 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
 
         // 6. ОПЛАТА STRIPE
         // ... (вся твоя логика расчета цены и Stripe выше)
-if (refVoucher && basePrice > 35) {
-            discounts = [{ coupon: STRIPE_COUPON_ID }];
-            sessionMetadata.voucherId = refVoucher.id.toString();
-        }
+
         // 6. ОПЛАТА STRIPE
         const stripeSession = await stripe.checkout.sessions.create({
             payment_method_types: ['card', 'blik', 'revolut_pay'],
