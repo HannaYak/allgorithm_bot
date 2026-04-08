@@ -1117,7 +1117,6 @@ bot.start(async (ctx) => {
     const payload = ctx.startPayload; 
     let user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
 
-    // 1. Если юзера нет — создаем
     if (!user) {
       const [newUser] = await db.insert(schema.users).values({ 
         telegramId: ctx.from!.id, 
@@ -1128,23 +1127,22 @@ bot.start(async (ctx) => {
       user = newUser;
     }
 
-    // 2. РЕФЕРАЛЬНАЯ СИСТЕМА (СТРОГО 1 РАЗ)
+    // РЕФЕРАЛЬНАЯ СИСТЕМА (ИСПРАВЛЕННАЯ ЛОГИКА)
     if (payload?.startsWith('ref_')) {
       const inviterId = parseInt(payload.replace('ref_', ''));
 
-      // Проверяем: не приглашает ли сам себя?
       if (user.id === inviterId) {
-        await ctx.reply('⛔️ Нельзя активировать скидку по собственной ссылке.');
+        await ctx.reply('⛔️ Нельзя использовать собственную ссылку.');
       } else {
-        // Проверяем: был ли у него КОГДА-ЛИБО любой ваучер или сыгранные игры?
-        const alreadyHadVoucher = await db.query.vouchers.findFirst({ where: eq(schema.vouchers.userId, user.id) });
+        // Ищем, был ли когда-либо у него ваучер (любой статус)
+        const hadAnyVoucher = await db.query.vouchers.findFirst({ where: eq(schema.vouchers.userId, user.id) });
         
-        if (!alreadyHadVoucher && (user.gamesPlayed || 0) === 0) {
+        if (!hadAnyVoucher && (user.gamesPlayed || 0) === 0) {
           await db.insert(schema.vouchers).values({ userId: user.id, status: 'approved_10' });
           await db.update(schema.users).set({ invitedBy: inviterId }).where(eq(schema.users.id, user.id));
-          await ctx.reply('🎁 Реферальная ссылка активирована! Скидка -10 PLN на первую игру добавлена в кабинет.');
+          await ctx.reply('🎁 Ссылка активирована! Тебе начислена скидка 10 PLN на первый билет.');
         } else {
-          await ctx.reply('⚠️ Эта ссылка доступна только новым участникам клуба (кто ещё не играл и не использовал скидки).');
+          await ctx.reply('⚠️ Скидка по реферальной ссылке доступна только новым участникам клуба (1 раз).');
         }
       }
     }
