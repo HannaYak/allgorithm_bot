@@ -290,7 +290,7 @@ const addPromoWizard = new Scenes.WizardScene(
   }
 );
 
-const NEW_STOCK_QUESTIONS = [
+const STOCK_QUESTIONS = [
   {
     question: "Сколько всего ступеней нужно преодолеть, чтобы подняться от основания до самой вершины Эйфелевой башни (включая те уровни, которые обычно закрыты для широкой публики)?",
     hints: [
