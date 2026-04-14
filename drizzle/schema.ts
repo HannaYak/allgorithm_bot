@@ -69,3 +69,10 @@ export const promoCodes = pgTable('promo_codes', {
   eventIds: text('event_ids'), // Теперь тут будет строка типа "12,15,18"
   isActive: boolean('is_active').default(true),
 });
+
+export const reveals = pgTable('reveals', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id).notNull(),
+  eventId: integer('event_id').references(() => events.id).notNull(),
+  createdAt: timestamp('created_at').defaultNow(),
+});
