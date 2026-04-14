@@ -3403,7 +3403,7 @@ bot.command('backfill_114', async (ctx) => {
         { name: 'Serhii', points: 87 },
         { name: 'Марина', points: 39 },
         { name: 'Alex', points: 23 },
-        { name: 'Аліна', points: 22 },
+        { name: 'Алiна', points: 22 },
         { name: 'Vova', points: 13 }
     ];
 
