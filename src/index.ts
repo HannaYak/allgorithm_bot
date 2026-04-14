@@ -3392,6 +3392,46 @@ bot.action('view_stock_leaderboard', async (ctx) => {
     }
 });
 
+// ВРЕМЕННАЯ КОМАНДА ДЛЯ ЗАГРУЗКИ ПРОШЛОЙ ИГРЫ
+bot.command('backfill_114', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+
+    const eventId = 114; // ID той самой игры
+    
+    // Данные игроков (Имя -> Баллы)
+    const pastResults = [
+        { name: 'Serhii', points: 87 },
+        { name: 'Марина', points: 39 },
+        { name: 'Alex', points: 23 },
+        { name: 'Аліна', points: 22 },
+        { name: 'Vova', points: 13 }
+    ];
+
+    try {
+        for (const res of pastResults) {
+            // Ищем юзера в базе по имени
+            const user = await db.query.users.findFirst({
+                where: sql`lower(${schema.users.name}) = lower(${res.name})`
+            });
+
+            if (user) {
+                // Записываем суммарный балл за всю игру как один "вопрос"
+                await db.insert(schema.stockScores).values({
+                    eventId: eventId,
+                    userId: user.id,
+                    questionIndex: 999, // Пометка, что это архивные данные
+                    points: res.points,
+                    isWinner: false
+                });
+            }
+        }
+        await ctx.reply('✅ Данные игры №114 успешно добавлены в Зал Славы!');
+    } catch (e) {
+        console.error(e);
+        await ctx.reply('❌ Ошибка при импорте данных.');
+    }
+});
+
 bot.action('back_to_menu', (ctx) => ctx.reply("Возвращаемся...", getMainKeyboard()));
 
 // Обработчики кнопок кабинета
