@@ -49,6 +49,8 @@ const GAME_PRICES: Record<string, string> = {
   'talk_toast_review': 'price_1SiDMGHhXyjuCWwfzysRSphU',
   'stock_know_review': 'price_1SiDKoHhXyjuCWwfwg24Y7mF',
 };
+
+const REVEAL_PRICE_ID = 'price_1TM9ewHhXyjuCWwfdbpcocNd';
 const STRIPE_COUPON_ID = '8RiQPzVX'; 
 const ADMIN_ID = 5456905649; 
 const PROCESSED_AUTO_ACTIONS = new Set<string>(); 
@@ -1025,6 +1027,49 @@ setInterval(async () => {
         PROCESSED_AUTO_ACTIONS.add(`close_${event.id}`); await autoCloseEvent(event.id);
       }
     }
+    // 5. ОФФЕР "ВТОРОЙ ШАНС" (через 60 минут после закрытия игры)
+if (minutesSinceStart >= 195 && !PROCESSED_AUTO_ACTIONS.has(`reveal_offer_${event.id}`)) {
+    PROCESSED_AUTO_ACTIONS.add(`reveal_offer_${event.id}`);
+    
+    // Ищем всех участников игры
+    const bks = await db.query.bookings.findMany({ 
+        where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true)) 
+    });
+
+    for (const b of bks) {
+        // Считаем лайки в сторону этого юзера
+        const received = await db.query.secretLikes.findMany({
+            where: and(eq(schema.secretLikes.eventId, event.id), eq(schema.secretLikes.targetUserId, b.userId))
+        });
+
+        // Считаем его собственные лайки, чтобы найти мэтчи
+        const myLikes = await db.query.secretLikes.findMany({
+            where: and(eq(schema.secretLikes.eventId, event.id), eq(schema.secretLikes.userId, b.userId))
+        });
+        const myLikedIds = new Set(myLikes.map(l => l.targetUserId));
+
+        // Фильтруем только те лайки, которые НЕ стали мэтчами
+        const pureLikes = received.filter(l => !myLikedIds.has(l.userId));
+
+        if (pureLikes.length > 0) {
+            const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+            if (u) {
+                await bot.telegram.sendMessage(u.telegramId,
+                    `🤫 <b>Кое-кто остался под впечатлением...</b>\n\n` +
+                    `На прошедшей встрече тебя выделили: <b>${pureLikes.length} чел.</b>, с которыми у тебя не случился мэтч.\n\n` +
+                    `Хочешь узнать, кто это был, и выбрать, кому из них открыть свои контакты?`,
+                    {
+                        parse_mode: 'HTML',
+                        ...Markup.inlineKeyboard([
+                            [Markup.button.callback(`💳 Открыть доступ (15 PLN)`, `pay_reveal_${event.id}`)],
+                            [Markup.button.callback(`🔙 В меню`, `back_to_menu`)]
+                        ])
+                    }
+                ).catch(() => {});
+            }
+        }
+    }
+}
 
     // 5. ОПЛАТА (Pending)
     for (const [uId, data] of PENDING_PAYMENTS.entries()) {
@@ -3166,7 +3211,123 @@ bot.command('reply', async (ctx) => {
     bot.telegram.sendMessage(p[1], `👮‍♂️ <b>Ответ админа:</b>\n\n${p.slice(2).join(' ')}`, { parse_mode: 'HTML' }).catch(()=>{});
 });
 
+bot.action(/pay_reveal_(\d+)/, async (ctx) => {
+    const eid = parseInt(ctx.match[1]);
+    const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
+    if (!user) return;
 
+    try {
+        const stripeSession = await stripe.checkout.sessions.create({
+            payment_method_types: ['card', 'blik', 'revolut_pay'],
+            line_items: [{ price: REVEAL_PRICE_ID, quantity: 1 }],
+            metadata: { 
+                telegramId: ctx.from!.id.toString(), 
+                eventId: eid.toString(),
+                type: 'reveal' // Важный флаг для вебхука
+            },
+            mode: 'payment',
+            locale: 'ru',
+            success_url: `https://t.me/${ctx.botInfo.username}`,
+            cancel_url: `https://t.me/${ctx.botInfo.username}`,
+        });
+
+        await ctx.reply(`Чтобы увидеть, кто тебя лайкнул, оплати доступ по ссылке:`, 
+            Markup.inlineKeyboard([
+                [Markup.button.url('💸 Оплатить 15 PLN', stripeSession.url!)],
+                [Markup.button.callback('✅ Я оплатил', `confirm_reveal_${eid}`)]
+            ])
+        );
+    } catch (e) {
+        console.error(e);
+        ctx.reply('Ошибка Stripe. Попробуй позже.');
+    }
+});
+
+// Показ списка тех, кто лайкнул
+bot.action(/reveal_list_(\d+)/, async (ctx) => {
+    const eid = parseInt(ctx.match[1]);
+    const me = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
+    if (!me) return;
+
+    // 1. Получаем список всех, кто лайкнул меня
+    const receivedLikes = await db.query.secretLikes.findMany({
+        where: and(
+            eq(schema.secretLikes.eventId, eid), 
+            eq(schema.secretLikes.targetUserId, me.id)
+        )
+    });
+
+    // 2. Получаем список тех, кого лайкнул Я на этой игре
+    const myLikes = await db.query.secretLikes.findMany({
+        where: and(
+            eq(schema.secretLikes.eventId, eid), 
+            eq(schema.secretLikes.userId, me.id)
+        )
+    });
+
+    // Создаем Set из ID тех, кого я лайкнул, для быстрой проверки
+    const myLikedUserIds = new Set(myLikes.map(l => l.targetUserId));
+
+    // 3. Фильтруем: оставляем только тех, кто лайкнул меня, но КОГО НЕ ЛАЙКНУЛ Я
+    const pureLikes = receivedLikes.filter(l => !myLikedUserIds.has(l.userId));
+
+    const buttons = [];
+    for (const l of pureLikes) {
+        const liker = await db.query.users.findFirst({ where: eq(schema.users.id, l.userId) });
+        if (liker) {
+            // Показываем кнопку только для "односторонних" лайков
+            buttons.push([Markup.button.callback(`❤️ Ответить взаимностью: ${liker.name}`, `match_back_${eid}_${liker.id}`)]);
+        }
+    }
+
+    // Если вдруг после фильтрации список стал пустым (например, все лайки были взаимными)
+    if (buttons.length === 0) {
+        return ctx.editMessageText(
+            `✨ <b>Упс!</b>\n\nКажется, все твои симпатии на этой игре уже стали взаимными мэтчами. Новых скрытых лайков не осталось.`,
+            { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('🏠 В меню', 'back_to_menu')]]) }
+        );
+    }
+
+    buttons.push([Markup.button.callback('🏠 В главное меню', 'back_to_menu')]);
+
+    await ctx.editMessageText(
+        `✨ <b>Твои скрытые симпатии:</b>\n\n` +
+        `Этим людям ты понравился на игре, но ты не отметил их в ответ. Сейчас — отличный шанс это исправить! Нажми на имя, чтобы открыть контакты:`, 
+        { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) }
+    );
+});
+// Создание взаимного контакта
+bot.action(/match_back_(\d+)_(\d+)/, async (ctx) => {
+    const eid = parseInt(ctx.match[1]);
+    const targetId = parseInt(ctx.match[2]);
+    const me = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
+    const target = await db.query.users.findFirst({ where: eq(schema.users.id, targetId) });
+
+    if (!me || !target) return ctx.answerCbQuery("Ошибка данных");
+
+    // Сообщение тому, кто нажал кнопку
+    const contactTarget = target.username ? `@${target.username}` : `в SOS-поддержке (нет юзернейма)`;
+    await ctx.replyWithHTML(`🚀 <b>Контакт открыт!</b>\n\nТы ответил взаимностью <b>${target.name}</b>. Ссылка: ${contactTarget}`, getMainKeyboard());
+
+    // Сообщение тому, кто лайкнул первым
+    await bot.telegram.sendMessage(target.telegramId, 
+        `🌟 <b>У тебя ПОСТ-ИГРОВОЙ МЭТЧ!</b>\n\nПомнишь <b>${me.name}</b>? Ты отметил(а) его на игре, и он только что подтвердил взаимность! 🥂\n\nКонтакт: @${me.username || 'через бота'}`
+    ).catch(() => {});
+
+    await ctx.answerCbQuery("Мэтч создан! ❤️");
+});
+
+bot.action(/confirm_reveal_(\d+)/, async (ctx) => {
+    const eid = parseInt(ctx.match[1]);
+    await ctx.answerCbQuery("Проверяю оплату... ⏳");
+    // Мы просто отправляем его к списку. Если оплаты нет, Stripe всё равно пришлет уведомление позже.
+    // Но лучше всего здесь вызвать ту же логику, что в reveal_list
+    await ctx.reply("Если оплата прошла успешно, кнопка ниже откроет список 👇", 
+        Markup.inlineKeyboard([[Markup.button.callback('🔍 Показать список', `reveal_list_${eid}`)]])
+    );
+});
+
+bot.action('back_to_menu', (ctx) => ctx.reply("Возвращаемся...", getMainKeyboard()));
 
 // Обработчики кнопок кабинета
 bot.action('start_registration', (ctx) => { ctx.deleteMessage(); ctx.scene.enter('REGISTER_SCENE'); });
@@ -3178,17 +3339,26 @@ bot.action('start_registration', (ctx) => { ctx.deleteMessage(); ctx.scene.enter
 // --- АВТОМАТИЧЕСКАЯ ЗАПИСЬ ПОСЛЕ ОПЛАТЫ (WEBHOOK) ---
 // --- АВТОМАТИЧЕСКАЯ ЗАПИСЬ ПОСЛЕ ОПЛАТЫ (WEBHOOK) ---
 async function handleSuccessfulPayment(session: any) {
-  const { telegramId, eventId, voucherId } = session.metadata;
-  const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, parseInt(telegramId)) });
+  const { telegramId, eventId, type, voucherId } = session.metadata;
   
+  // 1. ЕСЛИ ЭТО ОПЛАТА "ВТОРОГО ШАНСА"
+  if (type === 'reveal') {
+      await bot.telegram.sendMessage(telegramId, 
+          `🎉 <b>Оплата принята!</b>\n\nТвои тайные симпатии раскрыты. Давай посмотрим, кто это был...`, 
+          { 
+              parse_mode: 'HTML',
+              ...Markup.inlineKeyboard([[Markup.button.callback('🔍 Показать список', `reveal_list_${eventId}`)]])
+          }
+      );
+      return; // Выходим, чтобы не записывать на игру повторно
+  }
+
+  const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, parseInt(telegramId)) });
   if (!user) return;
 
-  // 1. ПРОВЕРЯЕМ РЕАЛЬНОЕ КОЛИЧЕСТВО БРОНЕЙ В БАЗЕ ПРЯМО СЕЙЧАС
-  const realBookingsCount = await db.select()
-    .from(schema.bookings)
-    .where(and(eq(schema.bookings.eventId, parseInt(eventId)), eq(schema.bookings.paid, true)));
-    
   const event = await db.query.events.findFirst({ where: eq(schema.events.id, parseInt(eventId)) });
+  const realBookingsCount = await db.select().from(schema.bookings)
+    .where(and(eq(schema.bookings.eventId, parseInt(eventId)), eq(schema.bookings.paid, true)));
 
   if (!event || realBookingsCount.length >= event.maxPlayers) {
       await bot.telegram.sendMessage(user.telegramId, "🚨 Ой! Пока шла оплата, последний слот заняли. Напишите в поддержку (🆘 Помощь), мы сразу вернем деньги или перенесем запись!");
@@ -3196,26 +3366,22 @@ async function handleSuccessfulPayment(session: any) {
       return; 
   }
 
-  // 2. Проверка на дубль (чтобы не записать дважды)
+  // Проверка на дубль
   const existing = await db.query.bookings.findFirst({ 
     where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.eventId, event.id)) 
   });
   if (existing?.paid) return; 
 
-  // 3. ЗАПИСЫВАЕМ И ОБНОВЛЯЕМ СЧЕТЧИК (Берем данные из базы, а не из памяти)
+  // 3. ЗАПИСЫВАЕМ И ОБНОВЛЯЕМ СЧЕТЧИК
   await db.insert(schema.bookings).values({ userId: user.id, eventId: event.id, paid: true });
-  
-  // Обновляем счетчик, основываясь на реальном кол-ве строк в базе
   await db.update(schema.events)
     .set({ currentPlayers: realBookingsCount.length + 1 })
     .where(eq(schema.events.id, event.id));
 
-  // ... (дальше твой код с ваучерами и рефералами без изменений)
-
-  // 4. Гасим ваучер, если он был
+  // 4. Гасим ваучер
   if (voucherId) await db.update(schema.vouchers).set({ status: 'used' }).where(eq(schema.vouchers.id, parseInt(voucherId)));
 
-  // 5. Бонус рефералу (если есть)
+  // 5. Бонус рефералу
   if (user.invitedBy) {
     const inviter = await db.query.users.findFirst({ where: eq(schema.users.id, user.invitedBy) });
     if (inviter) {
@@ -3225,31 +3391,22 @@ async function handleSuccessfulPayment(session: any) {
     }
   }
 
-
-
-// 6. Пишем юзеру радостную весть
- // 6. Пишем юзеру радостную весть
-  // 6. Пишем юзеру радостную весть
   // 6. Пишем юзеру радостную весть
   let messageText = `🎉 <b>Оплата подтверждена! Ты в игре!</b>\n\n` +
                     `📍 <b>Важные правила (коротко):</b>\n` +
-                    `• <b>Отмена и перенос:</b> Возможны только за <b>36 часов</b> до начала. Позже сумма «сгорает».\n` +
+                    `• <b>Отмена и перенос:</b> Возможны только за <b>36 часов</b> до начала.\n` +
                     `• <b>Атмосфера:</b> Мы за уважение и классный вайб. 🥂\n` +
                     `• <b>Локация:</b> Адрес и инструкция придут за <b>3 часа</b> до начала игры.\n\n`;
 
-// Просим историю ТОЛЬКО для формата Talk & Toast
   if (event.type.includes('talk_toast')) {
-      messageText += `🤫 <b>Кстати!</b> Для нашей секретной викторины нам нужна твоя история. Пожалуйста, зайди в 👤 <b>Личный кабинет</b> -> <b>Добавить историю</b> и напиши один забавный или странный факт о себе. Это сделает вечер в разы круче! ✨\n\n`;
+      messageText += `🤫 <b>Кстати!</b> Для нашей секретной викторины нам нужна твоя история. Пожалуйста, зайди в 👤 <b>Личный кабинет</b> -> <b>Добавить историю</b> и напиши один забавный или странный факт о себе. ✨\n\n`;
   }
 
   messageText += `Напоминаем, что еда и напитки оплачиваются отдельно.\n\nДо встречи! 😎`;
 
-// Отправляем сообщение
   await bot.telegram.sendMessage(user.telegramId, messageText, { parse_mode: 'HTML' }).catch(() => {});
-// СНАЧАЛА проверяем тип игры, а ПОТОМ отправляем
-  // 7. Удаляем из брошенной корзины
   PENDING_PAYMENTS.delete(`${user.id}`);
-}
+} // <--- ВОТ ТЕПЕРЬ ФУНКЦИЯ ЗАКРЫТА ПРАВИЛЬНО
 
 // --- ЗАЩИТНЫЙ ЩИТ ОТ ОШИБОК (чтобы бот не падал) ---
 bot.catch((err: any, ctx) => {
