@@ -3432,6 +3432,21 @@ bot.command('backfill_114', async (ctx) => {
     }
 });
 
+bot.command('clear_scores_114', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+
+    try {
+        // УДАЛЯЕМ все записи баллов именно для игры №114
+        await db.delete(schema.stockScores)
+            .where(eq(schema.stockScores.eventId, 114));
+
+        await ctx.reply('🧼 Все результаты игры №114 удалены! Таблица чиста, можно загружать заново (один раз!).');
+    } catch (e) {
+        console.error(e);
+        await ctx.reply('❌ Ошибка при очистке базы.');
+    }
+});
+
 bot.action('back_to_menu', (ctx) => ctx.reply("Возвращаемся...", getMainKeyboard()));
 
 // Обработчики кнопок кабинета
