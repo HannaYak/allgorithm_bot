@@ -76,3 +76,14 @@ export const reveals = pgTable('reveals', {
   eventId: integer('event_id').references(() => events.id).notNull(),
   createdAt: timestamp('created_at').defaultNow(),
 });
+
+// Таблица баллов для Stock & Know
+export const stockScores = pgTable('stock_scores', {
+  id: serial('id').primaryKey(),
+  eventId: integer('event_id').references(() => events.id).notNull(),
+  userId: integer('user_id').references(() => users.id).notNull(),
+  questionIndex: integer('question_index').notNull(),
+  points: integer('points').default(0), // Баллы за точность + победа
+  isWinner: boolean('is_winner').default(false), // Флаг победы в раунде
+  createdAt: timestamp('created_at').defaultNow(),
+});
