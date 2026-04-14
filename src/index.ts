@@ -2,7 +2,7 @@ import { Telegraf, Markup, session, Scenes } from 'telegraf';
 import express from 'express';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
-import { eq, or, inArray, and, desc, asc } from 'drizzle-orm';
+import { eq, or, inArray, and, desc, asc, sql } from 'drizzle-orm'; // Добавь sql
 import * as schema from '../drizzle/schema'; 
 import 'dotenv/config';
 import Stripe from 'stripe';
@@ -1542,6 +1542,7 @@ bot.action('game_stock', async (ctx) => {
     parse_mode: 'HTML', 
     ...Markup.inlineKeyboard([
       [Markup.button.callback('📅 Записаться', 'book_stock')], 
+      [Markup.button.callback('📊 Таблица лидеров (ТОП-5)', 'view_stock_leaderboard')], // Кнопка тут
       [Markup.button.callback('🔙 Назад', 'back_to_games')]
     ]) 
   });
@@ -2898,26 +2899,38 @@ bot.command('players', async (ctx) => {
 });
 
 bot.action(/sk_win_(\d+)_(\d+)/, async (ctx) => {
-  const pNum = ctx.match[1];
+  const pNum = parseInt(ctx.match[1]);
   const eventId = parseInt(ctx.match[2]);
   
-  try {
-    // 1. Объявляем победителя всем участникам
-    const winAnnounce = `🎊 <b>РАУНД ЗАВЕРШЕН!</b> 🎊\n\n🏆 Победитель раунда — <b>Игрок №${pNum}</b>! Поздравляем! ✨📈`;
-    await broadcastToEvent(eventId, winAnnounce);
-    
-    // 2. Очищаем ставки для следующего вопроса
-    STOCK_STATE.playerAnswers.clear();
-    
-    await ctx.answerCbQuery(`Победитель №${pNum} объявлен!`);
+  const participant = Array.from(STOCK_STATE.participants.values()).find(p => p.num === pNum);
 
-    // 3. ОБНОВЛЯЕМ ТЕКСТ У АДМИНА (Исправлено: используем editMessageText)
-    await ctx.editMessageText(`✅ Победитель раунда выбран: <b>Игрок №${pNum}</b>`, { parse_mode: 'HTML' });
-  } catch (e) {
-    console.error("Ошибка при выборе победителя:", e);
-    // Если редактирование не сработало, просто шлем новое сообщение
-    await ctx.reply(`Победитель раунда: №${pNum}`);
+  if (participant) {
+    // Находим запись игрока за ЭТОТ вопрос в ЭТОЙ игре
+    const scoreEntry = await db.query.stockScores.findFirst({
+        where: and(
+            eq(schema.stockScores.eventId, eventId),
+            eq(schema.stockScores.userId, participant.id),
+            eq(schema.stockScores.questionIndex, STOCK_STATE.currentQuestionIndex)
+        )
+    });
+
+    if (scoreEntry) {
+        // Прибавляем 10 баллов к тем, что уже есть за точность
+        await db.update(schema.stockScores)
+            .set({ 
+                points: scoreEntry.points + 10,
+                isWinner: true 
+            })
+            .where(eq(schema.stockScores.id, scoreEntry.id));
+    }
   }
+
+  // Объявляем победителя всем
+  const winAnnounce = `🎊 <b>РАУНД ЗАВЕРШЕН!</b> 🎊\n\n🏆 Победитель раунда — <b>Игрок №${pNum}</b>! Поздравляем! ✨📈`;
+  await broadcastToEvent(eventId, winAnnounce);
+  STOCK_STATE.playerAnswers.clear();
+  await ctx.answerCbQuery(`Баллы начислены игроку №${pNum}`);
+  await ctx.editMessageText(`✅ Победитель раунда выбран: <b>Игрок №${pNum}</b>`, { parse_mode: 'HTML' });
 });
 
 // --- ЛОГИКА СТАТИСТИКИ И МЭТЧЕЙ ---
@@ -3036,55 +3049,71 @@ bot.action(/sk_pick_(\d+)/, (ctx) => {
 bot.action(/stock_send_phase_(\d+)/, async (ctx) => {
   const phase = parseInt(ctx.match[1]);
   const q = STOCK_QUESTIONS[STOCK_STATE.currentQuestionIndex];
-  
-  // Берем зафиксированный ID
   const eventId = STOCK_STATE.currentEventId; 
 
   if (!eventId) {
     return ctx.reply('❌ Сначала выбери игру командой /assign_stock [ID]');
   }
 
+  // 1. Отправляем сообщение игрокам в зависимости от фазы
   let msg = "";
   if (phase === 0) msg = `❓ <b>ВОПРОС:</b>\n${q.question}`;
   else if (phase <= 3) msg = `💡 <b>ПОДСКАЗКА №${phase}:</b>\n${q.hints[phase-1]}`;
   else msg = `🏁 <b>ОТВЕТ: ${q.answer}</b>\n\n${q.fact}`;
 
-  // Шлем строго по адресу
   await broadcastToEvent(eventId, msg);
 
-  // Финальные результаты
+  // 2. Если это финал (фаза 4), считаем баллы и шлем отчет админу
   if (phase === 4) {
+    const correctVal = parseInt(q.answer);
     let resultsMsg = `📊 <b>РЕЗУЛЬТАТЫ (Игра №${eventId}):</b>\nОтвет: <b>${q.answer}</b>\n\n`;
     const winnerBtns = [];
-    const correctVal = parseInt(q.answer);
 
     for (const [tgId, bet] of STOCK_STATE.playerAnswers.entries()) {
       const p = STOCK_STATE.participants.get(tgId);
       if (p) {
         const diff = Math.abs(correctVal - bet);
+        let accuracyPoints = 0;
+
+        // Начисляем баллы за точность
+        if (diff === 0) accuracyPoints = 5;
+        else if (diff <= 10) accuracyPoints = 4;
+        else if (diff <= 20) accuracyPoints = 3;
+        else if (diff <= 30) accuracyPoints = 2;
+        else if (diff <= 40) accuracyPoints = 1;
+
+        await db.insert(schema.stockScores).values({
+          eventId: eventId,
+          userId: p.id,
+          questionIndex: STOCK_STATE.currentQuestionIndex,
+          points: accuracyPoints,
+          isWinner: false
+        });
+
         resultsMsg += `№${p.num} (${p.name}): <b>${bet}</b> (разница: ${diff})\n`;
         winnerBtns.push([Markup.button.callback(`🏆 Победа №${p.num}`, `sk_win_${p.num}_${eventId}`)]);
       }
     }
-    await bot.telegram.sendMessage(ADMIN_ID, resultsMsg, { parse_mode: 'HTML', ...Markup.inlineKeyboard(winnerBtns) });
+    
+    await bot.telegram.sendMessage(ADMIN_ID, resultsMsg, { 
+      parse_mode: 'HTML', 
+      ...Markup.inlineKeyboard(winnerBtns) 
+    });
   }
 
+  // 3. ОБНОВЛЯЕМ КНОПКИ В ПАНЕЛИ АДМИНА (тот самый код, который ты не знала куда вставить)
   const buttons = [];
   if (phase < 4) {
+    // Если еще не финал, показываем кнопку перехода к следующей подсказке или ответу
     buttons.push([Markup.button.callback(phase === 3 ? '✅ ПОКАЗАТЬ ОТВЕТ' : `💡 Подсказка ${phase+1}`, `stock_send_phase_${phase+1}`)]);
   } else {
+    // Если ответили на всё, кнопка возврата к списку вопросов
     buttons.push([Markup.button.callback('➡️ Следующий вопрос', 'admin_stock_list')]);
   }
   
-  await ctx.editMessageText(`Фаза ${phase} отправлена игрокам №${eventId}.`, Markup.inlineKeyboard(buttons));
+  await ctx.editMessageText(`Фаза ${phase} отправлена игрокам игры №${eventId}.`, Markup.inlineKeyboard(buttons));
 });
-
-// --- 12. ГЛАВНЫЙ ОБРАБОТЧИК СООБЩЕНИЙ ---
-
-// --- 12. ГЛАВНЫЙ ОБРАБОТЧИК СООБЩЕНИЙ ---
-
-// --- 12. ГЛАВНЫЙ ОБРАБОТЧИК СООБЩЕНИЙ ---
-
+  
 bot.on('message', async (ctx, next) => {
     const userId = ctx.from?.id;
     const sess = ctx.session as any;
@@ -3325,6 +3354,42 @@ bot.action(/confirm_reveal_(\d+)/, async (ctx) => {
     await ctx.reply("Если оплата прошла успешно, кнопка ниже откроет список 👇", 
         Markup.inlineKeyboard([[Markup.button.callback('🔍 Показать список', `reveal_list_${eid}`)]])
     );
+});
+
+bot.action('view_stock_leaderboard', async (ctx) => {
+    try {
+        // Считаем сумму баллов для каждого игрока за всё время существования бота
+        const results = await db.select({
+            userId: schema.stockScores.userId,
+            totalPoints: sql<number>`sum(${schema.stockScores.points})`,
+        })
+        .from(schema.stockScores)
+        .groupBy(schema.stockScores.userId)
+        .orderBy(desc(sql`sum(${schema.stockScores.points})`))
+        .limit(5); // Строго ТОП-5
+
+        if (results.length === 0) {
+            return ctx.answerCbQuery("Таблица пока пуста. Стань первым чемпионом! 🏆", { show_alert: true });
+        }
+
+        let msg = `🏆 <b>ЗАЛ СЛАВЫ STOCK & KNOW</b>\n`;
+        msg += `<i>Глобальный рейтинг лучших игроков</i>\n\n`;
+        
+        for (let i = 0; i < results.length; i++) {
+            const u = await db.query.users.findFirst({ where: eq(schema.users.id, results[i].userId) });
+            const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1) + '.';
+            msg += `${medal} <b>${u?.name || 'Игрок'}</b> — ${results[i].totalPoints} очков\n`;
+        }
+
+        await ctx.editMessageCaption(msg, { 
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Назад к игре', 'game_stock')]]) 
+        });
+        await ctx.answerCbQuery();
+    } catch (e) {
+        console.error(e);
+        ctx.reply("Ошибка загрузки таблицы.");
+    }
 });
 
 bot.action('back_to_menu', (ctx) => ctx.reply("Возвращаемся...", getMainKeyboard()));
