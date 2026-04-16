@@ -876,7 +876,7 @@ setInterval(async () => {
     const now = DateTime.now().setZone('Europe/Warsaw'); 
     const activeEvents = await db.query.events.findMany({ where: eq(schema.events.isActive, true) });
     
-    for (const event of activeEvents) {
+    for (const event of events) {
       const start = DateTime.fromFormat(event.dateString, "dd.MM.yyyy HH:mm", { zone: 'Europe/Warsaw' });
       if (!start.isValid) continue;
 
@@ -1026,7 +1026,7 @@ setInterval(async () => {
       if (minutesSinceStart >= 135 && !PROCESSED_AUTO_ACTIONS.has(`close_${event.id}`)) {
         PROCESSED_AUTO_ACTIONS.add(`close_${event.id}`); await autoCloseEvent(event.id);
       }
-    }
+    
     // 5. ОФФЕР "ВТОРОЙ ШАНС" (через 60 минут после закрытия игры)
 if (minutesSinceStart >= 195 && !PROCESSED_AUTO_ACTIONS.has(`reveal_offer_${event.id}`)) {
     PROCESSED_AUTO_ACTIONS.add(`reveal_offer_${event.id}`);
@@ -1070,6 +1070,7 @@ if (minutesSinceStart >= 195 && !PROCESSED_AUTO_ACTIONS.has(`reveal_offer_${even
         }
     }
 }
+    }
 
     // 5. ОПЛАТА (Pending)
     for (const [uId, data] of PENDING_PAYMENTS.entries()) {
@@ -2721,7 +2722,7 @@ bot.command('normalize', async (ctx) => {
 bot.command('status', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     
-    const activeEvents = await db.query.events.findMany({ where: eq(schema.events.isActive, true) });
+    const events = await db.query.events.findMany();
     if (activeEvents.length === 0) return ctx.reply('Нет активных игр.');
 
     let report = `📊 <b>ОТЧЕТ ПО ВСЕМ ИГРАМ:</b>\n\n`;
