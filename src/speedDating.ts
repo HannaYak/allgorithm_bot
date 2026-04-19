@@ -111,8 +111,8 @@ export async function loadDatingCommand(ctx: any, bot: any) {
         FAST_DATES_STATE.participants.set(men[i].id, men[i]);
 
     // 🔥 ВОТ ЭТО ДОБАВЛЯЕМ: Сразу шлем номера игрокам
-       // bot.telegram.sendMessage(women[i].id, `🎫 Твой игровой номер на сегодня: <b>${wNum}</b>\nЗапомни его!`, { parse_mode: 'HTML' }).catch(()=>{});
-       // bot.telegram.sendMessage(men[i].id, `🎫 Твой игровой номер на сегодня: <b>${mNum}</b>\nЗапомни его!`, { parse_mode: 'HTML' }).catch(()=>{});
+        bot.telegram.sendMessage(women[i].id, `🎫 Твой игровой номер на сегодня: <b>${wNum}</b>\nЗапомни его!`, { parse_mode: 'HTML' }).catch(()=>{});
+        bot.telegram.sendMessage(men[i].id, `🎫 Твой игровой номер на сегодня: <b>${mNum}</b>\nЗапомни его!`, { parse_mode: 'HTML' }).catch(()=>{});
     }
 
     await ctx.reply(`✅ РЕАНИМАЦИЯ ИГРЫ №${eid} УСПЕШНА!\nЗагружено участников: ${FAST_DATES_STATE.participants.size}\n\nТеперь кнопки админки и "Новая тема" оживут!`, { parse_mode: 'HTML' });
