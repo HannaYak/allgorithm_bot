@@ -3323,6 +3323,7 @@ bot.action(/reveal_list_(\d+)/, async (ctx) => {
         `Эти участники выделили тебя на игре. Если кто-то из них тебе тоже симпатичен — нажми на имя, чтобы ответить взаимностью и обменяться контактами 🥂`, 
         { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) }
     );
+  });
 // Создание взаимного контакта
 bot.action(/match_back_(\d+)_(\d+)/, async (ctx) => {
     const eid = parseInt(ctx.match[1]);
