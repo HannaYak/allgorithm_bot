@@ -993,22 +993,26 @@ setInterval(async () => {
         // Авто-тема через минуту ТОЛЬКО для Talk-игр. 
         // На свиданиях темы выдаются вручную кнопкой или в начале раундов.
         if (event.type.startsWith('talk_')) {
-          setTimeout(async () => {
-            const currentBks = await db.query.bookings.findMany({ 
-                where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true)) 
-            });
-            const playersNames = [];
-            for (const b of currentBks) {
-                const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
-                if (u?.name) playersNames.push(u.name);
+              setTimeout(async () => {
+                // ПРОВЕРКА: Если игру уже закрыли, ничего не отправляем
+                const currentEvent = await db.query.events.findFirst({ where: eq(schema.events.id, event.id) });
+                if (!currentEvent || !currentEvent.isActive) return;
+
+                const currentBks = await db.query.bookings.findMany({ 
+                    where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true)) 
+                });
+                const playersNames = [];
+                for (const b of currentBks) {
+                    const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+                    if (u?.name) playersNames.push(u.name);
+                }
+                const starter = playersNames.length > 0 ? playersNames[Math.floor(Math.random() * playersNames.length)] : "того, кто смелее";
+                const randomTopic = CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)];
+                const topicMsg = `🎲 <b>Тема №1 для разогрева:</b>\n\n${randomTopic}\n\n🎙 <b>Начинает:</b> <u>${starter}</u>`;
+                await broadcastToEvent(event.id, topicMsg);
+              }, 60000);
             }
-            const starter = playersNames.length > 0 ? playersNames[Math.floor(Math.random() * playersNames.length)] : "того, кто смелее";
-            const randomTopic = CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)];
-            const topicMsg = `🎲 <b>Тема №1 для разогрева:</b>\n\n${randomTopic}\n\n🎙 <b>Начинает:</b> <u>${starter}</u>`;
-            await broadcastToEvent(event.id, topicMsg);
-          }, 60000);
-        }
-      }
+      
 
       // 4. ВИКТОРИНА (105 МИН) И ЗАВЕРШЕНИЕ (135 МИН)
       // 4. ВИКТОРИНА (105 МИН) И ЗАВЕРШЕНИЕ (135 МИН)
@@ -1138,13 +1142,13 @@ await bot.telegram.sendMessage(u.telegramId,
               const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
               if (u) {
                   await bot.telegram.sendMessage(u.telegramId,
-                      `🤫 <b>Кое-кто остался под впечатлением...</b>\n\n` +
-                      `На прошедшей встрече тебя выделили: <b>${pureLikes.length} чел.</b>, с которыми у тебя не случился мэтч.\n\n` +
-                      `Хочешь узнать, кто это был, и выбрать, кому из них открыть свои контакты?`,
+                      `🤫 <b>Кое-кто всё же остался под впечатлением...</b>\n\n` +
+                      `На прошедшей встрече тебя тайно выделили: <b>${pureLikes.length} чел.</b>, но ваши симпатии не совпали в моменте.\n\n` +
+                      `Хочешь узнать, кто это был, и получить возможность открыть им свои контакты? ✨`,
                       {
                           parse_mode: 'HTML',
                           ...Markup.inlineKeyboard([
-                              [Markup.button.callback(`💳 Открыть доступ (15 PLN)`, `pay_reveal_${eventId}`)],
+                              [Markup.button.callback(`💳 Узнать, кто это (15 PLN)`, `pay_reveal_${eventId}`)],
                               [Markup.button.callback(`🔙 В меню`, `back_to_menu`)]
                           ])
                       }
@@ -3311,12 +3315,12 @@ bot.action(/reveal_list_(\d+)/, async (ctx) => {
 
     buttons.push([Markup.button.callback('🏠 В главное меню', 'back_to_menu')]);
 
+    // Показ списка (reveal_list)
     await ctx.editMessageText(
-        `✨ <b>Твои скрытые симпатии:</b>\n\n` +
-        `Этим людям ты понравился на игре, но ты не отметил их в ответ. Сейчас — отличный шанс это исправить! Нажми на имя, чтобы открыть контакты:`, 
+        `✨ <b>Твои тайные поклонники:</b>\n\n` +
+        `Эти участники выделили тебя на игре. Если кто-то из них тебе тоже симпатичен — нажми на имя, чтобы ответить взаимностью и обменяться контактами 🥂`, 
         { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) }
     );
-});
 // Создание взаимного контакта
 bot.action(/match_back_(\d+)_(\d+)/, async (ctx) => {
     const eid = parseInt(ctx.match[1]);
@@ -3327,14 +3331,13 @@ bot.action(/match_back_(\d+)_(\d+)/, async (ctx) => {
     if (!me || !target) return ctx.answerCbQuery("Ошибка данных");
 
     // Сообщение тому, кто нажал кнопку
-    const contactTarget = target.username ? `@${target.username}` : `в SOS-поддержке (нет юзернейма)`;
-    await ctx.replyWithHTML(`🚀 <b>Контакт открыт!</b>\n\nТы ответил взаимностью <b>${target.name}</b>. Ссылка: ${contactTarget}`, getMainKeyboard());
-
+    const contactTarget = target.username ? `@${target.username}` : `(у пользователя скрыт username, напиши в поддержку SOS)`;
+    await ctx.replyWithHTML(`🚀 <b>Симпатия стала взаимной!</b>\n\nОтличный выбор. Контакт <b>${target.name}</b> для связи: ${contactTarget}\nНе откладывай, напиши первым(ой) прямо сейчас! ✨`, getMainKeyboard());
     // Сообщение тому, кто лайкнул первым
     await bot.telegram.sendMessage(target.telegramId, 
-        `🌟 <b>У тебя ПОСТ-ИГРОВОЙ МЭТЧ!</b>\n\nПомнишь <b>${me.name}</b>? Ты отметил(а) его на игре, и он только что подтвердил взаимность! 🥂\n\nКонтакт: @${me.username || 'через бота'}`
+        `🌟 <b>У тебя новый мэтч!</b>\n\nПомнишь, на прошедшей игре тебе понравился(лась) <b>${me.name}</b>? Эта симпатия только что стала взаимной! 🥂\n\nКонтакт для связи: @${me.username || 'через поддержку'}`
     ).catch(() => {});
-
+  
     await ctx.answerCbQuery("Мэтч создан! ❤️");
 });
 
