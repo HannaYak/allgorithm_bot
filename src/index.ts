@@ -1012,6 +1012,7 @@ setInterval(async () => {
                 await broadcastToEvent(event.id, topicMsg);
               }, 60000);
             }
+      }
       
 
       // 4. ВИКТОРИНА (105 МИН) И ЗАВЕРШЕНИЕ (135 МИН)
@@ -1043,6 +1044,7 @@ setInterval(async () => {
       }
       if (now.diff(data.time, 'minutes').minutes > 120) PENDING_PAYMENTS.delete(uId);
     }
+  
   } catch (e) { console.error("Ошибка автопилота:", e); }
 }, 60000);
 
