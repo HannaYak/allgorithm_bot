@@ -862,7 +862,7 @@ function getMainKeyboard(showTopicButton = false) {
 setInterval(async () => {
   try {
     const now = DateTime.now().setZone('Europe/Warsaw'); 
-    const activeEvents = await db.query.events.findMany({ where: eq(schema.events.isActive, true) });
+    const activeEvents = await db.query.events.findMany(); 
     
     for (const event of activeEvents) {
       const start = DateTime.fromFormat(event.dateString, "dd.MM.yyyy HH:mm", { zone: 'Europe/Warsaw' });
@@ -871,6 +871,9 @@ setInterval(async () => {
       const diffHours = start.diff(now, 'hours').hours;
       const minutesSinceStart = now.diff(start, 'minutes').minutes;
 
+      if (minutesSinceStart < -5000 || minutesSinceStart > 360) continue;
+
+      if (event.isActive) {
       // 1. НАПОМИНАНИЯ (3 ДНЯ И УТРО)
       if (diffHours >= 71.5 && diffHours <= 72.5 && !PROCESSED_AUTO_ACTIONS.has(`remind_3d_${event.id}`)) {
         PROCESSED_AUTO_ACTIONS.add(`remind_3d_${event.id}`);
@@ -1014,9 +1017,10 @@ setInterval(async () => {
       if (minutesSinceStart >= 135 && !PROCESSED_AUTO_ACTIONS.has(`close_${event.id}`)) {
         PROCESSED_AUTO_ACTIONS.add(`close_${event.id}`); await autoCloseEvent(event.id);
       }
-    
-    // 5. ОФФЕР "ВТОРОЙ ШАНС" (через 60 минут после закрытия игры)
-if (minutesSinceStart >= 195 && !PROCESSED_AUTO_ACTIONS.has(`reveal_offer_${event.id}`)) {
+    }
+
+    // 5. ОФФЕР "ВТОРОЙ ШАНС" (Сейчас тест 137 мин. Потом для 30 мин после игры поменять на 165)
+if (minutesSinceStart >= 137 && !PROCESSED_AUTO_ACTIONS.has(`reveal_offer_${event.id}`)) {
     PROCESSED_AUTO_ACTIONS.add(`reveal_offer_${event.id}`);
     
     // Ищем всех участников игры
