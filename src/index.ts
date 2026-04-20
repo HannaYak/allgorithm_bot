@@ -1011,60 +1011,19 @@ setInterval(async () => {
       }
 
       // 4. ВИКТОРИНА (105 МИН) И ЗАВЕРШЕНИЕ (135 МИН)
-      if (minutesSinceStart >= 105 && event.type.includes('talk_toast') && !PROCESSED_AUTO_ACTIONS.has(`quiz_${event.id}`)) {
-        PROCESSED_AUTO_ACTIONS.add(`quiz_${event.id}`); await runAutoQuiz(event.id);
-      }
-      if (minutesSinceStart >= 135 && !PROCESSED_AUTO_ACTIONS.has(`close_${event.id}`)) {
-        PROCESSED_AUTO_ACTIONS.add(`close_${event.id}`); await autoCloseEvent(event.id);
-      }
-    }
+      // 4. ВИКТОРИНА (105 МИН) И ЗАВЕРШЕНИЕ (135 МИН)
+// 4. ВИКТОРИНА (105 МИН) И ЗАВЕРШЕНИЕ (135 МИН)
+          if (minutesSinceStart >= 105 && event.type.includes('talk_toast') && !PROCESSED_AUTO_ACTIONS.has(`quiz_${event.id}`)) {
+            PROCESSED_AUTO_ACTIONS.add(`quiz_${event.id}`); await runAutoQuiz(event.id);
+          }
+          if (minutesSinceStart >= 135 && !PROCESSED_AUTO_ACTIONS.has(`close_${event.id}`)) {
+            PROCESSED_AUTO_ACTIONS.add(`close_${event.id}`); await autoCloseEvent(event.id);
+          }
+      } // <--- ЗАКРЫЛИ БЛОК АКТИВНЫХ ИГР (ЗАЩИТА)
 
-    // 5. ОФФЕР "ВТОРОЙ ШАНС" (Сейчас тест 137 мин. Потом для 30 мин после игры поменять на 165)
-if (minutesSinceStart >= 137 && !PROCESSED_AUTO_ACTIONS.has(`reveal_offer_${event.id}`)) {
-    PROCESSED_AUTO_ACTIONS.add(`reveal_offer_${event.id}`);
-    
-    // Ищем всех участников игры
-    const bks = await db.query.bookings.findMany({ 
-        where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true)) 
-    });
+    } // <--- КОНЕЦ ЦИКЛА ПО ИГРАМ
 
-    for (const b of bks) {
-        // Считаем лайки в сторону этого юзера
-        const received = await db.query.secretLikes.findMany({
-            where: and(eq(schema.secretLikes.eventId, event.id), eq(schema.secretLikes.targetUserId, b.userId))
-        });
-
-        // Считаем его собственные лайки, чтобы найти мэтчи
-        const myLikes = await db.query.secretLikes.findMany({
-            where: and(eq(schema.secretLikes.eventId, event.id), eq(schema.secretLikes.userId, b.userId))
-        });
-        const myLikedIds = new Set(myLikes.map(l => l.targetUserId));
-
-        // Фильтруем только те лайки, которые НЕ стали мэтчами
-        const pureLikes = received.filter(l => !myLikedIds.has(l.userId));
-
-        if (pureLikes.length > 0) {
-            const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
-            if (u) {
-                await bot.telegram.sendMessage(u.telegramId,
-                    `🤫 <b>Кое-кто остался под впечатлением...</b>\n\n` +
-                    `На прошедшей встрече тебя выделили: <b>${pureLikes.length} чел.</b>, с которыми у тебя не случился мэтч.\n\n` +
-                    `Хочешь узнать, кто это был, и выбрать, кому из них открыть свои контакты?`,
-                    {
-                        parse_mode: 'HTML',
-                        ...Markup.inlineKeyboard([
-                            [Markup.button.callback(`💳 Открыть доступ (15 PLN)`, `pay_reveal_${event.id}`)],
-                            [Markup.button.callback(`🔙 В меню`, `back_to_menu`)]
-                        ])
-                    }
-                ).catch(() => {});
-            }
-        }
-    }
-}
-    }
-
-    // 5. ОПЛАТА (Pending)
+    // 6. ОПЛАТА (Pending)
     for (const [uId, data] of PENDING_PAYMENTS.entries()) {
       if (now.diff(data.time, 'minutes').minutes >= 30 && !data.notified) {
         const u = await db.query.users.findFirst({ where: eq(schema.users.id, parseInt(uId)) });
@@ -1154,8 +1113,48 @@ await bot.telegram.sendMessage(u.telegramId,
             ).catch(() => {});
         }
     }
-  }
-} // <--- ВОТ ЭТА СКОБКА БЫЛА ПРОПУЩЕНА! Теперь функция закрыта.
+  }
+
+  // --- 5. ОФФЕР "ВТОРОЙ ШАНС" (Привязан к закрытию игры) ---
+  setTimeout(async () => {
+      // Ищем всех участников игры
+      const finalBks = await db.query.bookings.findMany({ 
+          where: and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true)) 
+      });
+
+      for (const b of finalBks) {
+          const received = await db.query.secretLikes.findMany({
+              where: and(eq(schema.secretLikes.eventId, eventId), eq(schema.secretLikes.targetUserId, b.userId))
+          });
+
+          const myLikes = await db.query.secretLikes.findMany({
+              where: and(eq(schema.secretLikes.eventId, eventId), eq(schema.secretLikes.userId, b.userId))
+          });
+          
+          const myLikedIds = new Set(myLikes.map(l => l.targetUserId));
+          const pureLikes = received.filter(l => !myLikedIds.has(l.userId));
+
+          if (pureLikes.length > 0) {
+              const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+              if (u) {
+                  await bot.telegram.sendMessage(u.telegramId,
+                      `🤫 <b>Кое-кто остался под впечатлением...</b>\n\n` +
+                      `На прошедшей встрече тебя выделили: <b>${pureLikes.length} чел.</b>, с которыми у тебя не случился мэтч.\n\n` +
+                      `Хочешь узнать, кто это был, и выбрать, кому из них открыть свои контакты?`,
+                      {
+                          parse_mode: 'HTML',
+                          ...Markup.inlineKeyboard([
+                              [Markup.button.callback(`💳 Открыть доступ (15 PLN)`, `pay_reveal_${eventId}`)],
+                              [Markup.button.callback(`🔙 В меню`, `back_to_menu`)]
+                          ])
+                      }
+                  ).catch(() => {});
+              }
+          }
+      }
+  }, 2 * 60 * 1000); // <-- ТАЙМЕР: 2 минуты. Позже для 30 минут поменяй на 30 * 60 * 1000
+
+} // <--- Функция закрыта// <--- ВОТ ЭТА СКОБКА БЫЛА ПРОПУЩЕНА! Теперь функция закрыта.
 // --- 7. ОБРАБОТЧИКИ ---
 
 bot.start(async (ctx) => {
