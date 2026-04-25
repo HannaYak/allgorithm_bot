@@ -2849,6 +2849,62 @@ bot.command('broadcast_except_m35', async (ctx) => {
     }
 });
 
+// --- РУЧНОЕ ОБНОВЛЕНИЕ ВСЕЙ БАЗЫ ЮЗЕРОВ ---
+bot.command('sync_all_users', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+
+    try {
+        const allUsers = await db.query.users.findMany();
+        await ctx.reply(`🔄 Начинаю полную синхронизацию базы (${allUsers.length} чел.).\nЭто займет некоторое время, я пришлю отчет по итогу...`);
+
+        let updatedCount = 0;
+        let errorCount = 0;
+
+        // Запускаем процесс
+        for (const u of allUsers) {
+            if (u.telegramId) {
+                try {
+                    // Запрашиваем актуальные данные у Telegram
+                    const chatInfo = await bot.telegram.getChat(u.telegramId);
+                    
+                    const newUsername = chatInfo.username || null;
+                    const newFirstName = chatInfo.first_name || u.firstName;
+
+                    // Если данные отличаются — обновляем базу
+                    if (newUsername !== u.username || newFirstName !== u.firstName) {
+                        await db.update(schema.users)
+                            .set({ 
+                                username: newUsername, 
+                                firstName: newFirstName 
+                            })
+                            .where(eq(schema.users.id, u.id));
+                        updatedCount++;
+                    }
+                    
+                    // Пауза 100мс между запросами, чтобы не поймать бан от ТГ за спам
+                    await new Promise(r => setTimeout(r, 100));
+
+                } catch (e) {
+                    // Если юзер удалил аккаунт или заблокировал бота — фиксируем ошибку
+                    errorCount++;
+                }
+            }
+        }
+
+        await ctx.reply(
+            `✅ <b>Глобальная проверка завершена!</b>\n\n` +
+            `👤 Всего в базе: ${allUsers.length}\n` +
+            `✨ Обновлено данных: ${updatedCount}\n` +
+            `❌ Недоступных аккаунтов: ${errorCount}`, 
+            { parse_mode: 'HTML' }
+        );
+
+    } catch (e) {
+        console.error("Ошибка глобальной синхронизации:", e);
+        ctx.reply('❌ Произошла ошибка при доступе к базе данных.');
+    }
+});
+
 // 5. Управление Speed Dating и Stock
 bot.action('admin_fd_panel', (ctx) => SD.getAdminFDCPanel(ctx));
 
