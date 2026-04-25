@@ -2850,42 +2850,6 @@ bot.command('broadcast_except_m35', async (ctx) => {
 });
 
 // --- РУЧНОЕ ОБНОВЛЕНИЕ ВСЕЙ БАЗЫ ЮЗЕРОВ ---
-let isSyncRunning = false; // Добавь эту переменную ВНЕ команды, выше
-
-bot.command('sync_all_users', async (ctx) => {
-    if (ctx.from.id !== ADMIN_ID) return;
-    if (isSyncRunning) return ctx.reply("⏳ Проверка уже идет, подождите завершения.");
-
-    isSyncRunning = true;
-    try {
-        const allUsers = await db.query.users.findMany();
-        await ctx.reply(`🔄 Начинаю синхронизацию ${allUsers.length} чел. Это займет ~3 минуты...`);
-
-        let updatedCount = 0;
-        let errorCount = 0;
-
-        for (const u of allUsers) {
-            if (!u.telegramId) continue;
-            try {
-                const chatInfo = await bot.telegram.getChat(u.telegramId);
-                if (chatInfo.username !== u.username || chatInfo.first_name !== u.firstName) {
-                    await db.update(schema.users)
-                        .set({ username: chatInfo.username || null, firstName: chatInfo.first_name || u.firstName })
-                        .where(eq(schema.users.id, u.id));
-                    updatedCount++;
-                }
-                await new Promise(r => setTimeout(r, 200)); // Увеличили паузу до 200мс для стабильности
-            } catch (e) {
-                errorCount++;
-            }
-        }
-        await ctx.reply(`✅ Готово!\nОбновлено: ${updatedCount}\nОшибок: ${errorCount}`);
-    } catch (e) {
-        console.error(e);
-    } finally {
-        isSyncRunning = false; // Освобождаем замок
-    }
-});
 
 // 5. Управление Speed Dating и Stock
 bot.action('admin_fd_panel', (ctx) => SD.getAdminFDCPanel(ctx));
