@@ -2850,58 +2850,40 @@ bot.command('broadcast_except_m35', async (ctx) => {
 });
 
 // --- РУЧНОЕ ОБНОВЛЕНИЕ ВСЕЙ БАЗЫ ЮЗЕРОВ ---
+let isSyncRunning = false; // Добавь эту переменную ВНЕ команды, выше
+
 bot.command('sync_all_users', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
+    if (isSyncRunning) return ctx.reply("⏳ Проверка уже идет, подождите завершения.");
 
+    isSyncRunning = true;
     try {
         const allUsers = await db.query.users.findMany();
-        await ctx.reply(`🔄 Начинаю полную синхронизацию базы (${allUsers.length} чел.).\nЭто займет некоторое время, я пришлю отчет по итогу...`);
+        await ctx.reply(`🔄 Начинаю синхронизацию ${allUsers.length} чел. Это займет ~3 минуты...`);
 
         let updatedCount = 0;
         let errorCount = 0;
 
-        // Запускаем процесс
         for (const u of allUsers) {
-            if (u.telegramId) {
-                try {
-                    // Запрашиваем актуальные данные у Telegram
-                    const chatInfo = await bot.telegram.getChat(u.telegramId);
-                    
-                    const newUsername = chatInfo.username || null;
-                    const newFirstName = chatInfo.first_name || u.firstName;
-
-                    // Если данные отличаются — обновляем базу
-                    if (newUsername !== u.username || newFirstName !== u.firstName) {
-                        await db.update(schema.users)
-                            .set({ 
-                                username: newUsername, 
-                                firstName: newFirstName 
-                            })
-                            .where(eq(schema.users.id, u.id));
-                        updatedCount++;
-                    }
-                    
-                    // Пауза 100мс между запросами, чтобы не поймать бан от ТГ за спам
-                    await new Promise(r => setTimeout(r, 100));
-
-                } catch (e) {
-                    // Если юзер удалил аккаунт или заблокировал бота — фиксируем ошибку
-                    errorCount++;
+            if (!u.telegramId) continue;
+            try {
+                const chatInfo = await bot.telegram.getChat(u.telegramId);
+                if (chatInfo.username !== u.username || chatInfo.first_name !== u.firstName) {
+                    await db.update(schema.users)
+                        .set({ username: chatInfo.username || null, firstName: chatInfo.first_name || u.firstName })
+                        .where(eq(schema.users.id, u.id));
+                    updatedCount++;
                 }
+                await new Promise(r => setTimeout(r, 200)); // Увеличили паузу до 200мс для стабильности
+            } catch (e) {
+                errorCount++;
             }
         }
-
-        await ctx.reply(
-            `✅ <b>Глобальная проверка завершена!</b>\n\n` +
-            `👤 Всего в базе: ${allUsers.length}\n` +
-            `✨ Обновлено данных: ${updatedCount}\n` +
-            `❌ Недоступных аккаунтов: ${errorCount}`, 
-            { parse_mode: 'HTML' }
-        );
-
+        await ctx.reply(`✅ Готово!\nОбновлено: ${updatedCount}\nОшибок: ${errorCount}`);
     } catch (e) {
-        console.error("Ошибка глобальной синхронизации:", e);
-        ctx.reply('❌ Произошла ошибка при доступе к базе данных.');
+        console.error(e);
+    } finally {
+        isSyncRunning = false; // Освобождаем замок
     }
 });
 
