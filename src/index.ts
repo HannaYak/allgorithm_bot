@@ -2821,34 +2821,59 @@ bot.command('broadcast_except_m35', async (ctx) => {
     }
 
     try {
+        const now = DateTime.now().setZone('Europe/Warsaw');
+        const tomorrow = now.plus({ days: 1 });
+
+        // 1. Ищем ID игр, которые пройдут сегодня или завтра
+        const activeEvents = await db.query.events.findMany({ where: eq(schema.events.isActive, true) });
+        const upcomingEventIds = activeEvents
+            .filter(ev => {
+                const evDate = DateTime.fromFormat(ev.dateString, "dd.MM.yyyy HH:mm", { zone: 'Europe/Warsaw' });
+                return evDate.isValid && (evDate.hasSame(now, 'day') || evDate.hasSame(tomorrow, 'day'));
+            })
+            .map(ev => ev.id);
+
+        // 2. Собираем ID пользователей, которые УЖЕ оплатили эти ближайшие игры
+        const excludedUserIds = new Set<number>();
+        if (upcomingEventIds.length > 0) {
+            const bookings = await db.query.bookings.findMany({
+                where: and(
+                    inArray(schema.bookings.eventId, upcomingEventIds),
+                    eq(schema.bookings.paid, true)
+                )
+            });
+            bookings.forEach(b => excludedUserIds.add(b.userId));
+        }
+
         const allUsers = await db.query.users.findMany();
         let count = 0;
 
         for (const u of allUsers) {
+            // УСЛОВИЕ 1: Исключаем тех, кто записан на ближайшие ивенты
+            if (excludedUserIds.has(u.id)) continue;
+
             const age = parseInt(u.birthDate || '0');
             const gender = (u.gender || '').toLowerCase();
 
-            // УСЛОВИЕ ИСКЛЮЧЕНИЯ: 
-            // Мы НЕ отправляем, если это МУЖЧИНА И возраст от 35 до 45
-            const isTargetToExclude = gender.includes('муж') && age >= 35 && age <= 45;
+            // УСЛОВИЕ 2: Исключаем мужчин 35-45 лет
+            const isMan3545 = gender.includes('муж') && age >= 35 && age <= 45;
 
-            if (!isTargetToExclude) {
+            if (!isMan3545) {
                 try {
                     await bot.telegram.sendMessage(u.telegramId, messageText, { parse_mode: 'HTML' });
                     count++;
                 } catch (e) {
-                    // Игнорируем ошибки (например, если бот заблокирован)
+                    // Пропускаем тех, кто заблокировал бота
                 }
             }
         }
 
-        await ctx.reply(`✅ Рассылка завершена!\n🚫 Мужчины 35-45 были исключены.\n📨 Отправлено остальным: ${count} чел.`);
+        await ctx.reply(`✅ Рассылка завершена!\n\n🚫 Исключены:\n- Мужчины 35-45 лет\n- Все записанные на сегодня/завтра\n\n📨 Отправлено: ${count} чел.`);
     } catch (e) {
         console.error(e);
         ctx.reply('❌ Ошибка при выполнении рассылки.');
     }
 });
-
 // --- РУЧНОЕ ОБНОВЛЕНИЕ ВСЕЙ БАЗЫ ЮЗЕРОВ ---
 
 // 5. Управление Speed Dating и Stock
