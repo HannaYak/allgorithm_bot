@@ -2810,6 +2810,45 @@ bot.command('broadcast_m35', async (ctx) => {
     }
 });
 
+bot.command('broadcast_except_m35', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    
+    const parts = ctx.message.text.split(' ');
+    const messageText = parts.slice(1).join(' ');
+
+    if (!messageText) {
+        return ctx.reply('❌ Ошибка: Введи текст рассылки.');
+    }
+
+    try {
+        const allUsers = await db.query.users.findMany();
+        let count = 0;
+
+        for (const u of allUsers) {
+            const age = parseInt(u.birthDate || '0');
+            const gender = (u.gender || '').toLowerCase();
+
+            // УСЛОВИЕ ИСКЛЮЧЕНИЯ: 
+            // Мы НЕ отправляем, если это МУЖЧИНА И возраст от 35 до 45
+            const isTargetToExclude = gender.includes('муж') && age >= 35 && age <= 45;
+
+            if (!isTargetToExclude) {
+                try {
+                    await bot.telegram.sendMessage(u.telegramId, messageText, { parse_mode: 'HTML' });
+                    count++;
+                } catch (e) {
+                    // Игнорируем ошибки (например, если бот заблокирован)
+                }
+            }
+        }
+
+        await ctx.reply(`✅ Рассылка завершена!\n🚫 Мужчины 35-45 были исключены.\n📨 Отправлено остальным: ${count} чел.`);
+    } catch (e) {
+        console.error(e);
+        ctx.reply('❌ Ошибка при выполнении рассылки.');
+    }
+});
+
 // 5. Управление Speed Dating и Stock
 bot.action('admin_fd_panel', (ctx) => SD.getAdminFDCPanel(ctx));
 
