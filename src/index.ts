@@ -1029,16 +1029,19 @@ setInterval(async () => {
     } // <--- КОНЕЦ ЦИКЛА ПО ИГРАМ
 
     // 6. ОПЛАТА (Pending)
+    // 6. ОПЛАТА (Pending)
+   // 6. ОПЛАТА (Pending)
     for (const [uId, data] of PENDING_PAYMENTS.entries()) {
       if (now.diff(data.time, 'minutes').minutes >= 30 && !data.notified) {
         const u = await db.query.users.findFirst({ where: eq(schema.users.id, parseInt(uId)) });
         if (u) {
-          bot.telegram.sendMessage(u.telegramId, 
+          // Мы убрали event.type, так как в этом цикле нет ссылки на конкретную игру
+          await bot.telegram.sendMessage(u.telegramId, 
             `🔔 <b>Ой! Мы что-то пропустили?</b>\n\n` +
-            `Твоё место на игру <b>${getGameName(event.type)}</b> всё ещё ждёт тебя, но бронирование не завершено. 🥂\n\n` +
+            `Твоё место на одну из ближайших игр всё ещё ждёт тебя, но бронирование не завершено. 🥂\n\n` +
             `Места в Алгоритме разлетаются быстро, а мы очень хотим видеть тебя за столом! Нажми «Оплатить», чтобы подтвердить участие. ✨`,
             { parse_mode: 'HTML' }
-        ).catch(() => {});
+          ).catch(() => {});
         }
         PENDING_PAYMENTS.set(uId, { ...data, notified: true });
       }
@@ -3524,6 +3527,16 @@ bot.action('start_registration', (ctx) => { ctx.deleteMessage(); ctx.scene.enter
 // --- АВТОМАТИЧЕСКАЯ ЗАПИСЬ ПОСЛЕ ОПЛАТЫ (WEBHOOK) ---
 async function handleSuccessfulPayment(session: any) {
   const { telegramId, eventId, type, voucherId } = session.metadata;
+
+  // ДОБАВЬ ЭТУ ПРОВЕРКУ:
+  const tId = parseInt(telegramId);
+  const eId = parseInt(eventId);
+
+  if (isNaN(tId) || isNaN(eId)) {
+      console.error("КРИТИЧЕСКАЯ ОШИБКА: TelegramID или EventID не являются числами!", session.metadata);
+      return;
+  }
+  // Дальше используй tId и eId вместо telegramId и eventId
   
   // 1. ЕСЛИ ЭТО ОПЛАТА "ВТОРОГО ШАНСА"
   if (type === 'reveal') {
