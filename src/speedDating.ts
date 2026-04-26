@@ -100,20 +100,22 @@ export async function loadDatingCommand(ctx: any, bot: any) {
 
         // Внутри loadDatingCommand заменяем блок раздачи:
     const limit = Math.min(men.length, women.length);
-    for (let i = 0; i < limit; i++) {
-        const wNum = (i * 2) + 1; // 1, 3, 5...
-        const mNum = (i * 2) + 2; // 2, 4, 6...
+// В файле src/speedDating.ts внутри функции loadDatingCommand
 
-    // Записываем в память
-        women[i].num = wNum;
-        men[i].num = mNum;
-        FAST_DATES_STATE.participants.set(women[i].id, women[i]);
-        FAST_DATES_STATE.participants.set(men[i].id, men[i]);
+for (let i = 0; i < limit; i++) {
+    const wNum = (i * 2) + 1;
+    const mNum = (i * 2) + 2;
 
-    // 🔥 ВОТ ЭТО ДОБАВЛЯЕМ: Сразу шлем номера игрокам
-        bot.telegram.sendMessage(women[i].id, `🎫 Твой игровой номер на сегодня: <b>${wNum}</b>\nЗапомни его!`, { parse_mode: 'HTML' }).catch(()=>{});
-        bot.telegram.sendMessage(men[i].id, `🎫 Твой игровой номер на сегодня: <b>${mNum}</b>\nЗапомни его!`, { parse_mode: 'HTML' }).catch(()=>{});
-    }
+    FAST_DATES_STATE.participants.set(women[i].telegramId, { id: women[i].telegramId, num: wNum, gender: 'Женщина', name: women[i].name });
+    FAST_DATES_STATE.participants.set(men[i].telegramId, { id: men[i].telegramId, num: mNum, gender: 'Мужчина', name: men[i].name });
+
+    // --- ЭТО УЧАСТНИКАМ (ЗАКОММЕНТИРУЙ) ---
+    // await bot.telegram.sendMessage(women[i].telegramId, `💘 Твой номер на сегодня: ${wNum}`, { parse_mode: 'HTML' }).catch(()=>{});
+    // await bot.telegram.sendMessage(men[i].telegramId, `💘 Твой номер на сегодня: ${mNum}`, { parse_mode: 'HTML' }).catch(()=>{});
+
+    // --- ЭТО ТЕБЕ (ДОБАВЬ) ---
+    await bot.telegram.sendMessage(5456905649, `✅ Назначено: ${women[i].name} (№${wNum}) и ${men[i].name} (№${mNum})`).catch(()=>{});
+}
 
     await ctx.reply(`✅ РЕАНИМАЦИЯ ИГРЫ №${eid} УСПЕШНА!\nЗагружено участников: ${FAST_DATES_STATE.participants.size}\n\nТеперь кнопки админки и "Новая тема" оживут!`, { parse_mode: 'HTML' });
   } catch (e) {
