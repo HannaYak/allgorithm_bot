@@ -2892,65 +2892,7 @@ bot.command('broadcast_except_m35', async (ctx) => {
 // --- РУЧНОЕ ОБНОВЛЕНИЕ ВСЕЙ БАЗЫ ЮЗЕРОВ ---
 
 // 1. КОМАНДА ДЛЯ РАССЫЛКИ ОПРОСА НОВИЧКАМ
-bot.command('broadcast_poll', async (ctx) => {
-    if (ctx.from.id !== ADMIN_ID) return;
 
-    const question = "Видим, что у нас много новеньких, но не все еще были на встречах. Что вас пока останавливает? Свои варианты можно написать нам в SOS:) 👇";
-    const options = [
-        "Я из другого города / страны 🌍",
-        "Только подписался, пока присматриваюсь 👀",
-        "Нет компании, а одному идти стесняюсь 🙈",
-        "Не подходит текущее расписание 🗓",
-        "Не до конца понимаю, как всё проходит 🤔",
-        "Жду другой формат (арт, спорт, бизнес) ✨",
-        "Боюсь не вписаться в аудиторию 🤷‍♂️",
-        "Слишком высокая цена / жду скидку 💸",
-        "Неудобно добираться до ваших локаций 🚕",
-        "Хочу прийти, но забываю купить билет 😅"
-    ];
-
-    try {
-        // Получаем всех пользователей
-        const allUsers = await db.query.users.findMany();
-        
-        // Получаем все успешные оплаты
-        const paidBookings = await db.query.bookings.findMany({
-            where: eq(schema.bookings.paid, true)
-        });
-
-        // Собираем ID тех, кто уже хоть раз покупал билет
-        const buyersIds = paidBookings.map(b => b.userId);
-
-        let count = 0;
-        await ctx.reply(`🔄 Начинаю рассылку опроса для тех, кто еще не покупал билеты...`);
-
-        for (const u of allUsers) {
-            if (!u.telegramId) continue;
-            
-            // Если ID пользователя есть в списке покупателей — пропускаем его
-            if (buyersIds.includes(u.id)) continue;
-
-            try {
-                // Отправляем опрос
-                await bot.telegram.sendPoll(u.telegramId, question, options, {
-                    is_anonymous: false, // Чтобы мы видели, кто как ответил
-                    allows_multiple_answers: true // Можно выбрать несколько вариантов
-                });
-                count++;
-                
-                // Обязательная пауза, чтобы Telegram не заблокировал за спам
-                await new Promise(r => setTimeout(r, 100));
-            } catch (e) {
-                // Игнорируем тех, кто удалил или заблокировал бота
-            }
-        }
-
-        await ctx.reply(`✅ Опрос успешно отправлен ${count} «новеньким» участникам!`);
-    } catch (e) {
-        console.error(e);
-        await ctx.reply('❌ Ошибка при рассылке опроса.');
-    }
-});
 
 
 // 2. ОБРАБОТЧИК ОТВЕТОВ НА ОПРОС (ОТПРАВЛЯЕТ ТЕБЕ В ЛИЧКУ)
