@@ -1018,12 +1018,20 @@ setInterval(async () => {
       // 4. ВИКТОРИНА (105 МИН) И ЗАВЕРШЕНИЕ (135 МИН)
       // 4. ВИКТОРИНА (105 МИН) И ЗАВЕРШЕНИЕ (135 МИН)
 // 4. ВИКТОРИНА (105 МИН) И ЗАВЕРШЕНИЕ (135 МИН)
-          if (minutesSinceStart >= 105 && event.type.includes('talk_toast') && !PROCESSED_AUTO_ACTIONS.has(`quiz_${event.id}`)) {
-            PROCESSED_AUTO_ACTIONS.add(`quiz_${event.id}`); await runAutoQuiz(event.id);
-          }
-          if (minutesSinceStart >= 135 && !PROCESSED_AUTO_ACTIONS.has(`close_${event.id}`)) {
-            PROCESSED_AUTO_ACTIONS.add(`close_${event.id}`); await autoCloseEvent(event.id);
-          }
+          // 4. ВИКТОРИНА (105 МИН) И ЗАВЕРШЕНИЕ (135 МИН)
+      if (minutesSinceStart >= 105 && event.type.includes('talk_toast') && !PROCESSED_AUTO_ACTIONS.has(`quiz_${event.id}`)) {
+        PROCESSED_AUTO_ACTIONS.add(`quiz_${event.id}`); await runAutoQuiz(event.id);
+      }
+      if (minutesSinceStart >= 135 && !PROCESSED_AUTO_ACTIONS.has(`close_${event.id}`)) {
+        PROCESSED_AUTO_ACTIONS.add(`close_${event.id}`); await autoCloseEvent(event.id);
+      }
+      
+      // 5. ВТОРОЙ ШАНС (195 МИН = 135 минут игры + 60 минут ожидания)
+      // Сразу отсекаем Speed Dating, чтобы не гонять пустые запросы к БД
+      if (minutesSinceStart >= 195 && !event.type.startsWith('speed_dating') && !PROCESSED_AUTO_ACTIONS.has(`second_chance_${event.id}`)) {
+        PROCESSED_AUTO_ACTIONS.add(`second_chance_${event.id}`); 
+        await sendSecondChanceOffers(event.id);
+      }
       } // <--- ЗАКРЫЛИ БЛОК АКТИВНЫХ ИГР (ЗАЩИТА)
 
     } // <--- КОНЕЦ ЦИКЛА ПО ИГРАМ
@@ -1124,47 +1132,51 @@ await bot.telegram.sendMessage(u.telegramId,
     }
   }
 
-  // --- 5. ОФФЕР "ВТОРОЙ ШАНС" (Привязан к закрытию игры) ---
-  setTimeout(async () => {
-      // Ищем всех участников игры
-      const finalBks = await db.query.bookings.findMany({ 
-          where: and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true)) 
-      });
-
-      for (const b of finalBks) {
-          const received = await db.query.secretLikes.findMany({
-              where: and(eq(schema.secretLikes.eventId, eventId), eq(schema.secretLikes.targetUserId, b.userId))
-          });
-
-          const myLikes = await db.query.secretLikes.findMany({
-              where: and(eq(schema.secretLikes.eventId, eventId), eq(schema.secretLikes.userId, b.userId))
-          });
-          
-          const myLikedIds = new Set(myLikes.map(l => l.targetUserId));
-          const pureLikes = received.filter(l => !myLikedIds.has(l.userId));
-
-          if (pureLikes.length > 0) {
-              const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
-              if (u) {
-                  await bot.telegram.sendMessage(u.telegramId,
-                      `🤫 <b>Кое-кто всё же остался под впечатлением...</b>\n\n` +
-                      `На прошедшей встрече тебя тайно выделили: <b>${pureLikes.length} чел.</b>, но ваши симпатии не совпали в моменте.\n\n` +
-                      `Хочешь узнать, кто это был, и получить возможность открыть им свои контакты? ✨`,
-                      {
-                          parse_mode: 'HTML',
-                          ...Markup.inlineKeyboard([
-                              [Markup.button.callback(`💳 Узнать, кто это (15 PLN)`, `pay_reveal_${eventId}`)],
-                              [Markup.button.callback(`🔙 В меню`, `back_to_menu`)]
-                          ])
-                      }
-                  ).catch(() => {});
-              }
-          }
-      }
-  }, 60 * 60 * 1000); // <-- ТАЙМЕР: 2 минуты. Позже для 30 минут поменяй на 30 * 60 * 1000
+  // --- 5. ОФФЕР "ВТОРОЙ ШАНС" (Привязан к закрытию игры) -- // <-- ТАЙМЕР: 2 минуты. Позже для 30 минут поменяй на 30 * 60 * 1000
 
 } // <--- Функция закрыта// <--- ВОТ ЭТА СКОБКА БЫЛА ПРОПУЩЕНА! Теперь функция закрыта.
 // --- 7. ОБРАБОТЧИКИ ---
+
+async function sendSecondChanceOffers(eventId: number) {
+    // Ищем всех участников прошедшей игры
+    const finalBks = await db.query.bookings.findMany({ 
+        where: and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true)) 
+    });
+
+    for (const b of finalBks) {
+        // Кто лайкнул меня
+        const received = await db.query.secretLikes.findMany({
+            where: and(eq(schema.secretLikes.eventId, eventId), eq(schema.secretLikes.targetUserId, b.userId))
+        });
+
+        // Кого лайкнул я
+        const myLikes = await db.query.secretLikes.findMany({
+            where: and(eq(schema.secretLikes.eventId, eventId), eq(schema.secretLikes.userId, b.userId))
+        });
+        
+        const myLikedIds = new Set(myLikes.map(l => l.targetUserId));
+        // Оставляем только тех, кто лайкнул меня, но кого НЕ лайкнул я
+        const pureLikes = received.filter(l => !myLikedIds.has(l.userId));
+
+        if (pureLikes.length > 0) {
+            const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+            if (u) {
+                await bot.telegram.sendMessage(u.telegramId,
+                    `🤫 <b>Кое-кто всё же остался под впечатлением...</b>\n\n` +
+                    `На прошедшей встрече тебя тайно выделили: <b>${pureLikes.length} чел.</b>, но ваши симпатии не совпали в моменте.\n\n` +
+                    `Хочешь узнать, кто это был, и получить возможность открыть им свои контакты? ✨`,
+                    {
+                        parse_mode: 'HTML',
+                        ...Markup.inlineKeyboard([
+                            [Markup.button.callback(`💳 Узнать, кто это (15 PLN)`, `pay_reveal_${eventId}`)],
+                            [Markup.button.callback(`🔙 В меню`, `back_to_menu`)]
+                        ])
+                    }
+                ).catch(() => {});
+            }
+        }
+    }
+}
 
 bot.start(async (ctx) => {
   try {
@@ -2879,6 +2891,105 @@ bot.command('broadcast_except_m35', async (ctx) => {
 });
 // --- РУЧНОЕ ОБНОВЛЕНИЕ ВСЕЙ БАЗЫ ЮЗЕРОВ ---
 
+// 1. КОМАНДА ДЛЯ РАССЫЛКИ ОПРОСА НОВИЧКАМ
+bot.command('broadcast_poll', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+
+    const question = "Видим, что у нас много новеньких, но не все еще были на встречах. Что вас пока останавливает? Свои варианты можно написать нам в SOS:) 👇";
+    const options = [
+        "Я из другого города / страны 🌍",
+        "Только подписался, пока присматриваюсь 👀",
+        "Нет компании, а одному идти стесняюсь 🙈",
+        "Не подходит текущее расписание 🗓",
+        "Не до конца понимаю, как всё проходит 🤔",
+        "Жду другой формат (арт, спорт, бизнес) ✨",
+        "Боюсь не вписаться в аудиторию 🤷‍♂️",
+        "Слишком высокая цена / жду скидку 💸",
+        "Неудобно добираться до ваших локаций 🚕",
+        "Хочу прийти, но забываю купить билет 😅"
+    ];
+
+    try {
+        // Получаем всех пользователей
+        const allUsers = await db.query.users.findMany();
+        
+        // Получаем все успешные оплаты
+        const paidBookings = await db.query.bookings.findMany({
+            where: eq(schema.bookings.paid, true)
+        });
+
+        // Собираем ID тех, кто уже хоть раз покупал билет
+        const buyersIds = paidBookings.map(b => b.userId);
+
+        let count = 0;
+        await ctx.reply(`🔄 Начинаю рассылку опроса для тех, кто еще не покупал билеты...`);
+
+        for (const u of allUsers) {
+            if (!u.telegramId) continue;
+            
+            // Если ID пользователя есть в списке покупателей — пропускаем его
+            if (buyersIds.includes(u.id)) continue;
+
+            try {
+                // Отправляем опрос
+                await bot.telegram.sendPoll(u.telegramId, question, options, {
+                    is_anonymous: false, // Чтобы мы видели, кто как ответил
+                    allows_multiple_answers: true // Можно выбрать несколько вариантов
+                });
+                count++;
+                
+                // Обязательная пауза, чтобы Telegram не заблокировал за спам
+                await new Promise(r => setTimeout(r, 100));
+            } catch (e) {
+                // Игнорируем тех, кто удалил или заблокировал бота
+            }
+        }
+
+        await ctx.reply(`✅ Опрос успешно отправлен ${count} «новеньким» участникам!`);
+    } catch (e) {
+        console.error(e);
+        await ctx.reply('❌ Ошибка при рассылке опроса.');
+    }
+});
+
+
+// 2. ОБРАБОТЧИК ОТВЕТОВ НА ОПРОС (ОТПРАВЛЯЕТ ТЕБЕ В ЛИЧКУ)
+bot.on('poll_answer', async (ctx) => {
+    try {
+        const firstName = ctx.pollAnswer.user.first_name || 'Без имени';
+        const username = ctx.pollAnswer.user.username ? `@${ctx.pollAnswer.user.username}` : 'без юзернейма';
+        
+        // Массив индексов (0, 1, 2...), которые выбрал человек
+        const selectedOptionsIds = ctx.pollAnswer.option_ids; 
+
+        // Те же самые варианты, чтобы бот мог написать тебе текст ответа, а не просто цифру
+        const optionsTexts = [
+            "Другой город/страна",
+            "Пока присматриваюсь",
+            "Стесняюсь идти один",
+            "Не подходит расписание",
+            "Не понимаю как проходит",
+            "Жду другой формат",
+            "Боюсь не вписаться",
+            "Высокая цена / ждет скидку",
+            "Неудобные локации",
+            "Забывает купить билет"
+        ];
+
+        // Достаем тексты по индексам
+        const chosenTexts = selectedOptionsIds.map(id => optionsTexts[id]).join(', ');
+
+        const msg = `📊 <b>Ответ от новенького!</b>\n` +
+                    `👤 Участник: ${firstName} ${username}\n` +
+                    `👉 Причина: <b>${chosenTexts}</b>`;
+
+        // Отправляем тебе в админский чат
+        await bot.telegram.sendMessage(ADMIN_ID, msg, { parse_mode: 'HTML' });
+        
+    } catch (e) {
+        console.error('Ошибка при обработке ответа на опрос:', e);
+    }
+});
 // 5. Управление Speed Dating и Stock
 bot.action('admin_fd_panel', (ctx) => SD.getAdminFDCPanel(ctx));
 
@@ -3394,6 +3505,7 @@ bot.action(/reveal_list_(\d+)/, async (ctx) => {
     );
   });
 // Создание взаимного контакта
+// Создание взаимного контакта
 bot.action(/match_back_(\d+)_(\d+)/, async (ctx) => {
     const eid = parseInt(ctx.match[1]);
     const targetId = parseInt(ctx.match[2]);
@@ -3402,9 +3514,23 @@ bot.action(/match_back_(\d+)_(\d+)/, async (ctx) => {
 
     if (!me || !target) return ctx.answerCbQuery("Ошибка данных");
 
+    // 🔥 ДОБАВЛЕНО: Сохраняем ответный лайк в базу
+    const existingLike = await db.query.secretLikes.findFirst({
+        where: and(
+            eq(schema.secretLikes.eventId, eid),
+            eq(schema.secretLikes.userId, me.id),
+            eq(schema.secretLikes.targetUserId, targetId)
+        )
+    });
+
+    if (!existingLike) {
+        await db.insert(schema.secretLikes).values({ eventId: eid, userId: me.id, targetUserId: targetId });
+    }
+
     // Сообщение тому, кто нажал кнопку
     const contactTarget = target.username ? `@${target.username}` : `(у пользователя скрыт username, напиши в поддержку SOS)`;
     await ctx.replyWithHTML(`🚀 <b>Симпатия стала взаимной!</b>\n\nОтличный выбор. Контакт <b>${target.name}</b> для связи: ${contactTarget}\nНе откладывай, напиши первым(ой) прямо сейчас! ✨`, getMainKeyboard());
+    
     // Сообщение тому, кто лайкнул первым
     await bot.telegram.sendMessage(target.telegramId, 
         `🌟 <b>У тебя новый мэтч!</b>\n\nПомнишь, на прошедшей игре тебе понравился(лась) <b>${me.name}</b>? Эта симпатия только что стала взаимной! 🥂\n\nКонтакт для связи: @${me.username || 'через поддержку'}`
