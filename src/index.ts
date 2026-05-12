@@ -1900,10 +1900,9 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
     }
 
     try {
-        const event = await db.query.events.findFirst({ where: eq(schema.events.id, eid) });
-        if (!event) return;
+        // УДАЛИЛИ ПОВТОРНЫЙ ПОИСК EVENT ОТСЮДА!
 
-        // 2. ГЕНДЕРНЫЙ КОНТРОЛЬ (для свиданий)
+        // 3. ГЕНДЕРНЫЙ КОНТРОЛЬ (для свиданий)
         if (event.type.startsWith('speed_dating')) {
             const bookings = await db.query.bookings.findMany({ 
                 where: and(eq(schema.bookings.eventId, eid), eq(schema.bookings.paid, true)) 
@@ -1943,9 +1942,25 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
         }
 
         // 4. БЕЗОПАСНЫЙ РАСЧЕТ ЛОЯЛЬНОСТИ (5-я игра)
+        // 4. БЕЗОПАСНЫЙ РАСЧЕТ ЛОЯЛЬНОСТИ (5-я игра)
         const gamesAlreadyPlayed = user.gamesPlayed || 0;
-        const totalProgress = user.gamesPlayed || 0;
 
+        // Считаем, сколько у юзера УЖЕ есть предстоящих оплаченных записей
+        const upcomingBookings = await db.select()
+            .from(schema.bookings)
+            .innerJoin(schema.events, eq(schema.bookings.eventId, schema.events.id))
+            .where(
+                and(
+                    eq(schema.bookings.userId, user.id),
+                    eq(schema.bookings.paid, true),
+                    eq(schema.events.isActive, true) // Только активные (не завершенные) игры
+                )
+            );
+
+        // Общий прогресс = сыгранные в прошлом + уже забронированные на будущее
+        const totalProgress = gamesAlreadyPlayed + upcomingBookings.length;
+
+        // Если следующая бронь (totalProgress + 1) кратна 5 — она бесплатная
         if (totalProgress > 0 && (totalProgress + 1) % 5 === 0) {
             const doubleCheck = await db.query.bookings.findFirst({
                 where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.eventId, eid))
