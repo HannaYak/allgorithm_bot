@@ -3691,6 +3691,23 @@ bot.action('view_stock_leaderboard', async (ctx) => {
     }
 });
 
+// Штука для получения file_id фото (только для админа)
+bot.on('photo', async (ctx, next) => {
+    // Проверяем, что пишет админ и что мы СЕЙЧАС не ждем ваучер
+    if (ctx.from.id === ADMIN_ID && !(ctx.session as any)?.waitingForVoucher) {
+        // Берем самое последнее фото (максимальное разрешение)
+        const photo = ctx.message.photo[ctx.message.photo.length - 1];
+        
+        return ctx.replyWithHTML(
+            `🆔 <b>File ID этого фото:</b>\n\n` +
+            `<code>${photo.file_id}</code>\n\n` +
+            `<i>Нажми на код выше, чтобы скопировать его.</i>`
+        );
+    }
+    // Если это не админ или мы ждем ваучер — идем дальше по коду
+    return next();
+});
+
 // ВРЕМЕННАЯ КОМАНДА ДЛЯ ЗАГРУЗКИ ПРОШЛОЙ ИГРЫ
 bot.command('backfill_114', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
