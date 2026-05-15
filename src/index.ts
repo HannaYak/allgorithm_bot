@@ -42,10 +42,11 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2023-10-
 
 const GAME_PRICES: Record<string, string> = {
   'talk_toast': 'price_1T427MHhXyjuCWwf7CK0DvCA', 
-  'talk_thematic': 'price_1T427MHhXyjuCWwf7CK0DvCA',
   'stock_know': 'price_1SUTkoHhXyjuCWwfxD89YIpP',
   'speed_dating_25_35': 'price_1SUTlVHhXyjuCWwfU1IzNMlf', // ID товара на 50 PLN
   'speed_dating_35_45': 'price_1SUTlVHhXyjuCWwfU1IzNMlf',
+  'tiffany': 'price_1TWzzTHhXyjuCWwfLgliEFEP',
+  'lockload': 'price_1TX08mHhXyjuCWwfvuk0S3j2',
   'talk_toast_review': 'price_1SiDMGHhXyjuCWwfzysRSphU',
   'stock_know_review': 'price_1SiDKoHhXyjuCWwfwg24Y7mF',
 };
@@ -60,7 +61,8 @@ const BEAUTY_NAMES: Record<string, string> = {
   'stock_know': 'Stock & Know 🧠',
   'speed_dating_25_35': 'Speed Dating (25-35 лет) 💘',
   'speed_dating_35_45': 'Speed Dating (35-45 лет) 💘',
-  'talk_thematic': 'Тематический ужин 🎭',
+  'tiffany': 'Breakfast at Tiffany\'s 🥐✨',
+  'lockload': 'Mad Men 🥃',
   'talk_toast_review': 'Talk & Toast 🎥 (со съёмкой)',
   'stock_know_review': 'Stock & Know 🎥 (со съёмкой)'
 };
@@ -205,52 +207,21 @@ const CONVERSATION_TOPICS = [
 ];
 
 // Блок вопросов для тематических ужинов Talk and Toast
+const TIFFANY_QUESTIONS_POOL = [
+  "Если бы твоя жизнь была фильмом, в какой эстетике он был бы снят?",
+  "Какую самую смелую мечту ты когда-либо «завтракала» в одиночестве?",
+  "Жемчуг или бриллианты? Опиши свой идеальный образ, который дает тебе 100% уверенности.",
+  "Если бы можно было выбрать любую эпоху для одного завтрака, куда бы ты отправилась?",
+  "Что для тебя значит «элегантность» в 2026 году?",
+  "Какое место в мире заставляет тебя чувствовать себя так же спокойно, как Холли Голайтли у витрины Tiffany?"
+];
+
 const THEMATIC_QUESTIONS_POOL = [
   "Григорий Распутин: Как обычный мужик мог выжить после яда, четырех пуль и ледяной воды? В чем был его секрет?",
   "Если бы ты мог/ла открыть одну запечатанную дверь в истории (например, секретные архивы Ватикана), что бы ты надеялся/лась там найти?",
-  "Как ты думаешь, какая археологическая находка была намеренно скрыта от человечества, чтобы не разрушить привычную картину мира?",
-  "Если бы пирамиды Гизы оказались не гробницами, а техническими устройствами, какая версия их предназначения тебе ближе?",
-  "Какая историческая личность кажется тебе самой большой мистификацией (человеком, которого на самом деле не существовало)?",
-  "Где, по-твоему, спрятано 'Золото нацистов' или 'Янтарная комната', и почему их до сих пор не нашли?",
-  "Веришь ли ты, что атланты — это не миф, а развитая цивилизация, следы которой мы видим повсюду, но не узнаем?",
-  "Какое историческое событие ты бы хотел/а увидеть своими глазами, чтобы раз и навсегда понять: это был заговор или случайность?",
-  "Существует ли артефакт, который ты бы побоялся/лась трогать, даже если бы он лежал перед тобой?",
-  "Какую страницу из учебника истории ты бы вырвал/а, считая её на 100% ложной?",
-  "Какой скрытый символ на долларовой купюре или в логотипе известного бренда кажется тебе самым подозрительным?",
-  "Как ты думаешь, сколько шедевров в мировых музеях на самом деле являются гениальными подделками, которые эксперты боятся разоблачить?",
-  "Если бы ты был/а художником-мистификатором, какой секретный знак ты бы оставлял/а на каждой своей работе?",
-  "Веришь ли ты, что великие писатели прошлого (например, Шекспир) были лишь 'лицом' для группы анонимных авторов?",
-  "Какая песня или картина кажется тебе зашифрованным посланием, которое мы еще не расшифровали?",
-  "Считаешь ли ты современное абстрактное искусство формой массовой мистификации, где 'король голый'?",
-  "Можно ли считать 'дипфейком' ту версию себя, которую мы создаем в соцсетях?",
-  "Сможешь ли ты отличить близкого от его безупречной симуляции, или предпочтешь верить в красивую ложь?",
-  "Веришь ли ты, что интернет — это 'мертвый лес', где 90% контента создано ботами для манипуляции нашим мнением?",
-  "Какую новость за последний год ты до сих пор считаешь умелой постановкой или спецэффектом?",
-  "Если бы ты мог/ла создать идеальный дипфейк любого человека, чтобы восстановить справедливость, чье лицо ты бы выбрал/а?",
-  "Считаешь ли ты, что мы уже живем в симуляции, и дежавю — это просто баг при обновлении системы?",
-  "Какой 'сумасшедший' заговор из интернета кажется тебе подозрительно логичным?",
-  "Веришь ли ты в существование 'Мирового правительства' или хаос правит миром на самом деле?",
-  "Если бы тайное общество предложило тебе вступить в свои ряды в обмен на молчание, какой секрет стал бы твоим вступительным взносом?",
+  "Веришь ли ты, что атланты — это не миф, а развитая цивилизация, следы которой мы видим повсюду?",
   "Для чего на самом деле нужен адронный коллайдер (CERN): наука или попытка открыть портал в другое измерение?",
-  "Какая корпорация, по-твоему, владеет миром больше, чем любое государство?",
-  "Веришь ли ты, что Лунная программа была снята в павильоне, или это самая живучая мистификация в истории?",
-  "Существует ли '25-й кадр' в современной рекламе, который заставляет нас покупать вещи, которые нам не нужны?",
-  "Какое исчезновение самолета или корабля (как в Бермудском треугольнике) ты считаешь операцией по перемещению людей?",
-  "Если бы завтра объявили о контакте с пришельцами, ты бы поверил/а в это или счел/ла бы это способом отвлечь внимание от кризиса?",
-  "Какой секретный эксперимент над людьми (как MK-Ultra) проводится прямо сейчас, по твоему мнению?",
-  "Кто на самом деле был Джеком Потрошителем: хирург, принц или кто-то, кого стерли из истории?",
-  "Загадка перевала Дятлова: это был секретный запуск ракеты или испытание звукового оружия?",
-  "Кто на самом деле создал Биткоин: Сатоши Накамото — это человек или искусственный интеллект спецслужб?",
-  "Почему на картине 'Тайная вечеря' ноты, спрятанные в руках и хлебе, складываются в реквием?",
-  "Багдадская батарейка: если у древних было электричество, почему они его 'забыли'?",
-  "Существовал ли 'Нулевой пациент' на самом деле, или это всегда часть чьего-то бизнес-плана?",
-  "Майкл Джексон: Он инсценировал свою смерть, чтобы наконец-то обрести покой и уйти от долгов и преследований?",
-  "Масоны и Иллюминаты: Если они не правят миром, то зачем их символы напечатаны на каждой долларовой купюре?",
-  "Эффект Манделы (Монополия): Когда именно у человечка из 'Монополии' исчез монокль, и почему мы все помним его с ним?",
-  "5G и вышки: Связь будущего или инструмент для контроля эмоционального состояния толпы?",
-  "Ковчег Завета: Он спрятан в Эфиопии, под Храмовой горой или его уже давно забрали те, кто его создал?",
-  "Сигнал 'Wow!' из космоса в 1977-м — это приветствие или предупреждение, которое мы проигнорировали?",
-  "Железная маска: Кем был таинственный узник Бастилии — братом-близнецом короля или его настоящим отцом?"
+  "Кто на самом деле создал Биткоин: Сатоши Накамото — это человек или искусственный интеллект спецслужб?"
 ];
 
 const SPEAKERS_HISTORY: Record<number, number> = {};
@@ -1319,14 +1290,157 @@ bot.action('referral_info', async (ctx) => {
 
 bot.action('back_to_cabinet', (ctx) => ctx.deleteMessage());
 
-bot.hears('🎮 Игры', (ctx) => {
-  ctx.reply('Выберите игру:', Markup.inlineKeyboard([
+// --- 1. ГЛАВНОЕ МЕНЮ ИГР ---
+bot.hears('🎮 Игры', async (ctx) => {
+  const user = await db.query.users.findFirst({ 
+    where: eq(schema.users.telegramId, ctx.from!.id) 
+  });
+  
+  const buttons: any[][] = [
     [Markup.button.callback('Talk & Toast 🥂', 'game_talk')],
-    [Markup.button.callback('Тематический Talk 🎭', 'game_thematic')], // НОВАЯ КНОПКА
     [Markup.button.callback('Stock & Know 🧠', 'game_stock')],
     [Markup.button.callback('Быстрые свидания 💘', 'game_dating')]
-  ]));
-});;
+  ];
+
+  // Если пол не выбран — показываем ОБЕ кнопки в одну строку
+  if (!user?.gender) {
+    buttons.push([
+      Markup.button.callback('✨ Mind & Muse', 'view_women_world'),
+      Markup.button.callback('🥃 Lock & Load', 'view_men_world')
+    ]);
+  } 
+  // Если уже зарегистрирована как Женщина — только её кнопка
+  else if (user.gender === 'Женщина') {
+    buttons.push([Markup.button.callback('✨ Mind & Muse', 'view_women_world')]);
+  } 
+  // Если зарегистрирован как Мужчина — только его кнопка
+  else if (user.gender === 'Мужчина') {
+    buttons.push([Markup.button.callback('🥃 Lock & Load', 'view_men_world')]);
+  }
+
+  return ctx.reply('Выберите игру:', Markup.inlineKeyboard(buttons));
+});
+
+// --- 2. ОБРАБОТЧИКИ С ЖЕСТКИМ БЛОКОМ ПО ПОЛУ ---
+
+// --- ЖЕНСКИЙ МИР ---
+bot.action('view_women_world', async (ctx) => {
+  const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
+  if (user?.gender === 'Мужчина') return ctx.answerCbQuery('🚫 Только для женщин', { show_alert: true });
+
+  const text = `✨ <b>Mind & Muse</b>\n\n` +
+               `Твой личный портал в мир, где эстетика встречается с глубиной. Это комьюнити девушек, которые устали от пустого шума и хотят качественного окружения.\n\n` +
+               `Мы создаем события, которые хочется сохранить в памяти, и диалоги, которые меняют состояние. Добро пожаловать в круг Муз.`;
+
+  return ctx.editMessageText(text, {
+    parse_mode: 'HTML',
+    ...Markup.inlineKeyboard([
+      [Markup.button.callback('🥐 Breakfast at Tiffany\'s', 'game_tiffany')],
+      [Markup.button.callback('⬅️ Назад', 'back_to_games')]
+    ])
+  });
+});
+
+// --- МУЖСКОЙ МИР ---
+bot.action('view_men_world', async (ctx) => {
+  const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
+  if (user?.gender === 'Женщина') return ctx.answerCbQuery('🚫 Только для мужчин', { show_alert: true });
+
+  const text = `🥃 <b>Lock & Load</b>\n\n` +
+               `Закрытый мужской круг для тех, кто ценит время и интеллект. Это нетворкинг без галстуков, стратегия без лишних слов и общество мужчин, с которыми есть о чем молчать и о чем спорить.\n\n` +
+               `Здесь мы качаем не только связи, но и критическое мышление. Твоя территория правил.`;
+
+  return ctx.editMessageText(text, {
+    parse_mode: 'HTML',
+    ...Markup.inlineKeyboard([
+      [Markup.button.callback('🥃 Mad Men ', 'game_lockload')],
+      [Markup.button.callback('⬅️ Назад', 'back_to_games')]
+    ])
+  });
+});
+
+bot.action('game_lockload', async (ctx) => {
+  await ctx.deleteMessage().catch(() => {});
+  const text = `🥃 <b>Mad Men</b>\n\n` +
+    `💰 <b>Стоимость:</b> 75 zł\n\n` +
+    `Твой закрытый круг. Место, где говорят по делу и без цензуры. Встреча в формате Talk & Toast, но с вопросами о стратегии, истории и мужских взглядах на мир.\n\n` +
+    `💪 <i>Нетворкинг, который работает на тебя.</i>`;
+
+  return ctx.replyWithPhoto('AgACAgIAAxkBAAJsWGmoFvsm3BqPsINmVcp2zenyXWFhAAJ1JGsbvMtASX1oH3lkXAGfAQADAgADeQADOgQ', { // File_id мужского фото
+    caption: text, 
+    parse_mode: 'HTML', 
+    ...Markup.inlineKeyboard([
+      [Markup.button.callback('📅 Посмотреть даты', 'book_lockload')],
+      [Markup.button.callback('⬅️ Назад', 'view_men_world')]
+    ]) 
+  });
+});
+
+bot.action('book_lockload', async (ctx) => bookGame(ctx, 'lockload'));
+
+// --- 3. КНОПКА НАЗАД (С пересчетом кнопок) ---
+bot.action('back_to_games', async (ctx) => {
+  const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
+  
+  const buttons: any[][] = [
+    [Markup.button.callback('Talk & Toast 🥂', 'game_talk')],
+    [Markup.button.callback('Stock & Know 🧠', 'game_stock')],
+    [Markup.button.callback('Быстрые свидания 💘', 'game_dating')]
+  ];
+
+  if (!user?.gender) {
+    buttons.push([
+      Markup.button.callback('✨ Mind & Muse', 'view_women_world'),
+      Markup.button.callback('🥃 Lock & Load', 'view_men_world')
+    ]);
+  } else if (user.gender === 'Женщина') {
+    buttons.push([Markup.button.callback('✨ Mind & Muse', 'view_women_world')]);
+  } else if (user.gender === 'Мужчина') {
+    buttons.push([Markup.button.callback('🥃 Lock & Load', 'view_men_world')]);
+  }
+
+  return ctx.editMessageText('Выберите игру:', Markup.inlineKeyboard(buttons)).catch(() => {});
+});
+
+// --- BREAKFAST AT TIFFANY'S ---
+bot.action('game_tiffany', async (ctx) => {
+  await ctx.deleteMessage().catch(() => {});
+  const text = `🥐 <b>Breakfast at Tiffany's</b>\n\n` +
+               `Утро в стиле Холли Голайтли. Мы воссоздали атмосферу того самого «безопасного места», где эстетика лечит, а кофе кажется вкуснее. Это не просто завтрак, это время для себя среди своих.\n\n` +
+               `Мы надеваем жемчуг (по желанию), берем круассаны и обсуждаем не быт, а мечты, амбиции и поиск своего места в мире. Ведь в <b>Mind & Muse</b> с тобой не может случиться ничего плохого.\n\n` +
+               `💰 <b>Стоимость:</b> 55 zł\n` +
+               `⏳ <b>Время:</b> 2 часа`;
+
+  return ctx.replyWithPhoto('AgACAgIAAxkBAAEbuMBpqC-A-TdzEp0aJFuvbm6Mjw7HNgACvZMAAiHmQUmNoDZW0EAWyToE', { 
+    caption: text, 
+    parse_mode: 'HTML', 
+    ...Markup.inlineKeyboard([
+      [Markup.button.callback('📅 Посмотреть даты', 'book_tiffany')],
+      [Markup.button.callback('⬅️ Назад', 'view_women_world')]
+    ]) 
+  });
+});
+
+// --- MAD MEN ---
+bot.action('game_lockload', async (ctx) => {
+  await ctx.deleteMessage().catch(() => {});
+  const text = `🥃 <b>Mad Men (Безумцы)</b>\n\n` +
+               `Добро пожаловать на Мэдисон-авеню. Это интеллектуальный клуб для тех, кто понимает: жизнь — это серия переговоров и стратегий. Как говорил Дон Дрейпер: <i>"Если тебе не нравится то, о чем говорят — просто измени тему разговора"</i>.\n\n` +
+               `Мы убираем лишний шум и оставляем суть: нетворкинг на максималках, вопросы о власти, наследии и искусстве влияния. Это территория тех, кто строит империи. Только факты, только логика, только статус.\n\n` +
+               `💰 <b>Стоимость:</b> 75 zł\n` +
+               `⏳ <b>Формат:</b> Talk & Toast (Strategic)`;
+
+  return ctx.replyWithPhoto('AgACAgIAAxkBAAJsWGmoFvsm3BqPsINmVcp2zenyXWFhAAJ1JGsbvMtASX1oH3lkXAGfAQADAgADeQADOgQ', { 
+    caption: text, 
+    parse_mode: 'HTML', 
+    ...Markup.inlineKeyboard([
+      [Markup.button.callback('📅 Посмотреть даты', 'book_lockload')],
+      [Markup.button.callback('⬅️ Назад', 'view_men_world')]
+    ]) 
+  });
+});
+
+bot.action('book_tiffany', async (ctx) => bookGame(ctx, 'tiffany'));
 
 bot.action(/secret_like_(\d+)_(\d+)/, async (ctx) => {
   const eventId = parseInt(ctx.match[1]);
@@ -1372,7 +1486,6 @@ bot.hears('🎲 Новая тема', async (ctx) => {
   const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
   if (!user) return;
 
-  // 1. Ищем записи пользователя
   const myBookings = await db.query.bookings.findMany({
     where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.paid, true))
   });
@@ -1380,7 +1493,6 @@ bot.hears('🎲 Новая тема', async (ctx) => {
   let currentEvent = null;
   const nowWarsaw = DateTime.now().setZone('Europe/Warsaw');
 
-  // 2. Ищем игру, которая идет прямо сейчас (окно 4 часа)
   for (const b of myBookings) {
     const event = await db.query.events.findFirst({
       where: and(eq(schema.events.id, b.eventId), eq(schema.events.isActive, true))
@@ -1397,26 +1509,23 @@ bot.hears('🎲 Новая тема', async (ctx) => {
 
   if (!currentEvent) return ctx.reply("❌ Кнопка доступна только во время активной игры.");
 
-  // 3. Инициализируем «память» для этой игры (чтобы темы не повторялись)
   if (!USED_TOPICS_BY_EVENT.has(currentEvent.id)) {
     USED_TOPICS_BY_EVENT.set(currentEvent.id, new Set());
   }
   const usedSet = USED_TOPICS_BY_EVENT.get(currentEvent.id)!;
 
-  // --- ЛОГИКА ДЛЯ СВИДАНИЙ (Speed Dating) ---
+  // --- ЛОГИКА ДЛЯ СВИДАНИЙ ---
   if (currentEvent.type.startsWith('speed_dating')) {
-    const round = SD.FAST_DATES_STATE.currentRound;
     const ps = Array.from(SD.FAST_DATES_STATE.participants.values());
     const me = ps.find(p => p.id === ctx.from.id);
-
     if (!me || ps.length === 0) return ctx.reply("❌ Ошибка: Участники не загружены.");
 
-    // Фильтруем темы
     const available = CONVERSATION_TOPICS.filter(t => !usedSet.has(t));
     const pool = available.length > 0 ? available : CONVERSATION_TOPICS; 
     const randomTopic = pool[Math.floor(Math.random() * pool.length)];
     usedSet.add(randomTopic); 
 
+    const round = SD.FAST_DATES_STATE.currentRound;
     const women = ps.filter(p => p.gender.toLowerCase().includes('жен')).sort((a,b) => a.num - b.num);
     const men = ps.filter(p => p.gender.toLowerCase().includes('муж')).sort((a,b) => a.num - b.num);
     
@@ -1431,26 +1540,33 @@ bot.hears('🎲 Новая тема', async (ctx) => {
     }
 
     if (partner) {
-      const pairMsg = `🎲 <b>Секретная тема только для вашего пары:</b>\n\n${randomTopic}`;
-      await bot.telegram.sendMessage(me.id, pairMsg, { parse_mode: 'HTML', ...getMainKeyboard(true) }).catch(()=>{});
-      await bot.telegram.sendMessage(partner.id, pairMsg, { parse_mode: 'HTML', ...getMainKeyboard(true) }).catch(()=>{});
+      const pairMsg = `🎲 <b>Секретная тема только для вашей пары:</b>\n\n${randomTopic}`;
+      await bot.telegram.sendMessage(me.id, pairMsg, { parse_mode: 'HTML' }).catch(()=>{});
+      await bot.telegram.sendMessage(partner.id, pairMsg, { parse_mode: 'HTML' }).catch(()=>{});
     }
-    return ctx.reply("✅ Тема отправлена паре!"); // Перенесли сюда
+    return ctx.reply("✅ Тема отправлена паре!");
   } 
 
-  // --- ЛОГИКА ДЛЯ ОБЫЧНЫХ И ТЕМАТИЧЕСКИХ ИГР (Talk & Toast / Thematic) ---
+  // --- ЛОГИКА ДЛЯ ТИФФАНИ, ОБЫЧНЫХ И ТЕМАТИЧЕСКИХ ---
   else {
-    const poolRaw = (currentEvent.type === 'talk_thematic') ? THEMATIC_QUESTIONS_POOL : CONVERSATION_TOPICS;
+    let poolRaw;
+    if (currentEvent.type === 'tiffany') {
+        poolRaw = TIFFANY_QUESTIONS_POOL;
+    } else if (currentEvent.type === 'lockload') {
+        poolRaw = THEMATIC_QUESTIONS_POOL; // Мужчины забирают «интеллектуальный» пул себе
+    } else {
+        poolRaw = CONVERSATION_TOPICS;
+    }
+
     const available = poolRaw.filter(t => !usedSet.has(t));
-    
+    // ПОТОМ проверяем, не закончились ли они
     if (available.length === 0) {
         return ctx.reply("✨ На этот вечер темы в списке закончились! Время для свободных дискуссий. 🥂");
     }
 
     const randomTopic = available[Math.floor(Math.random() * available.length)];
-    usedSet.add(randomTopic); 
+    usedSet.add(randomTopic);
 
-    // Выбор спикера
     const allParticipants = await db.query.bookings.findMany({
       where: and(eq(schema.bookings.eventId, currentEvent.id), eq(schema.bookings.paid, true))
     });
@@ -1461,19 +1577,9 @@ bot.hears('🎲 Новая тема', async (ctx) => {
       if (u?.name) playerNames.push({ id: u.id, name: u.name });
     }
 
-    if (playerNames.length === 0) return ctx.reply("Ошибка: участников не найдено.");
-
-    const lastSpeakerId = SPEAKERS_HISTORY[currentEvent.id];
-    let candidates = playerNames;
-    if (playerNames.length > 1 && lastSpeakerId) {
-        candidates = playerNames.filter(p => p.id !== lastSpeakerId);
-    }
-
-    const winner = candidates[Math.floor(Math.random() * candidates.length)];
-    SPEAKERS_HISTORY[currentEvent.id] = winner.id;
-
-    await broadcastToEvent(currentEvent.id, `🎲 <b>Новая тема для стола:</b>\n\n${randomTopic}\n\n🎙 <b>Начинает рассуждение:</b> <u>${winner.name}</u>`);
-    return ctx.reply("✅ Тема отправлена всем участникам!", getMainKeyboard(true));
+    const winner = playerNames[Math.floor(Math.random() * playerNames.length)];
+    await broadcastToEvent(currentEvent.id, `🎲 <b>Новая тема для стола:</b>\n\n${randomTopic}\n\n🎙 <b>Начинает рассуждение:</b> <u>${winner?.name || 'кто-то смелый'}</u>`);
+    return ctx.reply("✅ Тема отправлена всем участникам!");
   }
 });
 
@@ -1660,16 +1766,7 @@ bot.action('game_thematic', async (ctx) => {
   });
 });
 
-// Кнопка НАЗАД (тоже с удалением фото)
-bot.action('back_to_games', async (ctx) => { 
-  await ctx.deleteMessage().catch(() => {}); 
-  return ctx.reply('Выберите игру:', Markup.inlineKeyboard([
-    [Markup.button.callback('Talk & Toast 🥂', 'game_talk')], 
-    [Markup.button.callback('Тематический Talk 🎭', 'game_thematic')], 
-    [Markup.button.callback('Stock & Know 🧠', 'game_stock')], 
-    [Markup.button.callback('Быстрые свидания 💘', 'game_dating')]
-  ])); 
-});
+
 
 // А эта кнопка запустит функцию бронирования, которую мы уже прописали
 bot.action('book_thematic', async (ctx) => bookGame(ctx, 'talk_thematic'));
@@ -1679,10 +1776,8 @@ bot.action('book_stock', async (ctx) => bookGame(ctx, 'stock_know'));
 bot.action('book_dating', async (ctx) => bookGame(ctx, 'speed_dating'));
 
 async function bookGame(ctx: any, type: string) {
-  // 1. УДАЛЯЕМ СООБЩЕНИЕ С ФОТО (Чтобы не было ошибки редактирования)
   await ctx.deleteMessage().catch(() => {});
 
-  // 2. УМНЫЙ ПОИСК (Твоя логика поиска ревью и подтипов свиданий)
   const events = await db.query.events.findMany({ 
     where: and(
       or(
@@ -1699,19 +1794,15 @@ async function bookGame(ctx: any, type: string) {
 
   if (events.length === 0) return ctx.reply(`Расписание формируется! ✨`);
 
-  // 3. ЛОГИКА ДЛЯ ТЕМАТИЧЕСКОГО (Пропуск кухни)
-  if (type === 'talk_thematic') {
-    const thematicButtons = events.map(e => {
-      const { title } = parseEventDesc(e.description);
-      return [Markup.button.callback(`📅 ${e.dateString} — ТЕМА: ${title}`, `pay_event_${e.id}`)];
-    });
-    // Используем reply, так как старое сообщение удалено
-    return ctx.replyWithHTML('🎯 <b>Выберите тему и дату:</b>', 
-      Markup.inlineKeyboard([...thematicButtons, [Markup.button.callback('🔙 Назад', 'back_to_games')]])
+  // --- ЛОГИКА ДЛЯ LOCK & LOAD И TIFFANY ---
+  if (type === 'lockload' || type === 'tiffany') {
+    const btns = events.map(e => [Markup.button.callback(`📅 ${e.dateString}`, `pay_event_${e.id}`)]);
+    return ctx.replyWithHTML('🎯 <b>Выберите удобную дату:</b>', 
+      Markup.inlineKeyboard([...btns, [Markup.button.callback('🔙 Назад', 'back_to_games')]])
     );
   }
 
-  // 4. ЛОГИКА ДЛЯ ОБЫЧНОГО TNT (Выбор кухни)
+  // --- ЛОГИКА ДЛЯ ОБЫЧНОГО TNT (Выбор кухни) ---
   if (type === 'talk_toast') {
     const uniqueTitles = new Set<string>(); 
     events.forEach(e => uniqueTitles.add(parseEventDesc(e.description).title));
@@ -1721,7 +1812,7 @@ async function bookGame(ctx: any, type: string) {
     );
   }
 
-  // 5. ЛОГИКА ДЛЯ СВИДАНИЙ И STOCK & KNOW
+  // --- ЛОГИКА ДЛЯ СВИДАНИЙ И STOCK & KNOW ---
   const finalButtons = events.map(e => {
     let ageLabel = "";
     if (e.type === 'speed_dating_25_35') ageLabel = " (25-35 лет)";
