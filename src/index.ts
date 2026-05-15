@@ -1186,9 +1186,9 @@ bot.start(async (ctx) => {
     
 await ctx.replyWithVideo('BAACAgIAAxkBAAEbuMBpqC-A-TdzEp0aJFuvbm6Mjw7HNgACvZMAAiHmQUmNoDZW0EAWyToE').catch(() => {});
     
-    const welcomeText = `Привет! Я Ханна, и я рада, что ты теперь в системе <b>Allgorithm</b>. 🦾\n\n` +
-    `Мы создали это пространство для тех, кто устал от пустого шума и хочет качественных смыслов. Весна — идеальный момент, чтобы выйти из режима ожидания и стать главным героем своей социальной жизни. 🥂🌸\n\n` +
-    `Выбирай формат по душе в меню «🎮 Игры» и до встречи за столом!`;
+const welcomeText = `Привет! Я Ханна, твой проводник в <b>Allgorithm</b>. 🦾\n\n` +
+    `Мы создаем окружение, где не нужно фильтровать шум. Только качественный нетворкинг, глубокие темы и люди, с которыми есть о чем поговорить.\n\n` +
+    `Выбирай формат по душе в меню «🎮 Игры» и до встречи за столом! 🥂`;
       
     return ctx.replyWithHTML(welcomeText, getMainKeyboard());
 
@@ -1411,7 +1411,7 @@ bot.action('game_tiffany', async (ctx) => {
                `💰 <b>Стоимость:</b> 55 zł\n` +
                `⏳ <b>Время:</b> 2 часа`;
 
-  return ctx.replyWithPhoto('AgACAgIAAxkBAAEbuMBpqC-A-TdzEp0aJFuvbm6Mjw7HNgACvZMAAiHmQUmNoDZW0EAWyToE', { 
+  return ctx.replyWithPhoto('AgACAgIAAxkBAAEBGfVqB1qtg2JrlkEDRxgzI3k6MYjM3wACLRdrG-uQQUhAtMr_b8vGdwEAAwIAA3kAAzsE', { 
     caption: text, 
     parse_mode: 'HTML', 
     ...Markup.inlineKeyboard([
@@ -1430,7 +1430,7 @@ bot.action('game_lockload', async (ctx) => {
                `💰 <b>Стоимость:</b> 75 zł\n` +
                `⏳ <b>Формат:</b> Talk & Toast (Strategic)`;
 
-  return ctx.replyWithPhoto('AgACAgIAAxkBAAJsWGmoFvsm3BqPsINmVcp2zenyXWFhAAJ1JGsbvMtASX1oH3lkXAGfAQADAgADeQADOgQ', { 
+  return ctx.replyWithPhoto('AgACAgIAAxkBAAEBGfdqB1yjP-CnLuOhnzSUkw54ZvYnAwACNRdrG-uQQUj8d0eo3mThUAEAAwIAA3kAAzsE', { 
     caption: text, 
     parse_mode: 'HTML', 
     ...Markup.inlineKeyboard([
@@ -2242,33 +2242,7 @@ bot.action('upload_voucher', (ctx) => {
     (ctx.session as any).waitingForVoucher = true; 
 });
 
-bot.on('photo', async (ctx, next) => {
-    if (!(ctx.session as any)?.waitingForVoucher) return next();
-    
-    const photo = ctx.message.photo[ctx.message.photo.length - 1];
-    const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
-    
-    if (user) {
-        const [v] = await db.insert(schema.vouchers).values({ 
-            userId: user.id, 
-            photoFileId: photo.file_id, 
-            status: 'pending' 
-        }).returning();
 
-        ctx.reply('✅ Ваучер отправлен на проверку.'); 
-        (ctx.session as any).waitingForVoucher = false;
-
-        await bot.telegram.sendPhoto(ADMIN_ID, photo.file_id, {
-            caption: `🎟 <b>Новый ваучер</b>\nОт: ${user.name}\nID: <code>${user.telegramId}</code>`,
-            parse_mode: 'HTML',
-            ...Markup.inlineKeyboard([
-                [Markup.button.callback('💰 -10 PLN', `v_set_10_${v.id}`), Markup.button.callback('🎁 FREE', `v_set_free_${v.id}`)],
-                [Markup.button.callback('❌ Отклонить', `v_set_reject_${v.id}`)]
-            ])
-        });
-    }
-});
-  
 bot.action(/v_set_(10|free|reject)_(\d+)/, async (ctx) => {
     const action = ctx.match[1];
     const vId = parseInt(ctx.match[2]);
