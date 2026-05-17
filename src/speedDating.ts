@@ -58,50 +58,65 @@ export async function loadDatingCommand(ctx: any, bot: any) {
 
   try {
     const bookings = await db.query.bookings.findMany({ 
-    where: and(eq(schema.bookings.eventId, eid), eq(schema.bookings.paid, true)),
-      orderBy: [asc(schema.bookings.id)] // 🔥 Гарантирует, что №1 останется у того же человека
+      where: and(eq(schema.bookings.eventId, eid), eq(schema.bookings.paid, true)),
+      orderBy: [asc(schema.bookings.id)]
     });
 
     if (bookings.length === 0) return ctx.reply('❌ В базе нет оплаченных броней на этот ID.');
 
+    // 1. Очищаем память строго ПЕРЕД циклом
     FAST_DATES_STATE.participants.clear();
     FAST_DATES_STATE.eventId = eid;
     FAST_DATES_STATE.currentRound = 1; 
-    FAST_DATES_STATE.votes.clear(); // Clear votes on reload
+    FAST_DATES_STATE.votes.clear();
 
-    const men: Participant[] = [];
-    const women: Participant[] = [];
+    const men: any[] = [];
+    const women: any[] = [];
 
-    // В файле speedDating.ts внутри loadDatingCommand
+    // 2. Собираем участников из базы
     for (const b of bookings) {
         const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
         if (u) {
-        // Умная проверка пола: переводим в нижний регистр и ищем корень "муж"
             const dbGender = (u.gender || '').toLowerCase();
             const finalGender = dbGender.includes('муж') ? 'Мужчина' : 'Женщина';
 
-            const participant: Participant = {
-                id: u.telegramId!,
-                num: 0, // Присвоится ниже
-                gender: finalGender as 'Мужчина' | 'Женщина', 
+            // Сохраняем и id, и telegramId, чтобы у робота не было вопросов
+            const participant = {
+                id: u.telegramId!, 
+                telegramId: u.telegramId!, 
+                num: 0,
+                gender: finalGender, 
                 name: u.name || u.firstName || 'Участник',
                 username: u.username || undefined,
             };
+            
             if (participant.gender === 'Мужчина') men.push(participant);
             else women.push(participant);
         }
     }
 
-    // Gender balance check
-    if (Math.abs(men.length - women.length) > 0) {
-        await ctx.reply(`🚨 <b>ВНИМАНИЕ: Дисбаланс полов!</b>\nМужчин: ${men.length}, Женщин: ${women.length}.\nРекомендуется равное количество участников для Speed Dating.`, { parse_mode: 'HTML' });
-        // Optionally, you could stop the loading here or ask for admin confirmation
+    // Проверка баланса полов (просто уведомление админу)
+    if (men.length !== women.length) {
+        await ctx.reply(`🚨 <b>ВНИМАНИЕ: Дисбаланс полов!</b>\nМужчин: ${men.length}, Женщин: ${women.length}.\nРекомендуется равное количество участников.`, { parse_mode: 'HTML' });
     }
 
-        // Внутри loadDatingCommand заменяем блок раздачи:
+    // 3. Раздача номеров в память
     const limit = Math.min(men.length, women.length);
 
+    for (let i = 0; i < limit; i++) {
+        const wNum = (i * 2) + 1;
+        const mNum = (i * 2) + 2;
+
+        // Теперь железно сработает и по .telegramId, и по .id
+        FAST_DATES_STATE.participants.set(women[i].telegramId, { id: women[i].telegramId, num: wNum, gender: 'Женщина', name: women[i].name });
+        FAST_DATES_STATE.participants.set(men[i].telegramId, { id: men[i].telegramId, num: mNum, gender: 'Мужчина', name: men[i].name });
+
+        // Отправка отчета в твою личку админа
+        await bot.telegram.sendMessage(ADMIN_ID, `✅ Назначено: ${women[i].name} (№${wNum}) и ${men[i].name} (№${mNum})`).catch(()=>{});
+    }
+
     await ctx.reply(`✅ РЕАНИМАЦИЯ ИГРЫ №${eid} УСПЕШНА!\nЗагружено участников: ${FAST_DATES_STATE.participants.size}\n\nТеперь кнопки админки и "Новая тема" оживут!`, { parse_mode: 'HTML' });
+
   } catch (e) {
     console.error(e);
     ctx.reply('❌ Ошибка при загрузке.');
