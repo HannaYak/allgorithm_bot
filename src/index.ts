@@ -846,15 +846,34 @@ setInterval(async () => {
 
       if (event.isActive) {
       // 1. НАПОМИНАНИЯ (3 ДНЯ И УТРО)
+     // 1. НАПОМИНАНИЯ (3 ДНЯ С ЖЕСТКИМ ПРЕДУПРЕЖДЕНИЕМ И КНОПКАМИ)
       if (diffHours >= 71.5 && diffHours <= 72.5 && !PROCESSED_AUTO_ACTIONS.has(`remind_3d_${event.id}`)) {
         PROCESSED_AUTO_ACTIONS.add(`remind_3d_${event.id}`);
-        await broadcastToEvent(event.id, `📅 <b>До встречи осталось 3 дня!</b>\n\nГотовимся к игре "${event.type}". Атмосфера будет 🔥. ✨`);
-      }
-      if (now.hasSame(start, 'day') && now.hour === 10 && !PROCESSED_AUTO_ACTIONS.has(`morning_rem_${event.id}`)) {
-        PROCESSED_AUTO_ACTIONS.add(`morning_rem_${event.id}`);
-        await broadcastToEvent(event.id, `☀️ <b>Доброе утро! Тот самый день!</b>\n\nЖдем тебя сегодня на "${event.type}"! ✨`);
-      }
+        
+        const evBookings = await db.query.bookings.findMany({
+          where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true))
+        });
 
+        for (const b of evBookings) {
+          const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+          if (u?.telegramId) {
+            const msg = `📅 <b>До встречи осталось 3 дня!</b>\n\n` +
+                        `Пожалуйста, <b>подтвердите свой визит в течение 24 часов</b>, чтобы за вами сохранилось место за столом. 🥂\n\n` +
+                        `⚠️ <b>ВАЖНОЕ ПРАВИЛО КЛУБА: Мы просим уважать чужое время.</b>\n` +
+                        `Allgorithm — это про идеальный баланс гостей (особенно на Быстрых Свиданиях). Некоторые участники тратят больше часа на дорогу, чтобы просто доехать до встречи. ` +
+                        `Если кто-то молча не приходит, баланс рушится, игра ломается, и другие люди теряют возможность полноценно поучаствовать. Пожалуйста, будьте экологичны.\n\n` +
+                        `❌ Если у вас изменились планы — всё в порядке, мы всё понимаем. Просто нажмите кнопку <b>«Отказаться»</b> прямо сейчас. Система автоматически вернет вам деньги на Stripe и мгновенно отдаст слот ребятам из листа ожидания.`;
+            
+            await bot.telegram.sendMessage(u.telegramId, msg, {
+              parse_mode: 'HTML',
+              ...Markup.inlineKeyboard([
+                [Markup.button.callback('✅ Подтверждаю, буду!', `conf_visit_yes_${b.id}`)],
+                [Markup.button.callback('❌ Отказаться (Возврат)', `conf_visit_no_${b.id}`)]
+              ])
+            }).catch(() => {});
+          }
+        }
+      }
       // 2. РАСКРЫТИЕ АДРЕСА (ЗА 3 ЧАСА)
       if (diffHours >= 2.5 && diffHours <= 3.5 && !PROCESSED_AUTO_ACTIONS.has(`reveal_${event.id}`)) {
         PROCESSED_AUTO_ACTIONS.add(`reveal_${event.id}`);
@@ -1481,6 +1500,59 @@ bot.action(/secret_like_(\d+)_(\d+)/, async (ctx) => {
         { parse_mode: 'HTML' }
     ).catch(() => {});
   }
+});
+
+// --- ОБРАБОТКА ПОДТВЕРЖДЕНИЯ ВИЗИТА ---
+bot.action(/conf_visit_yes_(\d+)/, async (ctx) => {
+  const bookingId = parseInt(ctx.match[1]);
+  const booking = await db.query.bookings.findFirst({ where: eq(schema.bookings.id, bookingId) });
+  if (!booking) return ctx.answerCbQuery('❌ Запись не найдена.');
+  
+  if (booking.confirmation === 'confirmed') {
+    return ctx.answerCbQuery('Вы уже подтвердили участие! ❤️', { show_alert: true });
+  }
+
+  await db.update(schema.bookings).set({ confirmation: 'confirmed' }).where(eq(schema.bookings.id, bookingId));
+  
+  const user = await db.query.users.findFirst({ where: eq(schema.users.id, booking.userId) });
+  const event = await db.query.events.findFirst({ where: eq(schema.events.id, booking.eventId) });
+  
+  await ctx.editMessageText('❤️ <b>Спасибо! Ваш визит подтвержден.</b>\n\nМы сохранили за вами место. Точный адрес и секретная локация придут ровно за 3 часа до начала игры! До встречи за столом. 🥂', { parse_mode: 'HTML' });
+  
+  // Моментальный маяк тебе в личку
+  if (user && event) {
+    await bot.telegram.sendMessage(ADMIN_ID, `✅ <b>Участник подтвердился!</b>\nИмя: ${user.name} (@${user.username || 'нет'})\nИгра: ${event.dateString} (${event.type})`).catch(() => {});
+  }
+  return ctx.answerCbQuery('Успешно подтверждено! 🎉');
+});
+
+// --- ОБРАБОТКА ОТКАЗА ОТ ВИЗИТА ---
+bot.action(/conf_visit_no_(\d+)/, async (ctx) => {
+  const bookingId = parseInt(ctx.match[1]);
+  const booking = await db.query.bookings.findFirst({ where: eq(schema.bookings.id, bookingId) });
+  if (!booking) return ctx.answerCbQuery('❌ Запись не найдена.');
+
+  const event = await db.query.events.findFirst({ where: eq(schema.events.id, booking.eventId) });
+  if (!event) return;
+
+  // Обновляем статус и удаляем бронь, освобождая слот
+  await db.update(schema.bookings).set({ confirmation: 'rejected' }).where(eq(schema.bookings.id, bookingId));
+  await db.delete(schema.bookings).where(eq(schema.bookings.id, bookingId));
+  
+  await db.update(schema.events)
+    .set({ currentPlayers: Math.max(0, (event.currentPlayers || 0) - 1) })
+    .where(eq(schema.events.id, event.id));
+
+  await ctx.editMessageText('✅ <b>Запись успешно отменена</b>\n\nЖаль, что планы изменились! Место освобождено.\n\n🧧 <b>Твой возврат:</b> Для возврата средств напишите в поддержку (кнопка SOS).', { parse_mode: 'HTML' });
+  
+  const user = await db.query.users.findFirst({ where: eq(schema.users.id, booking.userId) });
+  if (user) {
+    await bot.telegram.sendMessage(ADMIN_ID, `❌ <b>Отказ от игры за 3 дня!</b>\nИмя: ${user.name} (@${user.username || 'нет'})\nИгра №${event.id}: ${event.dateString}`).catch(() => {});
+  }
+
+  // Сразу зовем человека из вайтлиста на пустое место!
+  await notifyNextInWaitlist(event.id, event.type, event.dateString);
+  return ctx.answerCbQuery('Запись отменена.');
 });
 
 bot.hears('🎲 Новая тема', async (ctx) => {
@@ -2290,7 +2362,8 @@ bot.command('panel', async (ctx) => {
             [Markup.button.callback('🎮 Управление Играми', 'admin_events_menu')],
             [Markup.button.callback('📊 Статистика и Проверка', 'admin_stats_menu')],
             [Markup.button.callback('🧼 Тех. обслуживание', 'admin_db_menu')],
-            [Markup.button.callback('📢 Глобальная рассылка', 'admin_global_broadcast')]
+            [Markup.button.callback('📢 Глобальная рассылка', 'admin_global_broadcast')],
+            [Markup.button.callback('🚨 Кто не подтвердил?', 'admin_confirmations_menu')]
         ]));
 });
 
@@ -3744,6 +3817,57 @@ bot.action('back_to_menu', (ctx) => ctx.reply("Возвращаемся...", get
 // Обработчики кнопок кабинета
 bot.action('start_registration', (ctx) => { ctx.deleteMessage(); ctx.scene.enter('REGISTER_SCENE'); });
 
+
+bot.action('admin_confirmations_menu', async (ctx) => {
+  if (ctx.from!.id !== ADMIN_ID) return;
+  const activeEvents = await db.query.events.findMany({ where: eq(schema.events.isActive, true) });
+  if (activeEvents.length === 0) return ctx.reply('Активных игр нет.');
+  
+  const btns = activeEvents.map(e => [Markup.button.callback(`⏱ ${e.dateString} | Контроль`, `check_conf_id_${e.id}`)]);
+  ctx.editMessageText('Выберите игру для проверки "молчунов":', Markup.inlineKeyboard([...btns, [Markup.button.callback('🔙 Назад', 'admin_events_menu')]]));
+});
+
+bot.action(/check_conf_id_(\d+)/, async (ctx) => {
+  const eventId = parseInt(ctx.match[1]);
+  const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
+  if (!event) return;
+
+  const evBookings = await db.query.bookings.findMany({
+    where: and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true))
+  });
+
+  const start = DateTime.fromFormat(event.dateString, "dd.MM.yyyy HH:mm", { zone: 'Europe/Warsaw' });
+  const diffHours = start.diffNow('hours').hours;
+
+  let report = `⏱ <b>Контроль визитов игры №${eventId}</b>\n`;
+  report += `До старта: <b>${diffHours.toFixed(1)} ч.</b>\n`;
+  report += `Статус дедлайна 24ч: ${diffHours <= 48 ? '🚨 <b>ИСТЕК (Пора пинать)</b>' : '⏳ Еще идет сбор'}\n\n`;
+
+  let confirmedCount = 0;
+  let unconfirmedList = "";
+
+  for (const b of evBookings) {
+    const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+    if (!u) continue;
+
+    if (b.confirmation === 'confirmed') {
+      confirmedCount++;
+    } else {
+      unconfirmedList += `• 👤 <b>${u.name}</b> (@${u.username || 'нет'}) | TG ID: <code>${u.telegramId}</code>\n`;
+    }
+  }
+
+  report += `✅ Подтвердили: <b>${confirmedCount} чел.</b>\n`;
+  report += `❌ Игнорят: <b>${evBookings.length - confirmedCount} чел.</b>\n\n`;
+
+  if (evBookings.length - confirmedCount > 0) {
+    report += `🚨 <b>Список молчунов для личного расстрела/связи:</b>\n${unconfirmedList}`;
+  } else {
+    report += `🎉 Чистая победа! Все участники подтвердили брони!`;
+  }
+
+  return ctx.replyWithHTML(report, Markup.inlineKeyboard([[Markup.button.callback('🔙 К списку игр', 'admin_confirmations_menu')]]));
+});
 // --- ВОЗВРАЩАЕМ ПРОПАВШИЕ КОМАНДЫ (30+ СТРОК) ---
 
 
