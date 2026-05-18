@@ -33,11 +33,13 @@ export const events = pgTable('events', {
 });
 
 // Таблица записей на игры
+// Найти и заменить таблицу bookings в drizzle/schema.ts
 export const bookings = pgTable('bookings', {
   id: serial('id').primaryKey(),
   userId: integer('user_id').references(() => users.id),
   eventId: integer('event_id').references(() => events.id),
   paid: boolean('paid').default(false), // Статус оплаты
+  confirmation: text('confirmation').default('pending'), // 🔥 НОВОЕ: 'pending', 'confirmed', 'rejected'
   createdAt: timestamp('created_at').defaultNow(),
 });
 
