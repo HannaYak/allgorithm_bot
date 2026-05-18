@@ -1664,22 +1664,23 @@ bot.action('details_talk', async (ctx) => {
 // --- 2. STOCK & KNOW ---
 
 // --- 2. STOCK & KNOW ---
+// --- STOCK & KNOW: GEEK EDITION ---
 bot.action('game_stock', async (ctx) => {
   await ctx.deleteMessage().catch(() => {});
-  const text = `🧠 <b>Stock and Know</b>\n\n` +
+  const text = `🧠 <b>Stock & Know: Geek Edition 👾</b>\n\n` +
+    `🚨 <b>ЭКСКЛЮЗИВ:</b> Единственная гик-игра в этом месяце! Повторов не будет, места строго ограничены.\n\n` +
+    `Спецвыпуск для тех, кто отличает Матрицу от симуляции, помнит код от убежища в Fallout и знает культовые мемы интернета изнутри. В этот вечер классическая эрудиция отступает — на арену выходят вопросы по поп-культуре, культовому кино, технологиям, видеоиграм и гик-вселенным. ✨\n\n` +
+    `Механика прежняя: ведущий задает закрученные вопросы, а твоя задача — читать соперников, блефовать, ловить подсказки и делать ставки в боте. Сможешь ли ты взломать эту систему и сорвать банк? 🎰\n\n` +
     `💰 <b>Стоимость:</b> 50 zł\n` +
-    `⏳ <b>Время:</b> 2 часа\n` +
-    `👥 <b>Важно:</b> Приходи один или с друзьями. Команды собираются прямо за столом!\n\n` +
-    `Интеллектуальная битва, где сплетены искусство блефа и эрудиция. Ведущий задает вопросы, а вы делаете ставки в боте. 🎰\n\n` +
-    `🍲 <b>Важно:</b> Еда и напитки оплачиваются отдельно на месте.`+
-    `📸 <b>Как это выглядит?</b> Загляни в наш <a href="https://www.instagram.com/algorythm.pl/">Instagram</a> — там живые эмоции и атмосфера наших игр!\n\n` +
-    `🎥 <i>Игры со значком «🎥» означают съемку контента для соцсетей (скидка -50% на билет).</i>\n\n` +
-    `👇 <i>Узнать пошагово, как всё проходит — нажимай «Подробнее о формате»!</i>`;
+    `⏳ <b>Время:</b> 2 часа\n\n` +
+    `🍲 <b>Важно:</b> Еда и напитки оплачиваются отдельно на месте.\n` +
+    `📸 <b>Атмосфера:</b> Живые эмоции прошлых игр смотри в нашем <a href="https://www.instagram.com/algorythm.pl/">Instagram</a>.`;
   
   return ctx.replyWithPhoto('AgACAgIAAxkBAAJsUGmoFtbbg9aMyA-abyEBurU0cEywAAJzJGsbvMtASQJe0v_wl_aHAQADAgADeQADOgQ', { 
-    caption: text, parse_mode: 'HTML', 
+    caption: text, 
+    parse_mode: 'HTML', 
     ...Markup.inlineKeyboard([
-      [Markup.button.callback('📅 Записаться', 'book_stock')], 
+      [Markup.button.callback('📅 Занять слот', 'book_stock')], 
       [Markup.button.callback('👀 Подробнее о формате', 'details_stock')],
       [Markup.button.callback('📊 Таблица лидеров (ТОП-5)', 'view_stock_leaderboard')],
       [Markup.button.callback('🔙 Назад', 'back_to_games')]
