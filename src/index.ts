@@ -2963,36 +2963,45 @@ bot.command('normalize', async (ctx) => {
 
 bot.command('status', async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
-  
-  // ИСПРАВЛЕНИЕ: переменная должна называться именно activeEvents
-  const activeEvents = await db.query.events.findMany(); 
-  
-  
-  if (activeEvents.length === 0) return ctx.reply('Нет активных игр.');
 
-  let report = `📊 <b>ОТЧЕТ ПО ВСЕМ ИГРАМ:</b>\n\n`;
+  try {
+    // 1. Берем все активные игры
+    const activeEvents = await db.query.events.findMany({ where: eq(schema.events.isActive, true) });
 
-  for (const ev of activeEvents) {
+    if (activeEvents.length === 0) {
+      return ctx.reply('📭 Нет активных игр.');
+    }
+
+    let report = `📊 <b>ОТЧЕТ ПО АКТИВНЫМ ИГРАМ:</b>\n\n`;
+
+    for (const ev of activeEvents) {
+      // 2. Считаем РЕАЛЬНОЕ кол-во оплат прямо сейчас
       const bookings = await db.query.bookings.findMany({ 
-          where: and(eq(schema.bookings.eventId, ev.id), eq(schema.bookings.paid, true)) 
+        where: and(eq(schema.bookings.eventId, ev.id), eq(schema.bookings.paid, true)) 
       });
 
+      // Считаем по полу для статистики
       let m = 0, w = 0;
       for (const b of bookings) {
-          const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
-          if (u?.gender === 'Мужчина') m++;
-          if (u?.gender === 'Женщина') w++;
+        const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+        if (u?.gender === 'Мужчина') m++;
+        else if (u?.gender === 'Женщина') w++;
       }
 
-      report += `🔹 <b>${ev.dateString} | ${ev.type}</b>\n`;
-      report += `   Свободно: ${ev.maxPlayers - bookings.length} из ${ev.maxPlayers}\n`;
+      const freeSpots = ev.maxPlayers - bookings.length;
+      
+      report += `🔹 <b>${ev.dateString}</b> | ${getGameName(ev.type)}\n`;
+      report += `   Свободно: <b>${freeSpots}</b> / ${ev.maxPlayers}\n`;
       report += `   Баланс: 🕺 ${m} | 💃 ${w}\n`;
-      report += `   ID для команд: <code>${ev.id}</code>\n\n`;
+      report += `   ID игры: <code>${ev.id}</code>\n\n`;
+    }
+
+    await ctx.replyWithHTML(report);
+  } catch (e) {
+    console.error("Ошибка в /status:", e);
+    ctx.reply("❌ Ошибка при формировании отчета.");
   }
-
-  await ctx.replyWithHTML(report);
 });
-
 bot.command('broadcast_m35', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     
