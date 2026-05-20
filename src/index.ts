@@ -2945,32 +2945,34 @@ bot.command('normalize', async (ctx) => {
 });
 
 bot.command('status', async (ctx) => {
-    if (ctx.from.id !== ADMIN_ID) return;
-    
-    const events = await db.query.events.findMany();
-    if (activeEvents.length === 0) return ctx.reply('Нет активных игр.');
+  if (ctx.from.id !== ADMIN_ID) return;
+  
+  // ИСПРАВЛЕНИЕ: переменная должна называться именно activeEvents
+  const activeEvents = await db.query.events.findMany(); 
+  
+  if (activeEvents.length === 0) return ctx.reply('Нет активных игр.');
 
-    let report = `📊 <b>ОТЧЕТ ПО ВСЕМ ИГРАМ:</b>\n\n`;
+  let report = `📊 <b>ОТЧЕТ ПО ВСЕМ ИГРАМ:</b>\n\n`;
 
-    for (const ev of activeEvents) {
-        const bookings = await db.query.bookings.findMany({ 
-            where: and(eq(schema.bookings.eventId, ev.id), eq(schema.bookings.paid, true)) 
-        });
+  for (const ev of activeEvents) {
+      const bookings = await db.query.bookings.findMany({ 
+          where: and(eq(schema.bookings.eventId, ev.id), eq(schema.bookings.paid, true)) 
+      });
 
-        let m = 0, w = 0;
-        for (const b of bookings) {
-            const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
-            if (u?.gender === 'Мужчина') m++;
-            if (u?.gender === 'Женщина') w++;
-        }
+      let m = 0, w = 0;
+      for (const b of bookings) {
+          const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+          if (u?.gender === 'Мужчина') m++;
+          if (u?.gender === 'Женщина') w++;
+      }
 
-        report += `🔹 <b>${ev.dateString} | ${ev.type}</b>\n`;
-        report += `   Свободно: ${ev.maxPlayers - bookings.length} из ${ev.maxPlayers}\n`;
-        report += `   Баланс: 🕺 ${m} | 💃 ${w}\n`;
-        report += `   ID для команд: <code>${ev.id}</code>\n\n`;
-    }
+      report += `🔹 <b>${ev.dateString} | ${ev.type}</b>\n`;
+      report += `   Свободно: ${ev.maxPlayers - bookings.length} из ${ev.maxPlayers}\n`;
+      report += `   Баланс: 🕺 ${m} | 💃 ${w}\n`;
+      report += `   ID для команд: <code>${ev.id}</code>\n\n`;
+  }
 
-    await ctx.replyWithHTML(report);
+  await ctx.replyWithHTML(report);
 });
 
 bot.command('broadcast_m35', async (ctx) => {
