@@ -832,32 +832,33 @@ function getMainKeyboard(showTopicButton = false) {
 // --- 6. АВТОПИЛОТ (ЧИСТАЯ ВЕРСИЯ БЕЗ ДУБЛЕЙ) ---
 setInterval(async () => {
   try {
-    const now = DateTime.now().setZone('Europe/Warsaw'); 
-    const activeEvents = await db.query.events.findMany(); 
-    
+    const now = DateTime.now().setZone('Europe/Warsaw');
+    const activeEvents = await db.query.events.findMany();
+
     for (const event of activeEvents) {
       const start = DateTime.fromFormat(event.dateString, "dd.MM.yyyy HH:mm", { zone: 'Europe/Warsaw' });
       if (!start.isValid) continue;
 
       const diffHours = start.diff(now, 'hours').hours;
       const minutesSinceStart = now.diff(start, 'minutes').minutes;
+      const isSameDay = start.hasSame(now, 'day');
 
       if (minutesSinceStart < -5000 || minutesSinceStart > 360) continue;
 
       if (event.isActive) {
-      // 1. НАПОМИНАНИЯ (3 ДНЯ И УТРО)
-     // 1. НАПОМИНАНИЯ (3 ДНЯ С ЖЕСТКИМ ПРЕДУПРЕЖДЕНИЕМ И КНОПКАМИ)
-      if (diffHours >= 71.5 && diffHours <= 72.5 && !PROCESSED_AUTO_ACTIONS.has(`remind_3d_${event.id}`)) {
-        PROCESSED_AUTO_ACTIONS.add(`remind_3d_${event.id}`);
         
-        const evBookings = await db.query.bookings.findMany({
-          where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true))
-        });
+        // --- 1. НАПОМИНАНИЕ ЗА 3 ДНЯ (ровно в 20:00) ---
+        if (now.hour === 20 && diffHours >= 71 && diffHours <= 73 && !PROCESSED_AUTO_ACTIONS.has(`remind_3d_${event.id}`)) {
+          PROCESSED_AUTO_ACTIONS.add(`remind_3d_${event.id}`);
+          
+          const evBookings = await db.query.bookings.findMany({
+            where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true))
+          });
 
-        for (const b of evBookings) {
-          const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
-          if (u?.telegramId) {
-            const msg = `📅 <b>До встречи осталось 3 дня!</b>\n\n` +
+          for (const b of evBookings) {
+            const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+            if (u?.telegramId) {
+              const msg = `📅 <b>До встречи осталось 3 дня!</b>\n\n` +
                         `Пожалуйста, <b>подтвердите свой визит в течение 24 часов</b>, чтобы за вами сохранилось место за столом. 🥂\n\n` +
                         `⚠️ <b>ВАЖНОЕ ПРАВИЛО КЛУБА: Мы просим уважать чужое время.</b>\n` +
                         `Allgorithm — это про идеальный баланс гостей (особенно на Быстрых Свиданиях). Некоторые участники тратят больше часа на дорогу, чтобы просто доехать до встречи. ` +
@@ -865,15 +866,31 @@ setInterval(async () => {
                         `❌ Если у вас изменились планы — всё в порядке, мы всё понимаем. Просто нажмите кнопку <b>«Отказаться»</b> прямо сейчас. Система автоматически вернет вам деньги на Stripe и мгновенно отдаст слот ребятам из листа ожидания.`;
             
             await bot.telegram.sendMessage(u.telegramId, msg, {
-              parse_mode: 'HTML',
-              ...Markup.inlineKeyboard([
-                [Markup.button.callback('✅ Подтверждаю, буду!', `conf_visit_yes_${b.id}`)],
-                [Markup.button.callback('❌ Отказаться (Возврат)', `conf_visit_no_${b.id}`)]
-              ])
-            }).catch(() => {});
+                parse_mode: 'HTML',
+                ...Markup.inlineKeyboard([
+                  [Markup.button.callback('✅ Подтверждаю, буду!', `conf_visit_yes_${b.id}`)],
+                  [Markup.button.callback('❌ Отказаться (Возврат)', `conf_visit_no_${b.id}`)]
+                ])
+              }).catch(() => {});
+            }
           }
         }
-      }
+
+        // --- 2. НАПОМИНАНИЕ УТРОМ В ДЕНЬ ИГРЫ (в 09:00) ---
+        if (now.hour === 9 && isSameDay && !PROCESSED_AUTO_ACTIONS.has(`remind_today_${event.id}`)) {
+          PROCESSED_AUTO_ACTIONS.add(`remind_today_${event.id}`);
+
+          const evBookings = await db.query.bookings.findMany({
+            where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true))
+          });
+
+          for (const b of evBookings) {
+            const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+            if (u?.telegramId) {
+               await bot.telegram.sendMessage(u.telegramId, `👋 Привет! Напоминаю, что сегодня игра! Ждем тебя, готовься к встрече. ✨`, { parse_mode: 'HTML' }).catch(() => {});
+            }
+          }
+        }
       // 2. РАСКРЫТИЕ АДРЕСА (ЗА 3 ЧАСА)
       if (diffHours >= 2.5 && diffHours <= 3.5 && !PROCESSED_AUTO_ACTIONS.has(`reveal_${event.id}`)) {
         PROCESSED_AUTO_ACTIONS.add(`reveal_${event.id}`);
@@ -2949,6 +2966,7 @@ bot.command('status', async (ctx) => {
   
   // ИСПРАВЛЕНИЕ: переменная должна называться именно activeEvents
   const activeEvents = await db.query.events.findMany(); 
+  
   
   if (activeEvents.length === 0) return ctx.reply('Нет активных игр.');
 
