@@ -10,7 +10,7 @@ import { DateTime } from 'luxon';
 import * as SD from './speedDating';
 import { users, events, bookings, vouchers, secretLikes } from '../drizzle/schema';
 
-
+let IS_BROADCASTING = false; // Этот "замок" не даст запустить две рассылки одновременно
 // --- 1. НАСТРОЙКИ ---
 
 async function broadcastToEvent(eventId: number, message: string) {
@@ -3539,40 +3539,52 @@ bot.on('message', async (ctx, next) => {
     }
 
     // 3. ОБРАБОТКА ТЕКСТА (РАССЫЛКИ И СТАВКИ)
-    if (text) {
-        // Глобальная рассылка (для админа)
-        if (sess?.waitingForGlobalBroadcast && userId === ADMIN_ID) {
-            const allUsers = await db.query.users.findMany();
-            const now = DateTime.now().setZone('Europe/Warsaw');
-            let count = 0;
+   // --- Исправленная рассылка с "замком" ---
+if (sess?.waitingForGlobalBroadcast && userId === ADMIN_ID) {
+    if (IS_BROADCASTING) {
+        return ctx.reply('⚠️ Рассылка уже идет! Подожди, пока она завершится.');
+    }
+    
+    IS_BROADCASTING = true; // Блокируем запуск второй рассылки
+    
+    try {
+        const allUsers = await db.query.users.findMany();
+        const now = DateTime.now().setZone('Europe/Warsaw');
+        let count = 0;
 
-            for (const u of allUsers) {
-                const upcomingBookings = await db.query.bookings.findMany({
-                    where: and(eq(schema.bookings.userId, u.id), eq(schema.bookings.paid, true))
-                });
+        for (const u of allUsers) {
+            // ... твоя логика исключений ...
+            const upcomingBookings = await db.query.bookings.findMany({
+                where: and(eq(schema.bookings.userId, u.id), eq(schema.bookings.paid, true))
+            });
 
-                let isRegisteredSoon = false;
-                for (const b of upcomingBookings) {
-                    const ev = await db.query.events.findFirst({ where: eq(schema.events.id, b.eventId) });
-                    if (ev) {
-                        const eventDate = DateTime.fromFormat(ev.dateString, "dd.MM.yyyy HH:mm", { zone: 'Europe/Warsaw' });
-                        if (eventDate > now && eventDate.diff(now, 'days').days < 7) {
-                            isRegisteredSoon = true;
-                            break;
-                        }
+            let isRegisteredSoon = false;
+            for (const b of upcomingBookings) {
+                const ev = await db.query.events.findFirst({ where: eq(schema.events.id, b.eventId) });
+                if (ev) {
+                    const eventDate = DateTime.fromFormat(ev.dateString, "dd.MM.yyyy HH:mm", { zone: 'Europe/Warsaw' });
+                    if (eventDate > now && eventDate.diff(now, 'days').days < 7) {
+                        isRegisteredSoon = true;
+                        break;
                     }
                 }
-
-                if (isRegisteredSoon) continue;
-
-                try {
-                    await ctx.telegram.sendMessage(u.telegramId, `📢 <b>Объявление Алгоритма:</b>\n\n${text}`, { parse_mode: 'HTML' });
-                    count++;
-                } catch (e) { }
             }
-            sess.waitingForGlobalBroadcast = false;
-            return ctx.reply(`✅ Рассылка завершена! Отправлено: ${count} чел.`);
+
+            if (isRegisteredSoon) continue;
+
+            try {
+                await bot.telegram.sendMessage(u.telegramId, `📢 <b>Объявление Алгоритма:</b>\n\n${text}`, { parse_mode: 'HTML' });
+                count++;
+            } catch (e) { }
         }
+        await ctx.reply(`✅ Рассылка завершена! Отправлено: ${count} чел.`);
+    } finally {
+        // Обязательно снимаем замок, даже если была ошибка
+        IS_BROADCASTING = false;
+        sess.waitingForGlobalBroadcast = false;
+    }
+    return;
+}
 
         // Ставки Stock & Know
         if (STOCK_STATE.currentQuestionIndex !== -1 && !isNaN(parseInt(text)) && !text.startsWith('/')) {
