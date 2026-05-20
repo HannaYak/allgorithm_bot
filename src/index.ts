@@ -3489,20 +3489,17 @@ bot.on('message', async (ctx, next) => {
         const eventId = sess.waitingForPromo;
 
         const promo = await db.query.promoCodes.findFirst({
-            where: and(
-                eq(schema.promoCodes.code, codeInput),
-                eq(schema.promoCodes.isActive, true)
-            )
+            where: and(eq(schema.promoCodes.code, codeInput), eq(schema.promoCodes.isActive, true))
         });
 
         if (!promo || promo.currentUses >= promo.maxUses || (promo.expiresAt && promo.expiresAt < new Date())) {
-            return ctx.reply('❌ Код не найден, истек или все билеты уже разобрали. Попробуй другой или нажми /menu для отмены.');
+            return ctx.reply('❌ Код не найден, истек или все билеты уже разобрали.');
         }
 
         if (promo.eventIds) {
             const allowedIds = promo.eventIds.split(',').map(id => parseInt(id));
             if (!allowedIds.includes(eventId)) {
-                return ctx.reply('❌ Этот код не действует на выбранную игру. Проверь ID и попробуй снова.');
+                return ctx.reply('❌ Этот код не действует на выбранную игру.');
             }
         }
 
@@ -3514,7 +3511,7 @@ bot.on('message', async (ctx, next) => {
                 .where(and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true)));
 
             if (realBookingsCount.length >= event.maxPlayers) {
-                return ctx.reply('❌ К сожалению, пока ты вводил код, на эту игру заняли последнее место. Попробуй другую дату!');
+                return ctx.reply('❌ К сожалению, места закончились!');
             }
 
             await db.insert(schema.bookings).values({ userId: user.id, eventId: eventId, paid: true });
@@ -3531,7 +3528,7 @@ bot.on('message', async (ctx, next) => {
     // 2. ПОДДЕРЖКА (SOS)
     if (sess?.waitingForSupport) {
         const adminHeader = `🆘 <b>ВОПРОС В ПОДДЕРЖКУ</b>\n\nОт: ${ctx.from.first_name} (@${ctx.from.username || 'нет'})\nID: <code>${ctx.from.id}</code>\n\n<code>/reply ${ctx.from.id} </code>`;
-        await ctx.telegram.sendMessage(ADMIN_ID, adminHeader, { parse_mode: 'HTML' });
+        await bot.telegram.sendMessage(ADMIN_ID, adminHeader, { parse_mode: 'HTML' });
         await ctx.copyMessage(ADMIN_ID);
         ctx.reply('✅ Ваше сообщение отправлено! Администратор ответит в ближайшее время.');
         sess.waitingForSupport = false;
@@ -3539,72 +3536,62 @@ bot.on('message', async (ctx, next) => {
     }
 
     // 3. ОБРАБОТКА ТЕКСТА (РАССЫЛКИ И СТАВКИ)
-   // --- Исправленная рассылка с "замком" ---
-if (sess?.waitingForGlobalBroadcast && userId === ADMIN_ID) {
-    if (IS_BROADCASTING) {
-        return ctx.reply('⚠️ Рассылка уже идет! Подожди, пока она завершится.');
-    }
-    
-    IS_BROADCASTING = true; // Блокируем запуск второй рассылки
-    
-    try {
-        const allUsers = await db.query.users.findMany();
-        const now = DateTime.now().setZone('Europe/Warsaw');
-        let count = 0;
+    if (text) {
+        // Глобальная рассылка
+        if (sess?.waitingForGlobalBroadcast && userId === ADMIN_ID) {
+            if (IS_BROADCASTING) return ctx.reply('⚠️ Рассылка уже идет! Подожди, пока она завершится.');
+            
+            IS_BROADCASTING = true;
+            try {
+                const allUsers = await db.query.users.findMany();
+                const now = DateTime.now().setZone('Europe/Warsaw');
+                let count = 0;
 
-        for (const u of allUsers) {
-            // ... твоя логика исключений ...
-            const upcomingBookings = await db.query.bookings.findMany({
-                where: and(eq(schema.bookings.userId, u.id), eq(schema.bookings.paid, true))
-            });
+                for (const u of allUsers) {
+                    const upcomingBookings = await db.query.bookings.findMany({
+                        where: and(eq(schema.bookings.userId, u.id), eq(schema.bookings.paid, true))
+                    });
 
-            let isRegisteredSoon = false;
-            for (const b of upcomingBookings) {
-                const ev = await db.query.events.findFirst({ where: eq(schema.events.id, b.eventId) });
-                if (ev) {
-                    const eventDate = DateTime.fromFormat(ev.dateString, "dd.MM.yyyy HH:mm", { zone: 'Europe/Warsaw' });
-                    if (eventDate > now && eventDate.diff(now, 'days').days < 7) {
-                        isRegisteredSoon = true;
-                        break;
+                    let isRegisteredSoon = false;
+                    for (const b of upcomingBookings) {
+                        const ev = await db.query.events.findFirst({ where: eq(schema.events.id, b.eventId) });
+                        if (ev) {
+                            const eventDate = DateTime.fromFormat(ev.dateString, "dd.MM.yyyy HH:mm", { zone: 'Europe/Warsaw' });
+                            if (eventDate > now && eventDate.diff(now, 'days').days < 7) {
+                                isRegisteredSoon = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (!isRegisteredSoon) {
+                        try {
+                            await bot.telegram.sendMessage(u.telegramId, `📢 <b>Объявление Алгоритма:</b>\n\n${text}`, { parse_mode: 'HTML' });
+                            count++;
+                        } catch (e) { }
                     }
                 }
+                await ctx.reply(`✅ Рассылка завершена! Отправлено: ${count} чел.`);
+            } finally {
+                IS_BROADCASTING = false;
+                sess.waitingForGlobalBroadcast = false;
             }
-
-            if (isRegisteredSoon) continue;
-
-            try {
-                await bot.telegram.sendMessage(u.telegramId, `📢 <b>Объявление Алгоритма:</b>\n\n${text}`, { parse_mode: 'HTML' });
-                count++;
-            } catch (e) { }
+            return;
         }
-        await ctx.reply(`✅ Рассылка завершена! Отправлено: ${count} чел.`);
-    } finally {
-        // Обязательно снимаем замок, даже если была ошибка
-        IS_BROADCASTING = false;
-        sess.waitingForGlobalBroadcast = false;
-    }
-    return;
-}
 
         // Ставки Stock & Know
         if (STOCK_STATE.currentQuestionIndex !== -1 && !isNaN(parseInt(text)) && !text.startsWith('/')) {
             const player = STOCK_STATE.participants.get(userId);
-            if (player) {
-                if (!STOCK_STATE.playerAnswers.has(userId)) {
-                    STOCK_STATE.playerAnswers.set(userId, parseInt(text));
-                    await ctx.reply(`✅ Игрок №${player.num}, твоя ставка ${text} принята! 🎰`);
-                    await bot.telegram.sendMessage(ADMIN_ID, `📈 Ставка от №${player.num} (${player.name}): <b>${text}</b>`).catch(()=>{});
-                    return;
-                } else {
-                    return ctx.reply(`⚠️ Игрок №${player.num}, ты уже сделал ставку!`);
-                }
+            if (player && !STOCK_STATE.playerAnswers.has(userId)) {
+                STOCK_STATE.playerAnswers.set(userId, parseInt(text));
+                await ctx.reply(`✅ Игрок №${player.num}, твоя ставка ${text} принята! 🎰`);
+                await bot.telegram.sendMessage(ADMIN_ID, `📈 Ставка от №${player.num} (${player.name}): <b>${text}</b>`).catch(()=>{});
+                return;
             }
         }
     }
-
     return next();
 });
-
 
 
 bot.command('reply', async (ctx) => {
