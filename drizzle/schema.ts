@@ -7,18 +7,26 @@ export const users = pgTable('users', {
   username: text('username'),
   firstName: text('first_name'),
 
-  // Анкета
+  // === АНКЕТА ===
   name: text('name'),
-  birthDate: text('birth_date'), 
+  birthDate: text('birth_date'),        // возраст
   gender: text('gender'),
-  fact: text('fact'),                    // странный факт
-  expectations: text('expectations'),    // ← Новый вопрос: "Что ты ищешь..."
-  profileCompleted: boolean('profile_completed').default(false), // ← Важно!
+  fact: text('fact'),
+  strangeStory: text('strange_story'),                  // странный факт
+  expectations: text('expectations'),   // ← Новый важный вопрос
+  profileCompleted: boolean('profile_completed').default(false),
 
+  // Дополнительные поля
+  city: text('city'),
+  lastActive: timestamp('last_active').defaultNow(),
+  isBanned: boolean('is_banned').default(false),
+  banReason: text('ban_reason'),
+
+  // Системные поля
   isAdmin: boolean('is_admin').default(false),
   gamesPlayed: integer('games_played').default(0),
   loyaltyPoints: integer('loyalty_points').default(0),
-  
+
   createdAt: timestamp('created_at').defaultNow(),
   invitedBy: bigint('invited_by', { mode: 'number' }),
 });
