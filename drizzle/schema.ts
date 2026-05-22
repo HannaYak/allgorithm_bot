@@ -6,17 +6,19 @@ export const users = pgTable('users', {
   telegramId: bigint('telegram_id', { mode: 'number' }).notNull().unique(),
   username: text('username'),
   firstName: text('first_name'),
-  
-  // Ответы анкеты
+
+  // Анкета
   name: text('name'),
-  birthDate: text('birth_date'), // ДД.ММ.ГГГГ
-  fact: text('fact'),
-  strangeStory: text('strange_story'),
-  gender: text('gender'), // 'male' | 'female'
-  
+  birthDate: text('birth_date'), 
+  gender: text('gender'),
+  fact: text('fact'),                    // странный факт
+  expectations: text('expectations'),    // ← Новый вопрос: "Что ты ищешь..."
+  profileCompleted: boolean('profile_completed').default(false), // ← Важно!
+
   isAdmin: boolean('is_admin').default(false),
   gamesPlayed: integer('games_played').default(0),
-  loyaltyPoints: integer('loyalty_points').default(0), // Для 5-й бесплатной
+  loyaltyPoints: integer('loyalty_points').default(0),
+  
   createdAt: timestamp('created_at').defaultNow(),
   invitedBy: bigint('invited_by', { mode: 'number' }),
 });
