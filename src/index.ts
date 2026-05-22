@@ -848,7 +848,10 @@ setInterval(async () => {
       if (event.isActive) {
         
         // --- 1. НАПОМИНАНИЕ ЗА 3 ДНЯ (ровно в 20:00) ---
-        if (now.hour === 20 && diffHours >= 71 && diffHours <= 73 && !PROCESSED_AUTO_ACTIONS.has(`remind_3d_${event.id}`)) {
+        // Проверяем: если отнять от даты игры 3 дня, это сегодняшний календарный день?
+        const isThreeDaysBefore = start.minus({ days: 3 }).hasSame(now, 'day');
+
+        if (now.hour === 20 && isThreeDaysBefore && !PROCESSED_AUTO_ACTIONS.has(`remind_3d_${event.id}`)) {
           PROCESSED_AUTO_ACTIONS.add(`remind_3d_${event.id}`);
           
           const evBookings = await db.query.bookings.findMany({
@@ -858,7 +861,7 @@ setInterval(async () => {
           for (const b of evBookings) {
             const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
             if (u?.telegramId) {
-              const msg = `📅 <b>До встречи осталось 3 дня!</b>\n\n` +
+              const msg =`📅 <b>До встречи осталось 3 дня!</b>\n\n` +
                         `Пожалуйста, <b>подтвердите свой визит в течение 24 часов</b>, чтобы за вами сохранилось место за столом. 🥂\n\n` +
                         `⚠️ <b>ВАЖНОЕ ПРАВИЛО КЛУБА: Мы просим уважать чужое время.</b>\n` +
                         `Allgorithm — это про идеальный баланс гостей (особенно на Быстрых Свиданиях). Некоторые участники тратят больше часа на дорогу, чтобы просто доехать до встречи. ` +
@@ -896,8 +899,8 @@ setInterval(async () => {
         PROCESSED_AUTO_ACTIONS.add(`reveal_${event.id}`);
         const { address } = parseEventDesc(event.description);
         
-        const rules = `📍 <b>Место встречи: ${address}</b>\n\n, встретимся через 3,5 часа` +
-          `ВАЖНО: ЕСЛИ ВЫ НЕ СМОЖЕТЕ ПРИДТИ, НАПИШИТЕ ПОДЮАЛУЙСТА ОБ ЭТОМ В SOS, НАМ ВАЖНО ЗНАТЬ КОЛИЧЕСТВО УЧАСТНИКОВ!` +
+        const rules = `📍 <b>Место встречи: ${address}</b>\n\n, встретимся через 3,5 часа\n` +
+          `ВАЖНО: ЕСЛИ ВЫ НЕ СМОЖЕТЕ ПРИДТИ, НАПИШИТЕ ПОДЮАЛУЙСТА ОБ ЭТОМ В SOS, НАМ ВАЖНО ЗНАТЬ КОЛИЧЕСТВО УЧАСТНИКОВ!\n` +
           `1️⃣ <b>Приходи за 10–15 минут:</b> Успеешь сделать заказ и снять куртку.\n` +
           `2️⃣ <b>Как найти стол:</b> Спрашивай ТОЛЬКО столик на имя <b>"АЛГОРИТМ"</b>, ничего более.\n` +
           `3️⃣ <b>Если ты первый:</b> Не беспокойся, садись, компания скоро будет, стоит немного подождать. ✨\n` +
@@ -907,7 +910,7 @@ setInterval(async () => {
         let gameSpec = "";
         if (event.type === 'talk_toast') gameSpec = `🥂 <b>Talk & Toast:</b> Тебя ждут глубокие темы и викторина!`;
         else if (event.type === 'stock_know') gameSpec = `🧠 <b>Stock & Know:</b> Битва за банк! Твой номер придет следом.`;
-        else if (event.type === 'speed_dating') gameSpec = `💘 <b>Свидания:</b> 7-10 мин на пару. Отмечай симпатии сразу!`;
+        else if (event.type === 'speed_dating') gameSpec = `💘 <b>Свидания:</b> 10 мин на пару. Отмечай симпатии сразу!`;
 
         await broadcastToEvent(event.id, `${rules}\n\n${gameSpec}\n\nЖдем тебя! 🥂`);
 
