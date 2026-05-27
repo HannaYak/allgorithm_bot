@@ -42,6 +42,14 @@ export const events = pgTable('events', {
   isActive: boolean('is_active').default(true),
 });
 
+export const autoStates = pgTable('auto_states', {
+  id: serial('id').primaryKey(),
+  key: varchar('key', { length: 255 }).notNull().unique(), // например: "remind_3d_45", "used_topic_45_Тема..."
+  value: text('value'), // для USED_TOPICS будем хранить JSON строку
+  createdAt: timestamp('created_at').defaultNow(),
+  expiresAt: timestamp('expires_at'), // чтобы чистить старое
+});
+
 // Таблица записей на игры
 // Найти и заменить таблицу bookings в drizzle/schema.ts
 export const bookings = pgTable('bookings', {
