@@ -53,7 +53,7 @@ const GAME_PRICES: Record<string, string> = {
 };
 
 const REVEAL_PRICE_ID = 'price_1TM9ewHhXyjuCWwfdbpcocNd';
-const STRIPE_COUPON_ID = '8RiQPzVX'; 
+const STRIPE_COUPON_ID = 'MBWWLu8j'; 
 const ADMIN_ID = 5456905649; 
 
 const BEAUTY_NAMES: Record<string, string> = {
@@ -2383,9 +2383,9 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
         let discounts = [];
         const sessionMetadata: any = { telegramId: ctx.from!.id.toString(), eventId: eid.toString() };
 
-        // Логика скидки -10 PLN — новая версия
+       // Логика скидки -10 PLN — новая версия
 if (activeVoucher?.status === 'approved_10') {
-    if (basePrice >= 35) {                    // ← Изменено с > на >=
+    if (basePrice >= 35) { // <-- Здесь стоит 35
         finalPrice = basePrice - 10;
         discounts = [{ coupon: STRIPE_COUPON_ID }];
         sessionMetadata.voucherId = activeVoucher.id.toString();
