@@ -3420,15 +3420,19 @@ bot.action(/approve_profile_(\d+)/, async (ctx) => {
         userId: user.id, status: 'approved_10', photoFileId: 'PROFILE_APPROVED'
     }).onConflictDoNothing();
 
-    await bot.telegram.sendMessage(user.telegramId,
+   await bot.telegram.sendMessage(user.telegramId,
     `🎉 <b>Поздравляем! Твоя анкета одобрена!</b>\n\n` +
     `Тебе автоматически начислена скидка <b>-10 PLN</b> на первый билет.\n\n` +
     `Теперь можешь переходить в «🎮 Игры» и покупать билет со скидкой! 🥂`,
-    .catch(() => {});
-    await ctx.answerCbQuery('Одобрено!');
+    { parse_mode: 'HTML' }
+  ).catch(() => {});
 
-    // ВАЖНО: Обновляем список анкет
-    await showModerateMenu(ctx); 
+  // ИСПРАВЛЕНИЕ: Удалили лишние точки после .catch() и перед await
+  await ctx.editMessageText(`✅ Анкета ${user.name} одобрена. Скидка -10 PLN начислена.`, { 
+    parse_mode: 'HTML' 
+  });
+  
+  await ctx.answerCbQuery('Одобрено!');
 });
 
 bot.action(/reject_profile_(\d+)/, async (ctx) => {
