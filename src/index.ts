@@ -1285,6 +1285,39 @@ async function sendSecondChanceOffers(eventId: number) {
     }
 }
 
+async function showModerateMenu(ctx: any) {
+    const pendingUsers = await db.query.users.findMany({
+        where: and(
+            eq(schema.users.profileCompleted, true),
+            eq(schema.users.expectations, sql`expectations IS NOT NULL`)
+        )
+    });
+
+    if (pendingUsers.length === 0) {
+        return ctx.editMessageText('✅ На данный момент нет анкет на модерацию.');
+    }
+
+    let text = `🆕 <b>Анкеты на модерацию (${pendingUsers.length})</b>\n\n`;
+    const buttons = [];
+
+    for (const u of pendingUsers) {
+        text += `👤 <b>${u.name}</b> (${u.birthDate}, ${u.gender})\n`;
+        text += `Ожидания: ${u.expectations?.substring(0, 80)}\n\n`;
+
+        buttons.push([
+            Markup.button.callback(`✅ Одобрить ${u.name}`, `approve_profile_${u.id}`),
+            Markup.button.callback(`❌ Отклонить`, `reject_profile_${u.id}`)
+        ]);
+    }
+
+    // Если сообщение уже есть — редактируем, если нет — отправляем новое
+    try {
+        await ctx.editMessageText(text, { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) });
+    } catch {
+        await ctx.replyWithHTML(text, Markup.inlineKeyboard(buttons));
+    }
+}
+
 bot.start(async (ctx) => {
   try {
     const payload = ctx.startPayload; 
@@ -3373,97 +3406,41 @@ bot.command('broadcast_except_m35', async (ctx) => {
 
 // === МОДЕРАЦИЯ АНКЕТ ===
 bot.action('admin_moderate_profiles', async (ctx) => {
-    const pendingUsers = await db.query.users.findMany({
-    where: and(
-        eq(schema.users.profileCompleted, true),
-        // Добавь проверку на наличие ваучера со статусом 'pending'
-    )
-});
-    if (pendingUsers.length === 0) {
-        return ctx.editMessageText('✅ На данный момент нет анкет на модерацию.');
-    }
-
-    let text = `🆕 <b>Анкеты на модерацию (${pendingUsers.length})</b>\n\n`;
-
-    const buttons = [];
-
-    for (const u of pendingUsers) {
-        text += `👤 <b>${u.name}</b> (${u.birthDate}, ${u.gender})\n`;
-        text += `Ожидания: ${u.expectations?.substring(0, 80)}${u.expectations?.length > 80 ? '...' : ''}\n\n`;
-
-        buttons.push([
-            Markup.button.callback(`✅ Одобрить ${u.name}`, `approve_profile_${u.id}`),
-            Markup.button.callback(`❌ Отклонить`, `reject_profile_${u.id}`)
-        ]);
-    }
-
-    await ctx.editMessageText(text, {
-        parse_mode: 'HTML',
-        ...Markup.inlineKeyboard(buttons)
-    });
+    await showModerateMenu(ctx);
 });
 
-// Одобрить анкету
-// Одобрить анкету
-// Одобрить анкету
 // Одобрить анкету
 bot.action(/approve_profile_(\d+)/, async (ctx) => {
-  const userId = parseInt(ctx.match[1]);
-  
-  const user = await db.query.users.findFirst({ 
-    where: eq(schema.users.id, userId) 
-  });
+    const userId = parseInt(ctx.match[1]);
+    const user = await db.query.users.findFirst({ where: eq(schema.users.id, userId) });
+    if (!user) return ctx.answerCbQuery('Пользователь не найден');
 
-  if (!user) return ctx.answerCbQuery('Пользователь не найден');
+    // ... (твоя логика добавления ваучера) ...
+    await db.insert(schema.vouchers).values({
+        userId: user.id, status: 'approved_10', photoFileId: 'PROFILE_APPROVED'
+    }).onConflictDoNothing();
 
-  // 1. Сначала пытаемся найти существующий ваучер
-  const existing = await db.query.vouchers.findFirst({
-    where: and(
-        eq(schema.vouchers.userId, user.id),
-        eq(schema.vouchers.status, 'approved_10')
-    )
-  });
-
-  // 2. Если его нет — создаем. Если есть — ничего не делаем (избегаем конфликта)
-  if (!existing) {
-      await db.insert(schema.vouchers).values({
-        userId: user.id,
-        status: 'approved_10',
-        photoFileId: 'PROFILE_APPROVED'
-      });
-  }
-
-  // Уведомляем пользователя
-  await bot.telegram.sendMessage(user.telegramId,
+    await bot.telegram.sendMessage(user.telegramId,
     `🎉 <b>Поздравляем! Твоя анкета одобрена!</b>\n\n` +
     `Тебе автоматически начислена скидка <b>-10 PLN</b> на первый билет.\n\n` +
     `Теперь можешь переходить в «🎮 Игры» и покупать билет со скидкой! 🥂`,
-    { parse_mode: 'HTML' }
-  ).catch(() => {});
+    .catch(() => {});
+    await ctx.answerCbQuery('Одобрено!');
 
-  // Обновляем сообщение (удаляем кнопки)
-  await ctx.editMessageText(`✅ Анкета ${user.name} одобрена. Скидка начислена.`, { 
-    parse_mode: 'HTML' 
-  });
-  
-  await ctx.answerCbQuery('Одобрено!');
+    // ВАЖНО: Обновляем список анкет
+    await showModerateMenu(ctx); 
 });
-// Отклонить анкету
+
 bot.action(/reject_profile_(\d+)/, async (ctx) => {
-  const userId = parseInt(ctx.match[1]);
-  const user = await db.query.users.findFirst({ where: eq(schema.users.id, userId) });
+    const userId = parseInt(ctx.match[1]);
+    const user = await db.query.users.findFirst({ where: eq(schema.users.id, userId) });
+    if (!user) return ctx.answerCbQuery('Пользователь не найден');
 
-  if (!user) return ctx.answerCbQuery('Пользователь не найден');
+    await bot.telegram.sendMessage(user.telegramId, "❌ К сожалению, твоя анкета не прошла модерацию.").catch(() => {});
+    await ctx.answerCbQuery('Отклонено');
 
-  // Уведомляем юзера
-  await bot.telegram.sendMessage(user.telegramId, "❌ К сожалению, твоя анкета не прошла модерацию.").catch(() => {});
-
-  // !!! УДАЛЯЕМ КНОПКИ ИЗ АДМИНКИ !!!
-  await ctx.editMessageText(`❌ Анкета ${user.name} отклонена.`, { 
-    parse_mode: 'HTML' 
-  });
-  
-  await ctx.answerCbQuery('Отклонено');
+    // ВАЖНО: Обновляем список анкет
+    await showModerateMenu(ctx);
 });
 
 // 2. ОБРАБОТЧИК ОТВЕТОВ НА ОПРОС (ОТПРАВЛЯЕТ ТЕБЕ В ЛИЧКУ)
