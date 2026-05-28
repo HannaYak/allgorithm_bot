@@ -779,7 +779,7 @@ const registerWizard = new Scenes.WizardScene(
       expectations: data.expectations,
       fact: fact,
       profileCompleted: true,
-      lastActive: new Date().toISOString()
+      lastActive: new Date()
     }).where(eq(schema.users.id, dbUser.id));
 
     // 4. Выдаем ваучер ТОЛЬКО если его ещё нет
@@ -3374,13 +3374,11 @@ bot.command('broadcast_except_m35', async (ctx) => {
 // === МОДЕРАЦИЯ АНКЕТ ===
 bot.action('admin_moderate_profiles', async (ctx) => {
     const pendingUsers = await db.query.users.findMany({
-        where: and(
-            eq(schema.users.profileCompleted, true),
-            eq(schema.users.expectations, sql`expectations IS NOT NULL`) // те, кто заполнил expectations
-            // Можно добавить условие, что у них ещё нет approved_10 ваучера
-        )
-    });
-
+    where: and(
+        eq(schema.users.profileCompleted, true),
+        // Добавь проверку на наличие ваучера со статусом 'pending'
+    )
+});
     if (pendingUsers.length === 0) {
         return ctx.editMessageText('✅ На данный момент нет анкет на модерацию.');
     }
@@ -3408,6 +3406,7 @@ bot.action('admin_moderate_profiles', async (ctx) => {
 // Одобрить анкету
 // Одобрить анкету
 // Одобрить анкету
+// Одобрить анкету
 bot.action(/approve_profile_(\d+)/, async (ctx) => {
   const userId = parseInt(ctx.match[1]);
   
@@ -3417,53 +3416,43 @@ bot.action(/approve_profile_(\d+)/, async (ctx) => {
 
   if (!user) return ctx.answerCbQuery('Пользователь не найден');
 
-  // 1. БЕЗОПАСНАЯ ПРОВЕРКА: Ищем, есть ли уже такой ваучер
-  const existing = await db.query.vouchers.findFirst({
-    where: and(
-        eq(schema.vouchers.userId, user.id),
-        eq(schema.vouchers.status, 'approved_10')
-    )
+  // ... (логика выдачи ваучера остается прежней) ...
+  await db.insert(schema.vouchers).values({
+    userId: user.id,
+    status: 'approved_10',
+    photoFileId: 'PROFILE_APPROVED'
+  }).onConflictDoUpdate({
+    target: [schema.vouchers.userId, schema.vouchers.status],
+    set: { status: 'approved_10' }
   });
 
-  // 2. Если ваучера нет — создаем
-  if (!existing) {
-      await db.insert(schema.vouchers).values({
-        userId: user.id,
-        status: 'approved_10',
-        photoFileId: 'PROFILE_APPROVED'
-      });
-  }
+  // Уведомляем юзера
+  await bot.telegram.sendMessage(user.telegramId, "🎉 Поздравляем! Твоя анкета одобрена!").catch(() => {});
 
-  // Уведомляем пользователя
-  await bot.telegram.sendMessage(user.telegramId,
-    `🎉 <b>Поздравляем! Твоя анкета одобрена!</b>\n\n` +
-    `Тебе автоматически начислена скидка <b>-10 PLN</b> на первый билет.\n\n` +
-    `Теперь можешь переходить в «🎮 Игры» и покупать билет со скидкой! 🥂`,
-    { parse_mode: 'HTML' }
-  ).catch(() => {});
-
-  await ctx.editMessageText(`✅ Анкета ${user.name} одобрена. Скидка -10 PLN начислена.`);
+  // !!! САМОЕ ВАЖНОЕ: УДАЛЯЕМ КНОПКИ ИЗ АДМИНКИ !!!
+  // Вместо editMessageText используем editMessageText с новым текстом БЕЗ кнопок
+  await ctx.editMessageText(`✅ Анкета ${user.name} одобрена.`, { 
+    parse_mode: 'HTML' 
+  });
+  
   await ctx.answerCbQuery('Одобрено!');
 });
-
 
 // Отклонить анкету
 bot.action(/reject_profile_(\d+)/, async (ctx) => {
   const userId = parseInt(ctx.match[1]);
-  
-  const user = await db.query.users.findFirst({ 
-    where: eq(schema.users.id, userId) 
-  });
+  const user = await db.query.users.findFirst({ where: eq(schema.users.id, userId) });
 
   if (!user) return ctx.answerCbQuery('Пользователь не найден');
 
-  await bot.telegram.sendMessage(user.telegramId,
-    `❌ К сожалению, твоя анкета не прошла модерацию.\n\n` +
-    `Если хочешь, можешь написать в поддержку (кнопка 🆘 Помощь) и уточнить причину.`,
-    { parse_mode: 'HTML' }
-  ).catch(() => {});
+  // Уведомляем юзера
+  await bot.telegram.sendMessage(user.telegramId, "❌ К сожалению, твоя анкета не прошла модерацию.").catch(() => {});
 
-  await ctx.editMessageText(`❌ Анкета ${user.name} отклонена.`);
+  // !!! УДАЛЯЕМ КНОПКИ ИЗ АДМИНКИ !!!
+  await ctx.editMessageText(`❌ Анкета ${user.name} отклонена.`, { 
+    parse_mode: 'HTML' 
+  });
+  
   await ctx.answerCbQuery('Отклонено');
 });
 
