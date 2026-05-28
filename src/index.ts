@@ -10,7 +10,8 @@ import { DateTime } from 'luxon';
 import * as SD from './speedDating';
 import { users, events, bookings, vouchers, secretLikes } from '../drizzle/schema';
 
-let IS_BROADCASTING = false; // Этот "замок" не даст запустить две рассылки одновременно
+let IS_BROADCASTING = false; 
+const PENDING_PAYMENTS = new Map<number, { time: DateTime, notified: boolean }>();// Этот "замок" не даст запустить две рассылки одновременно
 // --- 1. НАСТРОЙКИ ---
 
 async function broadcastToEvent(eventId: number, message: string) {
@@ -607,12 +608,14 @@ async function isProcessed(key: string): Promise<boolean> {
 }
 
 // Отметить действие как обработанное
+
 async function markAsProcessed(key: string, expiresInHours = 24): Promise<void> {
-  const expiresAt = DateTime.now().plus({ hours: expiresInHours }).toJSDate();
+  // МЕНЯЕМ .toJSDate() на .toISO()
+  const expiresAt = DateTime.now().plus({ hours: expiresInHours }).toISO();
   
   await db.insert(schema.autoStates)
-    .values({ key: key, value: 'done', expiresAt: expiresAt })
-    .onConflictDoNothing(); // если уже существует — ничего не делаем
+    .values({ key: key, value: 'done', expiresAt: expiresAt as any }) // <-- Добавляем as any для TypeScript
+    .onConflictDoNothing();
 }
 
 
@@ -629,12 +632,14 @@ const TALK_STATE = { currentFact: '', currentUser: '', isActive: false };
 
 // --- 5. БОТ И СЦЕНЫ ---
 const bot = new Telegraf<any>(process.env.TELEGRAM_BOT_TOKEN || '');
-const PENDING_PAYMENTS = new Map<number, { time: DateTime, notified: boolean }>();
+
 // 1. Мастер регистрации
 // 1. Мастер регистрации (расширенный)
 // 1. Мастер регистрации (с модерацией анкеты)
+// 1. Мастер регистрации (с модерацией анкеты и защитой от ловушек)
 const registerWizard = new Scenes.WizardScene(
   'REGISTER_SCENE',
+  
   // --- ШАГ 1: Имя ---
   async (ctx) => {
     await ctx.replyWithHTML(
@@ -642,29 +647,37 @@ const registerWizard = new Scenes.WizardScene(
       `Мы немного изменили подход: теперь перед покупкой билета нужно заполнить короткую анкету.\n\n` +
       `Это помогает нам собирать действительно интересных и приятных людей.\n\n` +
       `🎁 <b>После проверки анкеты — сразу -10 PLN</b> на первый билет.\n\n` +
-      `<b>1. Как тебя зовут?</b>`
+      `<b>1. Как тебя зовут?</b>`,
+      Markup.removeKeyboard() // Скрываем главное меню на время анкеты
     );
     return ctx.wizard.next();
   },
 
-
   // --- ШАГ 2: Возраст ---
-  async (ctx) => {
+  async (ctx: any, next: any) => {
+    // АНТИ-ЛОВУШКА: Если нажата любая инлайн-кнопка (например, админская) — выходим из анкеты и передаем нажатие дальше
+    if (ctx.callbackQuery) { await ctx.scene.leave(); return next(); }
+    if (ctx.message?.text === '/cancel') { await ctx.scene.leave(); return ctx.reply('❌ Регистрация отменена.', getMainKeyboard()); }
     if (!ctx.message || !('text' in ctx.message)) return;
-    (ctx.wizard.state as any).name = ctx.message.text.trim();
+
+    ctx.wizard.state.name = ctx.message.text.trim();
     await ctx.reply('2. Сколько тебе полных лет? (только число)');
     return ctx.wizard.next();
   },
 
   // --- ШАГ 3: Пол ---
-  async (ctx) => {
+  async (ctx: any, next: any) => {
+    if (ctx.callbackQuery) { await ctx.scene.leave(); return next(); }
+    if (ctx.message?.text === '/cancel') { await ctx.scene.leave(); return ctx.reply('❌ Регистрация отменена.', getMainKeyboard()); }
     if (!ctx.message || !('text' in ctx.message)) return;
+
     const age = parseInt(ctx.message.text);
     if (isNaN(age) || age < 18 || age > 70) {
       return ctx.reply('❌ Введи корректный возраст (от 18 до 70):');
     }
-    (ctx.wizard.state as any).age = age.toString();
+    ctx.wizard.state.age = age.toString();
 
+    // Выводим клавиатуру выбора пола
     await ctx.reply(
       '3. Твой пол?',
       Markup.keyboard([['Мужчина', 'Женщина']]).oneTime().resize()
@@ -673,10 +686,12 @@ const registerWizard = new Scenes.WizardScene(
   },
 
   // --- ШАГ 4: Expectations ---
-  async (ctx) => {
+  async (ctx: any, next: any) => {
+    if (ctx.callbackQuery) { await ctx.scene.leave(); return next(); }
+    if (ctx.message?.text === '/cancel') { await ctx.scene.leave(); return ctx.reply('❌ Регистрация отменена.', getMainKeyboard()); }
     if (!ctx.message || !('text' in ctx.message)) return;
-    const input = ctx.message.text.trim();
 
+    const input = ctx.message.text.trim();
     let normalizedGender = '';
     if (input === 'Мужчина' || input.toLowerCase().includes('муж')) normalizedGender = 'Мужчина';
     else if (input === 'Женщина' || input.toLowerCase().includes('жен')) normalizedGender = 'Женщина';
@@ -686,20 +701,26 @@ const registerWizard = new Scenes.WizardScene(
         Markup.keyboard([['Мужчина', 'Женщина']]).resize().persistent());
     }
 
-    (ctx.wizard.state as any).gender = normalizedGender;
+    ctx.wizard.state.gender = normalizedGender;
 
-   await ctx.replyWithHTML(
+    // ВАЖНО: Markup.removeKeyboard() уничтожает зависшие кнопки "Мужчина/Женщина"
+    await ctx.replyWithHTML(
       `4. Что ты ищешь в Allgorithm?\n\n` +
       `<b>Что ты ищешь в Allgorithm и чего ожидаешь от наших вечеров?</b>\n\n` +
-      `Напиши 2–4 предложения. Будь честен(-на) — это важно для нас.`
+      `Напиши 2–4 предложения. Будь честен(-на) — это важно для нас.`,
+      Markup.removeKeyboard() 
     );
     return ctx.wizard.next();
   },
 
-// Шаг 5 — Интересный факт
-  async (ctx) => {
-    const expectations = ctx.message?.text?.trim();
-    if (!expectations || expectations.length < 10) {
+  // --- ШАГ 5: Интересный факт ---
+  async (ctx: any, next: any) => {
+    if (ctx.callbackQuery) { await ctx.scene.leave(); return next(); }
+    if (ctx.message?.text === '/cancel') { await ctx.scene.leave(); return ctx.reply('❌ Регистрация отменена.', getMainKeyboard()); }
+    if (!ctx.message || !('text' in ctx.message)) return;
+
+    const expectations = ctx.message.text.trim();
+    if (expectations.length < 10) {
       return ctx.reply("Пожалуйста, расскажи чуть подробнее (минимум 10 символов).");
     }
     
@@ -716,29 +737,31 @@ const registerWizard = new Scenes.WizardScene(
     return ctx.wizard.next();
   },
 
-  // Финальный шаг — сохранение
-  // Финальный шаг — сохранение
-// Финальный шаг — сохранение
-  async (ctx) => {
-    const fact = ctx.message?.text?.trim();
-    if (!fact || fact.length < 8) {
+  // --- ФИНАЛ: Сохранение ---
+  async (ctx: any, next: any) => {
+    if (ctx.callbackQuery) { await ctx.scene.leave(); return next(); }
+    if (ctx.message?.text === '/cancel') { await ctx.scene.leave(); return ctx.reply('❌ Регистрация отменена.', getMainKeyboard()); }
+    if (!ctx.message || !('text' in ctx.message)) return;
+
+    const fact = ctx.message.text.trim();
+    if (fact.length < 8) {
       return ctx.reply("Пожалуйста, напиши факт подлиннее 🙂");
     }
 
     const data = ctx.wizard.state as any;
     const telegramId = ctx.from!.id;
 
-    // 1. Достаем юзера из БД, чтобы получить его внутренний ID
+    // 1. Достаем юзера из БД
     const dbUser = await db.query.users.findFirst({
       where: eq(schema.users.telegramId, telegramId)
     });
 
     if (!dbUser) return ctx.scene.leave();
 
-    // 2. Ищем, давали ли мы ему уже ваучер за анкету (защита от повторов)
+    // 2. Ищем, давали ли мы ему уже ваучер за анкету
     const existingVoucher = await db.query.vouchers.findFirst({
       where: and(
-        eq(schema.vouchers.userId, dbUser.id), // ИСПОЛЬЗУЕМ dbUser.id!
+        eq(schema.vouchers.userId, dbUser.id),
         or(
           eq(schema.vouchers.photoFileId, 'PROFILE_ANSWERS'),
           eq(schema.vouchers.photoFileId, 'PROFILE_APPROVED')
@@ -762,20 +785,24 @@ const registerWizard = new Scenes.WizardScene(
     // 4. Выдаем ваучер ТОЛЬКО если его ещё нет
     if (!existingVoucher && !wasProfileCompleted) {
       await db.insert(schema.vouchers).values({
-        userId: dbUser.id, // ИСПОЛЬЗУЕМ dbUser.id!
-        status: 'pending', // Отправляем на модерацию
-        photoFileId: 'PROFILE_ANSWERS' // Метка, что это ваучер за анкету
+        userId: dbUser.id,
+        status: 'pending',
+        photoFileId: 'PROFILE_ANSWERS'
       });
 
+      // Возвращаем главное меню!
       await ctx.replyWithHTML(
         `✅ <b>Анкета отправлена на модерацию!</b>\n\n` +
         `Администратор проверит её в ближайшие 24 часа.\n\n` +
-        `Как только анкету одобрят — ты сразу получишь <b>-10 PLN</b> на первый билет.`
+        `Как только анкету одобрят — ты сразу получишь <b>-10 PLN</b> на первый билет.`,
+        getMainKeyboard() 
       );
     } else {
+      // Возвращаем главное меню!
       await ctx.replyWithHTML(
         `✅ <b>Анкета обновлена!</b>\n\n` +
-        `Спасибо! Твои данные успешно сохранены.`
+        `Спасибо! Твои данные успешно сохранены.`,
+        getMainKeyboard()
       );
     }
 
@@ -790,7 +817,7 @@ const registerWizard = new Scenes.WizardScene(
 
     return ctx.scene.leave();
   }
-); // Конец registerWizard
+);
 
 registerWizard.command('cancel', (ctx) => ctx.scene.leave());
 
@@ -1730,7 +1757,6 @@ let usedSet = await getUsedTopics(currentEvent.id);
     const randomTopic = pool[Math.floor(Math.random() * pool.length)];
     usedSet.add(randomTopic); 
 
-    await addUsedTopic(currentEvent.id, randomTopic);
 
     const round = SD.FAST_DATES_STATE.currentRound;
     const women = ps.filter(p => p.gender.toLowerCase().includes('жен')).sort((a,b) => a.num - b.num);
@@ -2043,7 +2069,7 @@ const events = await db.query.events.findMany({
   if (events.length === 0) return ctx.reply(`Расписание формируется! ✨`);
 
   // --- ЛОГИКА ДЛЯ LOCK & LOAD И TIFFANY ---
-  if (type === 'lockload' || type === 'tiffany') {
+  if (gameType === 'lockload' || gameType === 'tiffany') {
     const btns = events.map(e => [Markup.button.callback(`📅 ${e.dateString}`, `pay_event_${e.id}`)]);
     return ctx.replyWithHTML('🎯 <b>Выберите удобную дату:</b>', 
       Markup.inlineKeyboard([...btns, [Markup.button.callback('🔙 Назад', 'back_to_games')]])
@@ -2051,10 +2077,10 @@ const events = await db.query.events.findMany({
   }
 
   // --- ЛОГИКА ДЛЯ ОБЫЧНОГО TNT (Выбор кухни) ---
-  if (type === 'talk_toast') {
+  if (gameType === 'talk_toast') {
     const uniqueTitles = new Set<string>(); 
     events.forEach(e => uniqueTitles.add(parseEventDesc(e.description).title));
-    const kitchenBtns = Array.from(uniqueTitles).map(t => [Markup.button.callback(t, `cv_${TYPE_MAP[type]}_${encodeCat(t)}`)]);
+    const kitchenBtns = Array.from(uniqueTitles).map(t => [Markup.button.callback(t, `cv_${TYPE_MAP[gameType]}_${encodeCat(t)}`)]);
     return ctx.replyWithHTML('<b>Выбери направление кухни:</b>', 
       Markup.inlineKeyboard([...kitchenBtns, [Markup.button.callback('🔙 Назад', 'back_to_games')]])
     );
@@ -2071,12 +2097,12 @@ const events = await db.query.events.findMany({
     return [Markup.button.callback(`${label} (${e.currentPlayers}/${e.maxPlayers})`, `pay_event_${e.id}`)];
   });
 
-  const headerText = type === 'speed_dating' ? '🔥 <b>Выбери возрастную группу:</b>' : '<b>Выберите удобную дату:</b>';
+  const headerText = gameType === 'speed_dating' ? '🔥 <b>Выбери возрастную группу:</b>' : '<b>Выберите удобную дату:</b>';
 
  return ctx.replyWithHTML(headerText, 
     Markup.inlineKeyboard([...finalButtons, [Markup.button.callback('🔙 Назад', 'back_to_games')]])
   );
-
+  
 } catch (e) {
     console.error("Ошибка в bookGame:", e);
     ctx.reply("Произошла ошибка. Попробуй ещё раз.");
@@ -2106,7 +2132,7 @@ bot.action(/cv_(.+)_(.+)/, async (ctx) => {
     `⚠️ <i>Напоминаем: в стоимость билета входит участие и организация. Заказы по меню ресторана оплачиваются отдельно на месте.</i>`, 
     { 
       parse_mode: 'HTML', 
-      ...Markup.inlineKeyboard([...btns, [Markup.button.callback('🔙 Назад к выбору', 'book_talk')]]) 
+      ...Markup.inlineKeyboard([...btns, [Markup.button.callback('🔙 Назад к выбору', 'back_to_games')]]) 
     }
   );
 }); // <--- Теперь функция закрыта правильно здесь// <-- Теперь функция закрыта правильно
@@ -2472,7 +2498,7 @@ bot.action(/confirm_pay_(\d+)/, async (ctx) => {
         }
 
         // Записываем и обновляем счетчик по факту (real count + 1)
-        PENDING_PAYMENTS.delete(`${user.id}`);
+        PENDING_PAYMENTS.delete(user.id);
         await db.insert(schema.bookings).values({ userId: user.id, eventId: eid, paid: true });
         await db.update(schema.events).set({ currentPlayers: realBookingsCount.length + 1 }).where(eq(schema.events.id, eid));
         
@@ -3381,6 +3407,7 @@ bot.action('admin_moderate_profiles', async (ctx) => {
 
 // Одобрить анкету
 // Одобрить анкету
+// Одобрить анкету
 bot.action(/approve_profile_(\d+)/, async (ctx) => {
   const userId = parseInt(ctx.match[1]);
   
@@ -3390,15 +3417,22 @@ bot.action(/approve_profile_(\d+)/, async (ctx) => {
 
   if (!user) return ctx.answerCbQuery('Пользователь не найден');
 
-  // Создаём ваучер -10 PLN
-  await db.insert(schema.vouchers).values({
-    userId: user.id,
-    status: 'approved_10',
-    photoFileId: 'PROFILE_APPROVED'
-  }).onConflictDoUpdate({
-    target: [schema.vouchers.userId, schema.vouchers.status],
-    set: { status: 'approved_10' }
+  // 1. БЕЗОПАСНАЯ ПРОВЕРКА: Ищем, есть ли уже такой ваучер
+  const existing = await db.query.vouchers.findFirst({
+    where: and(
+        eq(schema.vouchers.userId, user.id),
+        eq(schema.vouchers.status, 'approved_10')
+    )
   });
+
+  // 2. Если ваучера нет — создаем
+  if (!existing) {
+      await db.insert(schema.vouchers).values({
+        userId: user.id,
+        status: 'approved_10',
+        photoFileId: 'PROFILE_APPROVED'
+      });
+  }
 
   // Уведомляем пользователя
   await bot.telegram.sendMessage(user.telegramId,
