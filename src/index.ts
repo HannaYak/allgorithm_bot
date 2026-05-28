@@ -1953,7 +1953,7 @@ bot.action('book_stock', async (ctx) => bookGame(ctx, 'stock_know'));
 bot.action('book_dating', async (ctx) => bookGame(ctx, 'speed_dating'));
 
 // === Добавь эту функцию (если её нет) или замени существующую
-bookGame ===
+
 
 async function bookGame(ctx: any, gameType: string) {
   try {
