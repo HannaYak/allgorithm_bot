@@ -255,7 +255,7 @@ const addPromoWizard = new Scenes.WizardScene(
       type: 'free',
       maxUses: max,
       eventIds: state.eventIds, // Сохраняем строку с ID
-      expiresAt: DateTime.now().plus({ days: 3 }).toJSDate() 
+      expiresAt: DateTime.now().plus({ days: 3 }).toISO()
     });
 
     await ctx.reply(`✅ Промокод ${state.code} создан для игр: ${state.eventIds || 'Все'}!`);
@@ -779,7 +779,7 @@ const registerWizard = new Scenes.WizardScene(
       expectations: data.expectations,
       fact: fact,
       profileCompleted: true,
-      lastActive: new Date()
+      lastActive: new Date().toISOString()
     }).where(eq(schema.users.id, dbUser.id));
 
     // 4. Выдаем ваучер ТОЛЬКО если его ещё нет
@@ -4355,7 +4355,7 @@ bot.catch((err: any, ctx) => {
 
 // Очистка старых записей в autoStates (чтобы база не разрасталась)
 async function cleanupOldAutoStates() {
-  const oneMonthAgo = DateTime.now().minus({ days: 30 }).toJSDate();
+  const oneMonthAgo = DateTime.now().minus({ days: 30 }).toISO();
   
   await db.delete(schema.autoStates)
     .where(sql`${schema.autoStates.expiresAt} < ${oneMonthAgo}`);
