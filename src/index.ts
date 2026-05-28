@@ -3416,28 +3416,38 @@ bot.action(/approve_profile_(\d+)/, async (ctx) => {
 
   if (!user) return ctx.answerCbQuery('Пользователь не найден');
 
-  // ... (логика выдачи ваучера остается прежней) ...
-  await db.insert(schema.vouchers).values({
-    userId: user.id,
-    status: 'approved_10',
-    photoFileId: 'PROFILE_APPROVED'
-  }).onConflictDoUpdate({
-    target: [schema.vouchers.userId, schema.vouchers.status],
-    set: { status: 'approved_10' }
+  // 1. Сначала пытаемся найти существующий ваучер
+  const existing = await db.query.vouchers.findFirst({
+    where: and(
+        eq(schema.vouchers.userId, user.id),
+        eq(schema.vouchers.status, 'approved_10')
+    )
   });
 
-  // Уведомляем юзера
-  await bot.telegram.sendMessage(user.telegramId, "🎉 Поздравляем! Твоя анкета одобрена!").catch(() => {});
+  // 2. Если его нет — создаем. Если есть — ничего не делаем (избегаем конфликта)
+  if (!existing) {
+      await db.insert(schema.vouchers).values({
+        userId: user.id,
+        status: 'approved_10',
+        photoFileId: 'PROFILE_APPROVED'
+      });
+  }
 
-  // !!! САМОЕ ВАЖНОЕ: УДАЛЯЕМ КНОПКИ ИЗ АДМИНКИ !!!
-  // Вместо editMessageText используем editMessageText с новым текстом БЕЗ кнопок
-  await ctx.editMessageText(`✅ Анкета ${user.name} одобрена.`, { 
+  // Уведомляем пользователя
+  await bot.telegram.sendMessage(user.telegramId,
+    `🎉 <b>Поздравляем! Твоя анкета одобрена!</b>\n\n` +
+    `Тебе автоматически начислена скидка <b>-10 PLN</b> на первый билет.\n\n` +
+    `Теперь можешь переходить в «🎮 Игры» и покупать билет со скидкой! 🥂`,
+    { parse_mode: 'HTML' }
+  ).catch(() => {});
+
+  // Обновляем сообщение (удаляем кнопки)
+  await ctx.editMessageText(`✅ Анкета ${user.name} одобрена. Скидка начислена.`, { 
     parse_mode: 'HTML' 
   });
   
   await ctx.answerCbQuery('Одобрено!');
 });
-
 // Отклонить анкету
 bot.action(/reject_profile_(\d+)/, async (ctx) => {
   const userId = parseInt(ctx.match[1]);
