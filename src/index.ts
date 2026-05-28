@@ -629,7 +629,7 @@ const TALK_STATE = { currentFact: '', currentUser: '', isActive: false };
 
 // --- 5. БОТ И СЦЕНЫ ---
 const bot = new Telegraf<any>(process.env.TELEGRAM_BOT_TOKEN || '');
-
+const PENDING_PAYMENTS = new Map<number, { time: DateTime, notified: boolean }>();
 // 1. Мастер регистрации
 // 1. Мастер регистрации (расширенный)
 // 1. Мастер регистрации (с модерацией анкеты)
@@ -717,6 +717,8 @@ const registerWizard = new Scenes.WizardScene(
   },
 
   // Финальный шаг — сохранение
+  // Финальный шаг — сохранение
+// Финальный шаг — сохранение
   async (ctx) => {
     const fact = ctx.message?.text?.trim();
     if (!fact || fact.length < 8) {
@@ -724,7 +726,29 @@ const registerWizard = new Scenes.WizardScene(
     }
 
     const data = ctx.wizard.state as any;
+    const telegramId = ctx.from!.id;
 
+    // 1. Достаем юзера из БД, чтобы получить его внутренний ID
+    const dbUser = await db.query.users.findFirst({
+      where: eq(schema.users.telegramId, telegramId)
+    });
+
+    if (!dbUser) return ctx.scene.leave();
+
+    // 2. Ищем, давали ли мы ему уже ваучер за анкету (защита от повторов)
+    const existingVoucher = await db.query.vouchers.findFirst({
+      where: and(
+        eq(schema.vouchers.userId, dbUser.id), // ИСПОЛЬЗУЕМ dbUser.id!
+        or(
+          eq(schema.vouchers.photoFileId, 'PROFILE_ANSWERS'),
+          eq(schema.vouchers.photoFileId, 'PROFILE_APPROVED')
+        )
+      )
+    });
+
+    const wasProfileCompleted = dbUser.profileCompleted || false;
+
+    // 3. Обновляем данные пользователя
     await db.update(schema.users).set({
       name: data.name,
       birthDate: data.age,
@@ -733,32 +757,40 @@ const registerWizard = new Scenes.WizardScene(
       fact: fact,
       profileCompleted: true,
       lastActive: new Date()
-    }).where(eq(schema.users.telegramId, ctx.from!.id));
+    }).where(eq(schema.users.id, dbUser.id));
 
-    await db.insert(schema.vouchers).values({
-      userId: ctx.from!.id,
-      status: 'pending',
-      photoFileId: 'PROFILE_ANSWERS'
-    });
+    // 4. Выдаем ваучер ТОЛЬКО если его ещё нет
+    if (!existingVoucher && !wasProfileCompleted) {
+      await db.insert(schema.vouchers).values({
+        userId: dbUser.id, // ИСПОЛЬЗУЕМ dbUser.id!
+        status: 'pending', // Отправляем на модерацию
+        photoFileId: 'PROFILE_ANSWERS' // Метка, что это ваучер за анкету
+      });
 
-    await ctx.replyWithHTML(
-      `✅ <b>Анкета отправлена на модерацию!</b>\n\n` +
-      `Администратор проверит её в ближайшие 24 часа.\n\n` +
-      `Как только анкету одобрят — ты сразу получишь <b>-10 PLN</b> на первый билет.`
-    );
+      await ctx.replyWithHTML(
+        `✅ <b>Анкета отправлена на модерацию!</b>\n\n` +
+        `Администратор проверит её в ближайшие 24 часа.\n\n` +
+        `Как только анкету одобрят — ты сразу получишь <b>-10 PLN</b> на первый билет.`
+      );
+    } else {
+      await ctx.replyWithHTML(
+        `✅ <b>Анкета обновлена!</b>\n\n` +
+        `Спасибо! Твои данные успешно сохранены.`
+      );
+    }
 
+    // 5. Уведомление админу
     await bot.telegram.sendMessage(ADMIN_ID, 
-      `🔔 <b>Новая анкета на модерацию!</b>\n\n` +
+      `🔔 <b>${wasProfileCompleted ? 'Обновление' : 'Новая'} анкета!</b>\n\n` +
       `Имя: ${data.name}\nВозраст: ${data.age}\nПол: ${data.gender}\n` +
-      `Ожидания: ${data.expectations}\n` +
-      `Факт: ${fact}\n\n` +
-      `TG ID: <code>${ctx.from!.id}</code>`,
+      `Ожидания: ${data.expectations}\nФакт: ${fact}\n\n` +
+      `TG ID: <code>${telegramId}</code>`,
       { parse_mode: 'HTML' }
     );
 
     return ctx.scene.leave();
   }
-);
+); // Конец registerWizard
 
 registerWizard.command('cancel', (ctx) => ctx.scene.leave());
 
@@ -2353,14 +2385,17 @@ if (activeVoucher?.status === 'approved_10') {
         });
 
         // ОСТАВЛЯЕМ ТОЛЬКО ЭТОТ ОТВЕТ (убрали лишний дубль выше)
-        await ctx.reply(
-    `${priceText}\n\nНажимай кнопку ниже, чтобы завершить покупку:`,
-    Markup.inlineKeyboard([
-        [Markup.button.url('💳 Оплатить сейчас', stripeSession.url!)],
-        [Markup.button.callback('🎟 Ввести промокод', `apply_promo_${eid}`)],
-        [Markup.button.callback('✅ Я оплатил', `confirm_pay_${eid}`)]
-    ])
-);
+        // ОСТАВЛЯЕМ ТОЛЬКО ЭТОТ ОТВЕТ (убрали лишний дубль выше)
+        const priceText = `💳 <b>К оплате: ${finalPrice} PLN</b>`; // <--- ДОБАВЛЯЕМ ЭТУ СТРОКУ
+
+        await ctx.replyWithHTML( // <--- МЕНЯЕМ reply НА replyWithHTML
+            `${priceText}\n\nНажимай кнопку ниже, чтобы завершить покупку:`,
+            Markup.inlineKeyboard([
+                [Markup.button.url('💳 Оплатить сейчас', stripeSession.url!)],
+                [Markup.button.callback('🎟 Ввести промокод', `apply_promo_${eid}`)],
+                [Markup.button.callback('✅ Я оплатил', `confirm_pay_${eid}`)]
+            ])
+        );
 
     } catch (e) { 
         console.error(e); 
@@ -2968,6 +3003,39 @@ bot.command('kick', async (ctx) => {
     } catch (e) { 
         console.error("Ошибка в команде kick:", e);
         ctx.reply('❌ Произошла ошибка. Проверь консоль Render.'); 
+    }
+});
+
+// Команда для тестирования: сбросить анкету и ваучеры юзера
+bot.command('reset_profile', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    
+    const parts = ctx.message.text.split(' ');
+    if (parts.length < 2) return ctx.reply('Используй: /reset_profile [TG_ID]');
+
+    const targetTgId = parseInt(parts[1]);
+    
+    try {
+        const user = await db.query.users.findFirst({ 
+            where: eq(schema.users.telegramId, targetTgId) 
+        });
+        
+        if (!user) return ctx.reply('❌ Юзер не найден в базе.');
+
+        // 1. Удаляем все его ваучеры
+        await db.delete(schema.vouchers).where(eq(schema.vouchers.userId, user.id));
+
+        // 2. Сбрасываем флаг анкеты и текстовые поля
+        await db.update(schema.users).set({
+            profileCompleted: false,
+            expectations: null,
+            fact: null
+        }).where(eq(schema.users.id, user.id));
+
+        await ctx.reply(`✅ Анкета и ваучеры юзера ${user.name} (TG: ${targetTgId}) успешно сброшены! Можно проходить регистрацию заново.`);
+    } catch (e) {
+        console.error(e);
+        ctx.reply('❌ Ошибка при сбросе профиля.');
     }
 });
 // Обработчик кнопки "Записи" - показывает список игр
@@ -4069,10 +4137,22 @@ bot.command('clear_scores_114', async (ctx) => {
     }
 });
 
+bot.action('start_registration', async (ctx) => {
+  const user = await db.query.users.findFirst({ 
+    where: eq(schema.users.telegramId, ctx.from!.id) 
+  });
+
+  if (user?.profileCompleted) {
+    await ctx.reply("Ты уже заполнял анкету. Сейчас откроем редактирование.");
+  }
+  ctx.deleteMessage().catch(() => {});
+  ctx.scene.enter('REGISTER_SCENE');
+});
+
 bot.action('back_to_menu', (ctx) => ctx.reply("Возвращаемся...", getMainKeyboard()));
 
 // Обработчики кнопок кабинета
-bot.action('start_registration', (ctx) => { ctx.deleteMessage(); ctx.scene.enter('REGISTER_SCENE'); });
+
 
 
 bot.action('admin_confirmations_menu', async (ctx) => {
