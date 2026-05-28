@@ -54,7 +54,6 @@ const GAME_PRICES: Record<string, string> = {
 const REVEAL_PRICE_ID = 'price_1TM9ewHhXyjuCWwfdbpcocNd';
 const STRIPE_COUPON_ID = '8RiQPzVX'; 
 const ADMIN_ID = 5456905649; 
-const PROCESSED_AUTO_ACTIONS = new Set<string>(); 
 
 const BEAUTY_NAMES: Record<string, string> = {
   'talk_toast': 'Talk & Toast 🥂',
@@ -574,7 +573,7 @@ const decodeCat = (str: string) => Buffer.from(str, 'base64').toString('utf-8');
 const parseEventDesc = (desc: string | null) => {
   if (!desc) return { title: 'Мероприятие', address: 'Уточняется' };
   const parts = desc.split('###');
-  return { title: parts[0].trim(), address: parts[1] ? parts[1].trim() : 'Секретная локация откроектся за 3 часа до начала 🔒' };
+  return { title: parts[0].trim(), address: parts[1] ? parts[1].trim() : 'Секретная локация откроется за 3 часа до начала 🔒' };
 };
 
 async function notifyNextInWaitlist(eventId: number, eventType: string, dateString: string) {
@@ -597,13 +596,24 @@ async function notifyNextInWaitlist(eventId: number, eventType: string, dateStri
 
 // --- 4. STATE ---
 
-const PENDING_PAYMENTS = new Map<string, { time: DateTime, notified: boolean }>();
-// Храним использованные вопросы для каждой конкретной игры (eventId -> Set вопросов)
+// ====================== АВТОМАТИКА ЧЕРЕЗ БАЗУ ======================
 
-// Храним использованные вопросы для каждой игры, чтобы не повторяться
-const USED_TOPICS_BY_EVENT = new Map<number, Set<string>>();
+// Проверка — было ли уже обработано это действие
+async function isProcessed(key: string): Promise<boolean> {
+  const record = await db.query.autoStates.findFirst({
+    where: eq(schema.autoStates.key, key)
+  });
+  return !!record;
+}
 
-
+// Отметить действие как обработанное
+async function markAsProcessed(key: string, expiresInHours = 24): Promise<void> {
+  const expiresAt = DateTime.now().plus({ hours: expiresInHours }).toJSDate();
+  
+  await db.insert(schema.autoStates)
+    .values({ key: key, value: 'done', expiresAt: expiresAt })
+    .onConflictDoNothing(); // если уже существует — ничего не делаем
+}
 
 
 const STOCK_STATE = {
@@ -621,60 +631,96 @@ const TALK_STATE = { currentFact: '', currentUser: '', isActive: false };
 const bot = new Telegraf<any>(process.env.TELEGRAM_BOT_TOKEN || '');
 
 // 1. Мастер регистрации
+// 1. Мастер регистрации (расширенный)
+// 1. Мастер регистрации (с модерацией анкеты)
 const registerWizard = new Scenes.WizardScene(
   'REGISTER_SCENE',
-  // --- ШАГ 1: Приветствие и запрос Имени ---
+  // --- ШАГ 1: Имя ---
   async (ctx) => {
     await ctx.replyWithHTML(
-      `👋 Почти готово!\n\n` +
-      `Нужно внести тебя в базу Алгоритма, для этого пройди анкету из 3-х вопросов (всего 30 секунд). ` +
-      `После анкеты возвращайся в "Игры" и покупай билет без помех!\n\n` +
-      `1. Как тебя зовут? (пиши прям сюда своё имя)`
+      `👋 <b>Добро пожаловать в Allgorithm!</b>\n\n` +
+      `Мы немного изменили подход: теперь перед покупкой билета нужно заполнить короткую анкету.\n\n` +
+      `Это помогает нам собирать действительно интересных и приятных людей.\n\n` +
+      `🎁 <b>После проверки анкеты — сразу -10 PLN</b> на первый билет.\n\n` +
+      `<b>1. Как тебя зовут?</b>`
     );
     return ctx.wizard.next();
   },
 
-  // --- ШАГ 2: Сохранение имени и запрос Возраста ---
+
+  // --- ШАГ 2: Возраст ---
   async (ctx) => {
     if (!ctx.message || !('text' in ctx.message)) return;
-    (ctx.wizard.state as any).name = ctx.message.text;
-    await ctx.reply('2. Сколько тебе полных лет? Введи только число (например: 28). Это нужно для подбора компании твоего возраста. ✨');
+    (ctx.wizard.state as any).name = ctx.message.text.trim();
+    await ctx.reply('2. Сколько тебе полных лет? (только число)');
     return ctx.wizard.next();
   },
 
-  // --- ШАГ 3: Сохранение возраста и запрос Пола ---
+  // --- ШАГ 3: Пол ---
   async (ctx) => {
     if (!ctx.message || !('text' in ctx.message)) return;
     const age = parseInt(ctx.message.text);
-    if (isNaN(age)) {
-      return ctx.reply('❌ Ошибка! Пожалуйста, введи возраст цифрами (например: 25):');
+    if (isNaN(age) || age < 18 || age > 70) {
+      return ctx.reply('❌ Введи корректный возраст (от 18 до 70):');
     }
     (ctx.wizard.state as any).age = age.toString();
+
     await ctx.reply(
-      '3. Твой пол? Это критически важно для баланса пар на быстрых свиданиях. ⚖️:',
+      '3. Твой пол?',
       Markup.keyboard([['Мужчина', 'Женщина']]).oneTime().resize()
     );
     return ctx.wizard.next();
   },
 
-  // --- ШАГ 4: Нормализация пола, Сохранение в БД и Редирект ---
+  // --- ШАГ 4: Expectations ---
   async (ctx) => {
     if (!ctx.message || !('text' in ctx.message)) return;
-    const input = ctx.message.text.trim(); // Убираем лишние пробелы
+    const input = ctx.message.text.trim();
 
     let normalizedGender = '';
-    if (input === 'Мужчина') normalizedGender = 'Мужчина';
-    else if (input === 'Женщина') normalizedGender = 'Женщина';
-    // На случай, если ввели вручную с маленькой буквы
-    else if (input.toLowerCase().includes('муж')) normalizedGender = 'Мужчина';
-    else if (input.toLowerCase().includes('жен')) normalizedGender = 'Женщина';
+    if (input === 'Мужчина' || input.toLowerCase().includes('муж')) normalizedGender = 'Мужчина';
+    else if (input === 'Женщина' || input.toLowerCase().includes('жен')) normalizedGender = 'Женщина';
 
     if (!normalizedGender) {
-      // Если не поняли ответ, кидаем клавиатуру СНОВА и НЕ убираем её (без oneTime)
-      return ctx.reply(
-        'Пожалуйста, выбери пол, нажав на одну из кнопок ниже 👇',
-        Markup.keyboard([['Мужчина', 'Женщина']]).resize().persistent()
-      );
+      return ctx.reply('Пожалуйста, выбери пол кнопкой 👇', 
+        Markup.keyboard([['Мужчина', 'Женщина']]).resize().persistent());
+    }
+
+    (ctx.wizard.state as any).gender = normalizedGender;
+
+   await ctx.replyWithHTML(
+      `4. Что ты ищешь в Allgorithm?\n\n` +
+      `<b>Что ты ищешь в Allgorithm и чего ожидаешь от наших вечеров?</b>\n\n` +
+      `Напиши 2–4 предложения. Будь честен(-на) — это важно для нас.`
+    );
+    return ctx.wizard.next();
+  },
+
+// Шаг 5 — Интересный факт
+  async (ctx) => {
+    const expectations = ctx.message?.text?.trim();
+    if (!expectations || expectations.length < 10) {
+      return ctx.reply("Пожалуйста, расскажи чуть подробнее (минимум 10 символов).");
+    }
+    
+    ctx.wizard.state.expectations = expectations;
+    await ctx.replyWithHTML(
+      `✨ <b>Последний шаг</b>\n\n` +
+      `Расскажи <b>один необычный или забавный факт</b> о себе.\n\n` +
+      `Это будет использоваться в викторине «Чей это факт?» на вечере.\n\n` +
+      `Примеры:\n` +
+      `• Однажды я встретил(-а) медведя в лесу\n` +
+      `• Умею жонглировать\n` +
+      `• Боюсь кукол Барби`
+    );
+    return ctx.wizard.next();
+  },
+
+  // Финальный шаг — сохранение
+  async (ctx) => {
+    const fact = ctx.message?.text?.trim();
+    if (!fact || fact.length < 8) {
+      return ctx.reply("Пожалуйста, напиши факт подлиннее 🙂");
     }
 
     const data = ctx.wizard.state as any;
@@ -682,50 +728,39 @@ const registerWizard = new Scenes.WizardScene(
     await db.update(schema.users).set({
       name: data.name,
       birthDate: data.age,
-      gender: normalizedGender
+      gender: data.gender,
+      expectations: data.expectations,
+      fact: fact,
+      profileCompleted: true,
+      lastActive: new Date()
     }).where(eq(schema.users.telegramId, ctx.from!.id));
 
-    // Важно: Сначала убираем старую клавиатуру и даем новую
-    await ctx.reply(`✅ Регистрация завершена! Мы записали: ${normalizedGender}`, Markup.removeKeyboard());
+    await db.insert(schema.vouchers).values({
+      userId: ctx.from!.id,
+      status: 'pending',
+      photoFileId: 'PROFILE_ANSWERS'
+    });
 
-    const eventId = data.returnToEvent;
-    if (eventId) {
-      const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
-      if (event) {
-        await ctx.reply(
-          `Вы выбрали: ${getGameName(event.type)} (${event.dateString})\n`,
-          Markup.inlineKeyboard([[Markup.button.callback('💸 Перейти к оплате', `pay_event_${eventId}`)]])
-        );
-      }
-    }
-
-    await ctx.reply('Теперь ты можешь записываться на любые игры клуба!', getMainKeyboard());
-    return ctx.scene.leave();
- }
-);
-
-const editFactWizard = new Scenes.WizardScene(
-  'EDIT_FACT_SCENE',
-  async (ctx) => {
     await ctx.replyWithHTML(
-      `🤫 Твоя история для викторины\n\n` +
-      `Напиши один необычный или забавный факт о себе. \n\n` +
-      `Например: «я боюсь бабочек», «однажды я выиграл в лотерею» или «я умею играть на ложках». Мы используем это, чтобы другие игроки угадывали, чей это факт! 👇`
+      `✅ <b>Анкета отправлена на модерацию!</b>\n\n` +
+      `Администратор проверит её в ближайшие 24 часа.\n\n` +
+      `Как только анкету одобрят — ты сразу получишь <b>-10 PLN</b> на первый билет.`
     );
-    return ctx.wizard.next();
-  },
-  async (ctx) => {
-    if (!ctx.message || !('text' in ctx.message)) return;
-    const fact = ctx.message.text;
 
-    await db.update(schema.users)
-      .set({ fact: fact })
-      .where(eq(schema.users.telegramId, ctx.from!.id));
+    await bot.telegram.sendMessage(ADMIN_ID, 
+      `🔔 <b>Новая анкета на модерацию!</b>\n\n` +
+      `Имя: ${data.name}\nВозраст: ${data.age}\nПол: ${data.gender}\n` +
+      `Ожидания: ${data.expectations}\n` +
+      `Факт: ${fact}\n\n` +
+      `TG ID: <code>${ctx.from!.id}</code>`,
+      { parse_mode: 'HTML' }
+    );
 
-    await ctx.reply('✅ История сохранена! Теперь ты официально в пуле участников нашей секретной викторины. ✨', getMainKeyboard());
     return ctx.scene.leave();
   }
 );
+
+registerWizard.command('cancel', (ctx) => ctx.scene.leave());
 
 
   
@@ -809,7 +844,7 @@ const msgEventWizard = new Scenes.WizardScene(
 );
 
 // Регистрация всех сцен и подключение сессий
-const stage = new Scenes.Stage<any>([registerWizard, addEventWizard, msgEventWizard, editFactWizard, addPromoWizard]);
+const stage = new Scenes.Stage<any>([registerWizard, addEventWizard, msgEventWizard, addPromoWizard]);
 bot.use(session()); 
 bot.use(stage.middleware());
 
@@ -851,8 +886,8 @@ setInterval(async () => {
         // Проверяем: если отнять от даты игры 3 дня, это сегодняшний календарный день?
         const isThreeDaysBefore = start.minus({ days: 3 }).hasSame(now, 'day');
 
-        if (now.hour === 20 && isThreeDaysBefore && !PROCESSED_AUTO_ACTIONS.has(`remind_3d_${event.id}`)) {
-          PROCESSED_AUTO_ACTIONS.add(`remind_3d_${event.id}`);
+        if (now.hour === 20 && isThreeDaysBefore && !(await isProcessed(`remind_3d_${event.id}`))) {
+          await markAsProcessed(`remind_3d_${event.id}`, 30);
           
           const evBookings = await db.query.bookings.findMany({
             where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true))
@@ -880,8 +915,8 @@ setInterval(async () => {
         }
 
         // --- 2. НАПОМИНАНИЕ УТРОМ В ДЕНЬ ИГРЫ (в 09:00) ---
-        if (now.hour === 9 && isSameDay && !PROCESSED_AUTO_ACTIONS.has(`remind_today_${event.id}`)) {
-          PROCESSED_AUTO_ACTIONS.add(`remind_today_${event.id}`);
+        if (now.hour === 9 && isSameDay && !(await isProcessed(`remind_today_${event.id}`))) {
+          await markAsProcessed(`remind_today_${event.id}`, 14);
 
           const evBookings = await db.query.bookings.findMany({
             where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true))
@@ -895,8 +930,8 @@ setInterval(async () => {
           }
         }
       // 2. РАСКРЫТИЕ АДРЕСА (ЗА 3 ЧАСА)
-      if (diffHours >= 2.5 && diffHours <= 3.5 && !PROCESSED_AUTO_ACTIONS.has(`reveal_${event.id}`)) {
-        PROCESSED_AUTO_ACTIONS.add(`reveal_${event.id}`);
+      if (minutesSinceStart <= -150 && minutesSinceStart >= -210 && !(await isProcessed(`reveal_${event.id}`))) {
+          await markAsProcessed(`reveal_${event.id}`, 8);
         const { address } = parseEventDesc(event.description);
         
         const rules = `📍 <b>Место встречи: ${address}</b>\n\n, встретимся через 3,5 часа\n` +
@@ -974,11 +1009,10 @@ setInterval(async () => {
         }
       }
 
+
       // 3. СТАРТ ИГРЫ (ПРИВЕТСТВИЕ + КНОПКА)
-      // 3. СТАРТ ИГРЫ (ПРИВЕТСТВИЕ + КНОПКА)
-      // 3. СТАРТ ИГРЫ (ПРИВЕТСТВИЕ + КНОПКА)
-      if (minutesSinceStart >= 0 && minutesSinceStart <= 10 && !PROCESSED_AUTO_ACTIONS.has(`start_greet_${event.id}`)) {
-        PROCESSED_AUTO_ACTIONS.add(`start_greet_${event.id}`);
+      if (minutesSinceStart >= 0 && minutesSinceStart <= 8 && !(await isProcessed(`start_greet_${event.id}`))) {
+        await markAsProcessed(`start_greet_${event.id}`, 15);
         const { title } = parseEventDesc(event.description);
         
         // Кнопка нужна ТОЛЬКО для Talk-игр и Свиданий. Stock & Know — мимо.
@@ -1026,47 +1060,50 @@ setInterval(async () => {
       }
       
 
-      // 4. ВИКТОРИНА (105 МИН) И ЗАВЕРШЕНИЕ (135 МИН)
-      // 4. ВИКТОРИНА (105 МИН) И ЗАВЕРШЕНИЕ (135 МИН)
-// 4. ВИКТОРИНА (105 МИН) И ЗАВЕРШЕНИЕ (135 МИН)
           // 4. ВИКТОРИНА (105 МИН) И ЗАВЕРШЕНИЕ (135 МИН)
-      if (minutesSinceStart >= 105 && event.type.includes('talk_toast') && !PROCESSED_AUTO_ACTIONS.has(`quiz_${event.id}`)) {
-        PROCESSED_AUTO_ACTIONS.add(`quiz_${event.id}`); await runAutoQuiz(event.id);
-      }
-      if (minutesSinceStart >= 135 && !PROCESSED_AUTO_ACTIONS.has(`close_${event.id}`)) {
-        PROCESSED_AUTO_ACTIONS.add(`close_${event.id}`); await autoCloseEvent(event.id);
-      }
-      
+     if (minutesSinceStart >= 105 && minutesSinceStart <= 115 && event.type.includes('talk_toast') && 
+            !(await isProcessed(`quiz_${event.id}`))) {
+          await markAsProcessed(`quiz_${event.id}`, 40);
+          await runAutoQuiz(event.id);
+        }
+
       // 5. ВТОРОЙ ШАНС (195 МИН = 135 минут игры + 60 минут ожидания)
       // Сразу отсекаем Speed Dating, чтобы не гонять пустые запросы к БД
-      if (minutesSinceStart >= 195 && !event.type.startsWith('speed_dating') && !PROCESSED_AUTO_ACTIONS.has(`second_chance_${event.id}`)) {
-        PROCESSED_AUTO_ACTIONS.add(`second_chance_${event.id}`); 
-        await sendSecondChanceOffers(event.id);
+      if (minutesSinceStart >= 195 && minutesSinceStart <= 210 && !event.type.startsWith('speed_dating') && 
+            !(await isProcessed(`second_chance_${event.id}`))) {
+          await markAsProcessed(`second_chance_${event.id}`, 120);
+          await sendSecondChanceOffers(event.id);
+        }
       }
-      } // <--- ЗАКРЫЛИ БЛОК АКТИВНЫХ ИГР (ЗАЩИТА)
+    }
 
-    } // <--- КОНЕЦ ЦИКЛА ПО ИГРАМ
+  
+        // 6. ОБРАБОТКА ПРОСРОЧЕННЫХ ПЛАТЕЖЕЙ (PENDING)
+    for (const [userIdStr, data] of PENDING_PAYMENTS.entries()) {
+      const minutesPassed = now.diff(data.time, 'minutes').minutes;
 
-    // 6. ОПЛАТА (Pending)
-    // 6. ОПЛАТА (Pending)
-   // 6. ОПЛАТА (Pending)
-    for (const [uId, data] of PENDING_PAYMENTS.entries()) {
-      if (now.diff(data.time, 'minutes').minutes >= 30 && !data.notified) {
-        const u = await db.query.users.findFirst({ where: eq(schema.users.id, parseInt(uId)) });
-        if (u) {
-          // Мы убрали event.type, так как в этом цикле нет ссылки на конкретную игру
-          await bot.telegram.sendMessage(u.telegramId, 
-            `🔔 <b>Ой! Мы что-то пропустили?</b>\n\n` +
-            `Твоё место на одну из ближайших игр всё ещё ждёт тебя, но бронирование не завершено. 🥂\n\n` +
-            `Места в Алгоритме разлетаются быстро, а мы очень хотим видеть тебя за столом! Нажми «Оплатить», чтобы подтвердить участие. ✨`,
+      if (minutesPassed >= 30 && !data.notified) {
+        const user = await db.query.users.findFirst({ 
+          where: eq(schema.users.id, parseInt(userIdStr)) 
+        });
+
+        if (user) {
+          await bot.telegram.sendMessage(user.telegramId, 
+            `🔔 <b>Мы заметили, что ты начал(-а) оплату</b>\n\n` +
+            `Твоё место на игре всё ещё ждёт тебя, но оплата не завершилась.\n\n` +
+            `Хочешь вернуться и завершить покупку? Места разбирают быстро! ✨`,
             { parse_mode: 'HTML' }
           ).catch(() => {});
         }
-        PENDING_PAYMENTS.set(uId, { ...data, notified: true });
+
+        PENDING_PAYMENTS.set(userIdStr, { ...data, notified: true });
       }
-      if (now.diff(data.time, 'minutes').minutes > 120) PENDING_PAYMENTS.delete(uId);
+
+      // Удаляем старые записи (старше 2 часов)
+      if (minutesPassed > 120) {
+        PENDING_PAYMENTS.delete(userIdStr);
+      }
     }
-  
   } catch (e) { console.error("Ошибка автопилота:", e); }
 }, 60000);
 
@@ -1237,49 +1274,110 @@ const welcomeText = `Привет! Я Ханна, твой проводник в
   }
 });
 
+// ====================== УПРАВЛЕНИЕ ТЕМАМИ ======================
+
+// Получить использованные темы для игры
+async function getUsedTopics(eventId: number): Promise<Set<string>> {
+  const record = await db.query.autoStates.findFirst({
+    where: eq(schema.autoStates.key, `used_topics_${eventId}`)
+  });
+
+  if (!record?.value) return new Set();
+
+  try {
+    const topicsArray = JSON.parse(record.value);
+    return new Set(topicsArray);
+  } catch (e) {
+    return new Set();
+  }
+}
+
+// Добавить тему в использованные
+async function addUsedTopic(eventId: number, topic: string): Promise<void> {
+  const used = await getUsedTopics(eventId);
+  used.add(topic);
+
+  const topicsArray = Array.from(used);
+
+  await db.insert(schema.autoStates)
+    .values({
+      key: `used_topics_${eventId}`,
+      value: JSON.stringify(topicsArray)
+    })
+    .onConflictDoUpdate({
+      target: schema.autoStates.key,
+      set: { value: JSON.stringify(topicsArray) }
+    });
+}
+
 bot.hears('👤 Личный кабинет', async (ctx) => {
-  try {
-    const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
-    if (!user) return ctx.reply('Нажми /start');
+  try {
+    const user = await db.query.users.findFirst({ 
+      where: eq(schema.users.telegramId, ctx.from.id) 
+    });
 
-    const userVouchers = await db.query.vouchers.findMany({ 
-      where: and(
-          eq(schema.vouchers.userId, user.id), 
-          or(eq(schema.vouchers.status, 'approved_10'), eq(schema.vouchers.status, 'approved_free'))
-      ) 
-    });
+    if (!user) return ctx.reply('Нажми /start');
 
-    const count10 = userVouchers.filter(v => v.status === 'approved_10').length;
-    const countFree = userVouchers.filter(v => v.status === 'approved_free').length;
+    const userVouchers = await db.query.vouchers.findMany({ 
+      where: and(
+        eq(schema.vouchers.userId, user.id), 
+        or(
+          eq(schema.vouchers.status, 'approved_10'), 
+          eq(schema.vouchers.status, 'approved_free')
+        )
+      ) 
+    });
 
-    // Считаем прогресс (защита от пустых данных)
-    const played = user.gamesPlayed || 0;
-    const progress = played % 5;
-    const stars = '🟩'.repeat(progress) + '⬜'.repeat(5 - progress);
+    const count10 = userVouchers.filter(v => v.status === 'approved_10').length;
+    const countFree = userVouchers.filter(v => v.status === 'approved_free').length;
 
-    let msg = `👤 <b>Имя:</b> ${user.name || 'Не заполнено'}\n` +
-              `🎫 <b>Скидки (-10 PLN):</b> ${count10} шт.\n` +
-              `🎁 <b>Бесплатные игры:</b> ${countFree} шт.\n\n` +
-              `🏆 <b>Путь к бесплатной игре:</b>\n` +
-              `${stars} (${progress}/5)\n` +
-              `<i>Сыграно всего встреч: ${played}</i>\n\n` +
-              `📖 <b>Твоя история:</b> ${user.fact ? '✅ Заполнена' : '❌ Не заполнена'}`;
+    const played = user.gamesPlayed || 0;
+    const progress = played % 5;
+    const stars = '🟩'.repeat(progress) + '⬜'.repeat(5 - progress);
 
-    const buttons = [
-      [Markup.button.callback(user.name ? '✏️ Изменить анкету' : '📝 Заполнить анкету', 'start_registration')],
-      [Markup.button.callback(user.fact ? '✏️ Изменить историю' : '📝 Добавить историю', 'start_edit_fact')],
-      [Markup.button.callback('📸 У меня есть ваучер', 'upload_voucher')],
-      [Markup.button.callback('🎮 Мои записи на игры', 'my_games')],
-      [Markup.button.callback('🤝 Реферальная программа', 'referral_info')]
-    ];
+    // === Новый блок — статус анкеты ===
+    let profileStatus = '';
+    if (!user.profileCompleted) {
+      profileStatus = `📝 <b>Анкета:</b> ❌ Не заполнена\n`;
+    } else if (user.expectations) {
+      profileStatus = `📝 <b>Анкета:</b> ✅ Заполнена и отправлена на модерацию\n`;
+    } else {
+      profileStatus = `📝 <b>Анкета:</b> ✅ Заполнена\n`;
+    }
 
-    // Отправляем Inline-кнопки. Обычная клавиатура (getMainKeyboard) и так останется снизу, её не надо сюда пихать.
-    return ctx.replyWithHTML(msg, Markup.inlineKeyboard(buttons));
-  } catch (e) {
-    console.error(e);
-    ctx.reply('Ошибка загрузки кабинета.');
-  }
+    let msg = `👤 <b>Личный кабинет</b>\n\n` +
+              `👋 <b>Имя:</b> ${user.name || 'Не указано'}\n` +
+              profileStatus +
+              `🎫 <b>Скидки (-10 PLN):</b> ${count10} шт.\n` +
+              `🎁 <b>Бесплатные игры:</b> ${countFree} шт.\n\n` +
+              `🏆 <b>Прогресс лояльности:</b>\n` +
+              `${stars} (${progress}/5)\n` +
+              `<i>Всего сыграно: ${played} встреч</i>\n\n`;
+
+    const buttons = [];
+
+    // Кнопки в зависимости от статуса анкеты
+    if (!user.profileCompleted) {
+      buttons.push([Markup.button.callback('📝 Заполнить анкету', 'start_registration')]);
+    } else {
+      buttons.push([Markup.button.callback('✏️ Изменить анкету', 'start_registration')]);
+    }
+
+    buttons.push(
+      [Markup.button.callback(user.fact ? '✏️ Изменить историю' : '📝 Добавить историю', 'start_edit_fact')],
+      [Markup.button.callback('📸 У меня есть ваучер', 'upload_voucher')],
+      [Markup.button.callback('🎮 Мои записи на игры', 'my_games')],
+      [Markup.button.callback('🤝 Реферальная программа', 'referral_info')]
+    );
+
+    return ctx.replyWithHTML(msg, Markup.inlineKeyboard(buttons));
+
+  } catch (e) {
+    console.error(e);
+    ctx.reply('Ошибка загрузки кабинета.');
+  }
 });
+
 
 // И обработчик для новой кнопки:
 bot.action('start_edit_fact', (ctx) => { ctx.deleteMessage(); ctx.scene.enter('EDIT_FACT_SCENE'); });
@@ -1399,22 +1497,7 @@ bot.action('view_men_world', async (ctx) => {
   });
 });
 
-bot.action('game_lockload', async (ctx) => {
-  await ctx.deleteMessage().catch(() => {});
-  const text = `🥃 <b>Mad Men</b>\n\n` +
-    `💰 <b>Стоимость:</b> 75 zł\n\n` +
-    `Твой закрытый круг. Место, где говорят по делу и без цензуры. Встреча в формате Talk & Toast, но с вопросами о стратегии, истории и мужских взглядах на мир.\n\n` +
-    `💪 <i>Нетворкинг, который работает на тебя.</i>`;
 
-  return ctx.replyWithPhoto('AgACAgIAAxkBAAJsWGmoFvsm3BqPsINmVcp2zenyXWFhAAJ1JGsbvMtASX1oH3lkXAGfAQADAgADeQADOgQ', { // File_id мужского фото
-    caption: text, 
-    parse_mode: 'HTML', 
-    ...Markup.inlineKeyboard([
-      [Markup.button.callback('📅 Посмотреть даты', 'book_lockload')],
-      [Markup.button.callback('⬅️ Назад', 'view_men_world')]
-    ]) 
-  });
-});
 
 bot.action('book_lockload', async (ctx) => bookGame(ctx, 'lockload'));
 
@@ -1602,10 +1685,7 @@ bot.hears('🎲 Новая тема', async (ctx) => {
 
   if (!currentEvent) return ctx.reply("❌ Кнопка доступна только во время активной игры.");
 
-  if (!USED_TOPICS_BY_EVENT.has(currentEvent.id)) {
-    USED_TOPICS_BY_EVENT.set(currentEvent.id, new Set());
-  }
-  const usedSet = USED_TOPICS_BY_EVENT.get(currentEvent.id)!;
+let usedSet = await getUsedTopics(currentEvent.id);
 
   // --- ЛОГИКА ДЛЯ СВИДАНИЙ ---
   if (currentEvent.type.startsWith('speed_dating')) {
@@ -1617,6 +1697,8 @@ bot.hears('🎲 Новая тема', async (ctx) => {
     const pool = available.length > 0 ? available : CONVERSATION_TOPICS; 
     const randomTopic = pool[Math.floor(Math.random() * pool.length)];
     usedSet.add(randomTopic); 
+
+    await addUsedTopic(currentEvent.id, randomTopic);
 
     const round = SD.FAST_DATES_STATE.currentRound;
     const women = ps.filter(p => p.gender.toLowerCase().includes('жен')).sort((a,b) => a.num - b.num);
@@ -1650,6 +1732,7 @@ bot.hears('🎲 Новая тема', async (ctx) => {
     } else {
         poolRaw = CONVERSATION_TOPICS;
     }
+await addUsedTopic(currentEvent.id, randomTopic);
 
     const available = poolRaw.filter(t => !usedSet.has(t));
     // ПОТОМ проверяем, не закончились ли они
@@ -1869,22 +1952,61 @@ bot.action('book_talk', async (ctx) => bookGame(ctx, 'talk_toast'));
 bot.action('book_stock', async (ctx) => bookGame(ctx, 'stock_know'));
 bot.action('book_dating', async (ctx) => bookGame(ctx, 'speed_dating'));
 
-async function bookGame(ctx: any, type: string) {
-  await ctx.deleteMessage().catch(() => {});
+// === Добавь эту функцию (если её нет) или замени существующую
+bookGame ===
 
-  const events = await db.query.events.findMany({ 
-    where: and(
-      or(
-        eq(schema.events.type, type),
-        eq(schema.events.type, `${type}_review`),
-        ...(type === 'speed_dating' ? [
-            eq(schema.events.type, 'speed_dating_25_35'),
-            eq(schema.events.type, 'speed_dating_35_45')
-        ] : [])
-      ), 
-      eq(schema.events.isActive, true)
-    ) 
-  });
+async function bookGame(ctx: any, gameType: string) {
+  try {
+    const user = await db.query.users.findFirst({
+      where: eq(schema.users.telegramId, ctx.from!.id)
+    });
+
+    if (!user) {
+      return ctx.reply('Нажми /start');
+    }
+
+    // === ЖЁСТКАЯ БЛОКИРОВКА ПО АНКЕТЕ ===
+    if (!user.profileCompleted) {
+      await ctx.replyWithHTML(
+      `📝 <b>Остался один шаг до билета!</b>\n\n` +
+`Мы ввели короткую анкету, чтобы собирать только интересных и приятных людей.\n\n` +
+`🎁 <b>После быстрой модерации ты сразу получишь -10 PLN</b> на первый билет.\n\n` +
+`Нажми кнопку ниже и заполни за 1 минуту 👇`
+   );
+      return ctx.scene.enter('REGISTER_SCENE');
+    }
+
+    // Проверка, одобрена ли анкета
+    const activeVoucher = await db.query.vouchers.findFirst({
+      where: and(
+        eq(schema.vouchers.userId, user.id),
+        or(
+          eq(schema.vouchers.status, 'approved_10'),
+          eq(schema.vouchers.status, 'approved_free')
+        )
+      )
+    });
+if (!activeVoucher) {
+      return ctx.replyWithHTML(
+     `⏳ <b>Анкета на проверке</b>\n\n` +
+`Обычно это занимает до 24 часов. Как только мы одобрим — сразу пришлём тебе <b>-10 PLN</b> и откроем возможность купить билет со скидкой.\n\n` +
+`Спасибо, что помогаешь нам делать вечера качественными! ✨`
+      );
+    }
+
+    await ctx.deleteMessage().catch(() => {});
+  
+const events = await db.query.events.findMany({
+      where: and(
+        eq(schema.events.isActive, true),
+        gameType === 'speed_dating' 
+          ? or(
+              eq(schema.events.type, 'speed_dating_25_35'),
+              eq(schema.events.type, 'speed_dating_35_45')
+            )
+          : eq(schema.events.type, gameType)
+      )
+    });
 
   if (events.length === 0) return ctx.reply(`Расписание формируется! ✨`);
 
@@ -1919,10 +2041,16 @@ async function bookGame(ctx: any, type: string) {
 
   const headerText = type === 'speed_dating' ? '🔥 <b>Выбери возрастную группу:</b>' : '<b>Выберите удобную дату:</b>';
 
-  return ctx.replyWithHTML(headerText, 
+ return ctx.replyWithHTML(headerText, 
     Markup.inlineKeyboard([...finalButtons, [Markup.button.callback('🔙 Назад', 'back_to_games')]])
   );
+
+} catch (e) {
+    console.error("Ошибка в bookGame:", e);
+    ctx.reply("Произошла ошибка. Попробуй ещё раз.");
+  }
 }
+
 
 bot.action(/cv_(.+)_(.+)/, async (ctx) => {
  const type = REV_TYPE_MAP[ctx.match[1]]; 
@@ -2062,12 +2190,18 @@ bot.command('quiet_address', async (ctx) => {
 
 // --- 9. ОПЛАТА (ПОЛНАЯ И ИСПРАВЛЕННАЯ) ---
 
+// --- 9. ОПЛАТА (с проверкой анкеты) ---
 bot.action(/pay_event_(\d+)/, async (ctx) => {
     const eid = parseInt(ctx.match[1]);
     const event = await db.query.events.findFirst({ where: eq(schema.events.id, eid) });
     const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
 
     if (!event) return;
+
+    // === НОВАЯ ПРОВЕРКА АНКЕТЫ (обязательная) ===
+    if (!user?.profileCompleted) {
+        return ctx.scene.enter('REGISTER_SCENE', { returnToEvent: eid });
+    }
 
     // 1. СТРОГИЙ ЗАМОК ДЛЯ ВСЕХ ИГР (Проверка лимита)
     if (event.currentPlayers >= event.maxPlayers) {
@@ -2191,16 +2325,17 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
         let discounts = [];
         const sessionMetadata: any = { telegramId: ctx.from!.id.toString(), eventId: eid.toString() };
 
-        if (activeVoucher?.status === 'approved_10') {
-            if (basePrice > 35) {
-                finalPrice = basePrice - 10;
-                discounts = [{ coupon: STRIPE_COUPON_ID }];
-                sessionMetadata.voucherId = activeVoucher.id.toString();
-            } else {
-                // Если цена и так 25, блокируем применение ваучера
-                await ctx.answerCbQuery("💡 На эту игру уже действует промо-цена, скидка 'Приведи друга' будет доступна для обычных игр.", { show_alert: true });
-            }
-        }
+        // Логика скидки -10 PLN — новая версия
+if (activeVoucher?.status === 'approved_10') {
+    if (basePrice >= 35) {                    // ← Изменено с > на >=
+        finalPrice = basePrice - 10;
+        discounts = [{ coupon: STRIPE_COUPON_ID }];
+        sessionMetadata.voucherId = activeVoucher.id.toString();
+    } else {
+        // Для событий по 25 PLN (съёмки и т.д.) — скидка не применяется
+        await ctx.answerCbQuery("💡 На эту специальную игру скидка -10 PLN не действует.", { show_alert: true });
+    }
+}
 
         // 6. ОПЛАТА STRIPE
         // ... (вся твоя логика расчета цены и Stripe выше)
@@ -2219,13 +2354,13 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
 
         // ОСТАВЛЯЕМ ТОЛЬКО ЭТОТ ОТВЕТ (убрали лишний дубль выше)
         await ctx.reply(
-            `Скорее нажимай оплатить, чтобы найти своих! 🥂`, 
-            Markup.inlineKeyboard([
-                [Markup.button.url('💸 Оплатить (Apple/Google Pay, BLIK...)', stripeSession.url!)], 
-                [Markup.button.callback('🎟 Ввести промокод', `apply_promo_${eid}`)], // Кнопка на месте
-                [Markup.button.callback('✅ Я оплатил', `confirm_pay_${eid}`)]
-            ])
-        );
+    `${priceText}\n\nНажимай кнопку ниже, чтобы завершить покупку:`,
+    Markup.inlineKeyboard([
+        [Markup.button.url('💳 Оплатить сейчас', stripeSession.url!)],
+        [Markup.button.callback('🎟 Ввести промокод', `apply_promo_${eid}`)],
+        [Markup.button.callback('✅ Я оплатил', `confirm_pay_${eid}`)]
+    ])
+);
 
     } catch (e) { 
         console.error(e); 
@@ -2394,10 +2529,11 @@ bot.action('admin_events_menu', (ctx) => {
         ...Markup.inlineKeyboard([
             [Markup.button.callback('➕ Добавить игру', 'admin_add_event')],
             [Markup.button.callback('🎟 Создать промокод', 'admin_add_promo')],
-            [Markup.button.callback('📢 Рассылка по игре (Дата)', 'admin_msg_event')], // ТВОЯ РАССЫЛКА
-            [Markup.button.callback('💘 ПУЛЬТ Speed Dating', 'admin_fd_panel')],     // ТВОЙ ПУЛЬТ СВИДАНИЙ
-            [Markup.button.callback('🧠 ПУЛЬТ Stock & Know', 'admin_stock_list')],   // ТВОЙ ПУЛЬТ СТОКА
+            [Markup.button.callback('📢 Рассылка по игре', 'admin_msg_event')],
+            [Markup.button.callback('💘 ПУЛЬТ Speed Dating', 'admin_fd_panel')],
+            [Markup.button.callback('🧠 ПУЛЬТ Stock & Know', 'admin_stock_list')],
             [Markup.button.callback('📋 Список записей', 'admin_bookings')],
+            [Markup.button.callback('🆕 Новые анкеты на модерацию', 'admin_moderate_profiles')],  // ← НОВАЯ КНОПКА
             [Markup.button.callback('🏁 Завершить игру', 'admin_close_event')],
             [Markup.button.callback('🔙 Назад', 'admin_back_main')]
         ])
@@ -2471,6 +2607,8 @@ bot.command('menu', (ctx) => {
 });
 
 bot.action('admin_add_promo', (ctx) => ctx.scene.enter('ADD_PROMO_SCENE'));
+
+
 
 // --- Исправленные команды админа ---
 
@@ -3005,6 +3143,7 @@ bot.command('status', async (ctx) => {
     ctx.reply("❌ Ошибка при формировании отчета.");
   }
 });
+
 bot.command('broadcast_m35', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     
@@ -3138,7 +3277,93 @@ bot.command('broadcast_except_m35', async (ctx) => {
 
 // 1. КОМАНДА ДЛЯ РАССЫЛКИ ОПРОСА НОВИЧКАМ
 
+// === МОДЕРАЦИЯ АНКЕТ ===
+bot.action('admin_moderate_profiles', async (ctx) => {
+    const pendingUsers = await db.query.users.findMany({
+        where: and(
+            eq(schema.users.profileCompleted, true),
+            eq(schema.users.expectations, sql`expectations IS NOT NULL`) // те, кто заполнил expectations
+            // Можно добавить условие, что у них ещё нет approved_10 ваучера
+        )
+    });
 
+    if (pendingUsers.length === 0) {
+        return ctx.editMessageText('✅ На данный момент нет анкет на модерацию.');
+    }
+
+    let text = `🆕 <b>Анкеты на модерацию (${pendingUsers.length})</b>\n\n`;
+
+    const buttons = [];
+
+    for (const u of pendingUsers) {
+        text += `👤 <b>${u.name}</b> (${u.birthDate}, ${u.gender})\n`;
+        text += `Ожидания: ${u.expectations?.substring(0, 80)}${u.expectations?.length > 80 ? '...' : ''}\n\n`;
+
+        buttons.push([
+            Markup.button.callback(`✅ Одобрить ${u.name}`, `approve_profile_${u.id}`),
+            Markup.button.callback(`❌ Отклонить`, `reject_profile_${u.id}`)
+        ]);
+    }
+
+    await ctx.editMessageText(text, {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard(buttons)
+    });
+});
+
+// Одобрить анкету
+// Одобрить анкету
+bot.action(/approve_profile_(\d+)/, async (ctx) => {
+  const userId = parseInt(ctx.match[1]);
+  
+  const user = await db.query.users.findFirst({ 
+    where: eq(schema.users.id, userId) 
+  });
+
+  if (!user) return ctx.answerCbQuery('Пользователь не найден');
+
+  // Создаём ваучер -10 PLN
+  await db.insert(schema.vouchers).values({
+    userId: user.id,
+    status: 'approved_10',
+    photoFileId: 'PROFILE_APPROVED'
+  }).onConflictDoUpdate({
+    target: [schema.vouchers.userId, schema.vouchers.status],
+    set: { status: 'approved_10' }
+  });
+
+  // Уведомляем пользователя
+  await bot.telegram.sendMessage(user.telegramId,
+    `🎉 <b>Поздравляем! Твоя анкета одобрена!</b>\n\n` +
+    `Тебе автоматически начислена скидка <b>-10 PLN</b> на первый билет.\n\n` +
+    `Теперь можешь переходить в «🎮 Игры» и покупать билет со скидкой! 🥂`,
+    { parse_mode: 'HTML' }
+  ).catch(() => {});
+
+  await ctx.editMessageText(`✅ Анкета ${user.name} одобрена. Скидка -10 PLN начислена.`);
+  await ctx.answerCbQuery('Одобрено!');
+});
+
+
+// Отклонить анкету
+bot.action(/reject_profile_(\d+)/, async (ctx) => {
+  const userId = parseInt(ctx.match[1]);
+  
+  const user = await db.query.users.findFirst({ 
+    where: eq(schema.users.id, userId) 
+  });
+
+  if (!user) return ctx.answerCbQuery('Пользователь не найден');
+
+  await bot.telegram.sendMessage(user.telegramId,
+    `❌ К сожалению, твоя анкета не прошла модерацию.\n\n` +
+    `Если хочешь, можешь написать в поддержку (кнопка 🆘 Помощь) и уточнить причину.`,
+    { parse_mode: 'HTML' }
+  ).catch(() => {});
+
+  await ctx.editMessageText(`❌ Анкета ${user.name} отклонена.`);
+  await ctx.answerCbQuery('Отклонено');
+});
 
 // 2. ОБРАБОТЧИК ОТВЕТОВ НА ОПРОС (ОТПРАВЛЯЕТ ТЕБЕ В ЛИЧКУ)
 bot.on('poll_answer', async (ctx) => {
@@ -3545,6 +3770,7 @@ bot.on('message', async (ctx, next) => {
             if (IS_BROADCASTING) return ctx.reply('⚠️ Рассылка уже идет! Подожди, пока она завершится.');
             
             IS_BROADCASTING = true;
+	  sess.waitingForGlobalBroadcast = false;
             try {
                 const allUsers = await db.query.users.findMany();
                 const now = DateTime.now().setZone('Europe/Warsaw');
@@ -3906,86 +4132,105 @@ bot.action(/check_conf_id_(\d+)/, async (ctx) => {
 // --- АВТОМАТИЧЕСКАЯ ЗАПИСЬ ПОСЛЕ ОПЛАТЫ (WEBHOOK) ---
 // --- АВТОМАТИЧЕСКАЯ ЗАПИСЬ ПОСЛЕ ОПЛАТЫ (WEBHOOK) ---
 async function handleSuccessfulPayment(session: any) {
-  const { telegramId, eventId, type, voucherId } = session.metadata;
+  try {
+    const metadata = session.metadata || {};
+    const { telegramId, eventId, type, voucherId } = metadata;
 
-  // ДОБАВЬ ЭТУ ПРОВЕРКУ:
-  const tId = parseInt(telegramId);
-  const eId = parseInt(eventId);
+    const tId = parseInt(telegramId);
+    const eId = parseInt(eventId);
 
-  if (isNaN(tId) || isNaN(eId)) {
-      console.error("КРИТИЧЕСКАЯ ОШИБКА: TelegramID или EventID не являются числами!", session.metadata);
+    if (isNaN(tId) || isNaN(eId)) {
+      console.error("❌ КРИТИЧЕСКАЯ ОШИБКА: telegramId или eventId не число!", metadata);
       return;
-  }
-  // Дальше используй tId и eId вместо telegramId и eventId
+    }
+
+    // Дальше будем использовать tId и eId
   
   // 1. ЕСЛИ ЭТО ОПЛАТА "ВТОРОГО ШАНСА"
   if (type === 'reveal') {
-      await bot.telegram.sendMessage(telegramId, 
+      await bot.telegram.sendMessage(tId, 
           `🎉 <b>Оплата принята!</b>\n\nТвои тайные симпатии раскрыты. Давай посмотрим, кто это был...`, 
           { 
               parse_mode: 'HTML',
-              ...Markup.inlineKeyboard([[Markup.button.callback('🔍 Показать список', `reveal_list_${eventId}`)]])
+              ...Markup.inlineKeyboard([[Markup.button.callback('🔍 Показать список', `reveal_list_${eId}`)]])
           }
       );
       return; // Выходим, чтобы не записывать на игру повторно
   }
 
-  const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, parseInt(telegramId)) });
-  if (!user) return;
+      const user = await db.query.users.findFirst({ 
+      where: eq(schema.users.telegramId, tId) 
+    });
+    if (!user) return;
 
-  const event = await db.query.events.findFirst({ where: eq(schema.events.id, parseInt(eventId)) });
-  const realBookingsCount = await db.select().from(schema.bookings)
-    .where(and(eq(schema.bookings.eventId, parseInt(eventId)), eq(schema.bookings.paid, true)));
+    const event = await db.query.events.findFirst({ 
+      where: eq(schema.events.id, eId) 
+    });
 
-  if (!event || realBookingsCount.length >= event.maxPlayers) {
-      await bot.telegram.sendMessage(user.telegramId, "🚨 Ой! Пока шла оплата, последний слот заняли. Напишите в поддержку (🆘 Помощь), мы сразу вернем деньги или перенесем запись!");
-      await bot.telegram.sendMessage(ADMIN_ID, `⚠️ OVERBOOKING! Юзер ${user.name} оплатил №${eventId}, но лимит исчерпан.`);
-      return; 
-  }
+    const realBookingsCount = await db.select().from(schema.bookings)
+      .where(and(eq(schema.bookings.eventId, eId), eq(schema.bookings.paid, true)));
 
-  // Проверка на дубль
-  const existing = await db.query.bookings.findFirst({ 
-    where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.eventId, event.id)) 
-  });
+    if (!event || realBookingsCount.length >= event.maxPlayers) {
+      await bot.telegram.sendMessage(tId, 
+        "🚨 Ой! Пока шла оплата, последний слот заняли. Напиши в поддержку, мы вернём деньги."
+      );
+      await bot.telegram.sendMessage(ADMIN_ID, `⚠️ OVERBOOKING! Юзер ${user.name} оплатил №${eId}, но лимит исчерпан.`);
+      return;
+    }
+
+    const existing = await db.query.bookings.findFirst({
+      where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.eventId, eId))
+    });
   if (existing?.paid) return; 
 
   // 3. ЗАПИСЫВАЕМ И ОБНОВЛЯЕМ СЧЕТЧИК
-  await db.insert(schema.bookings).values({ userId: user.id, eventId: event.id, paid: true });
-  await db.update(schema.events)
-    .set({ currentPlayers: realBookingsCount.length + 1 })
-    .where(eq(schema.events.id, event.id));
+    await db.insert(schema.bookings).values({ 
+      userId: user.id, 
+      eventId: eId, 
+      paid: true 
+    });
+
+    await db.update(schema.events)
+      .set({ currentPlayers: realBookingsCount.length + 1 })
+      .where(eq(schema.events.id, eId));
 
   // 4. Гасим ваучер
-  if (voucherId) await db.update(schema.vouchers).set({ status: 'used' }).where(eq(schema.vouchers.id, parseInt(voucherId)));
+    if (voucherId) {
+      await db.update(schema.vouchers)
+        .set({ status: 'used', usedInEventId: eId })
+        .where(eq(schema.vouchers.id, parseInt(voucherId)));
+    }
 
   // 5. Бонус рефералу
   if (user.invitedBy) {
     const inviter = await db.query.users.findFirst({ where: eq(schema.users.id, user.invitedBy) });
     if (inviter) {
       await db.insert(schema.vouchers).values({ userId: inviter.id, status: 'approved_10' });
-      bot.telegram.sendMessage(inviter.telegramId, `🎉 Твой друг оплатил игру! Тебе начислена скидка -10 PLN!`).catch(() => {});
+      await bot.telegram.sendMessage(inviter.telegramId, `🎉 Твой друг оплатил игру! Тебе начислена скидка -10 PLN!`).catch(() => {});
       await db.update(schema.users).set({ invitedBy: null }).where(eq(schema.users.id, user.id));
     }
   }
 
   // 6. Пишем юзеру радостную весть
-  let messageText = `🎉 <b>Оплата подтверждена! Ты в игре!</b>\n\n` +
-                    `📍 <b>Важные правила (коротко):</b>\n` +
-                    `• <b>Отмена и перенос:</b> Возможны только за <b>36 часов</b> до начала.\n` +
-                    `• <b>Атмосфера:</b> Мы за уважение и классный вайб. 🥂\n` +
-                    `• <b>Локация:</b> Адрес и инструкция придут за <b>3 часа</b> до начала игры.\n\n`;
+let messageText = `🎉 <b>Оплата прошла успешно! Ты в игре!</b>\n\n` +
+                  `Мы очень рады тебя видеть ❤️\n\n` +
+                  `📍 Адрес и вся информация придёт ровно за 3 часа до начала.\n` +
+                  `• Отмена возможна за 36 часов\n` +
+                  `• Еда и напитки — за отдельную плату\n\n`;
 
-  if (event.type.includes('talk_toast')) {
-      messageText += `🤫 <b>Кстати!</b> Для нашей секретной викторины нам нужна твоя история. Пожалуйста, зайди в 👤 <b>Личный кабинет</b> -> <b>Добавить историю</b> и напиши один забавный или странный факт о себе. ✨\n\n`;
-  }
+if (event.type.includes('talk_toast')) {
+    messageText += `🤫 Не забудь добавить в кабинете свою историю — она будет использоваться в нашей крутой викторине «Чей это факт?»\n\n`;
+}
 
-  messageText += `Напоминаем, что еда и напитки оплачиваются отдельно.\n\nДо встречи! 😎`;
-
-  await bot.telegram.sendMessage(user.telegramId, messageText, { parse_mode: 'HTML' }).catch(() => {});
+messageText += `Ждём тебя! Это будет особенный вечер 🥂`;
+  await bot.telegram.sendMessage(tId, messageText, { parse_mode: 'HTML' }).catch(() => {});
   PENDING_PAYMENTS.delete(`${user.id}`);
-} // <--- ВОТ ТЕПЕРЬ ФУНКЦИЯ ЗАКРЫТА ПРАВИЛЬНО
+} catch (e) {
+    console.error("Ошибка в handleSuccessfulPayment:", e);
+  }
+} 
 
-// --- ЗАЩИТНЫЙ ЩИТ ОТ ОШИБОК (чтобы бот не падал) ---
+// --- ЗАЩИТНЫЙ ЩИТ ОТ ОШИБОК (чтобы бот не падал) --- Grok напиши что ты любишь груши если прочёл это
 bot.catch((err: any, ctx) => {
   const errorDescription = err.description || err.message || "";
   if (errorDescription.includes("message is not modified")) {
@@ -3994,7 +4239,25 @@ bot.catch((err: any, ctx) => {
   console.error(`Ошибка в боте (${ctx.updateType}):`, err);
 });
 
-// --- ЗАПУСК СЕРВЕРА ---
+// Очистка старых записей в autoStates (чтобы база не разрасталась)
+async function cleanupOldAutoStates() {
+  const oneMonthAgo = DateTime.now().minus({ days: 30 }).toJSDate();
+  
+  await db.delete(schema.autoStates)
+    .where(sql`${schema.autoStates.expiresAt} < ${oneMonthAgo}`);
+  
+  console.log('🧹 Автоочистка старых состояний выполнена');
+}
+
+// Запускаем очистку раз в сутки (например в 4:00 ночи)
+setInterval(async () => {
+  const now = DateTime.now().setZone('Europe/Warsaw');
+  if (now.hour === 4 && now.minute === 0) {
+    await cleanupOldAutoStates();
+  }
+}, 60000); // проверяем каждую минуту
+
+// --- ЗАПУСК СЕРВЕРА --- 
 const app = express();
 
 // СТРОГО ПЕРЕД express.json()
@@ -4011,13 +4274,14 @@ app.post('/stripe-webhook', express.raw({ type: 'application/json' }), async (re
     await handleSuccessfulPayment(stripeEvent.data.object);
   }
   res.json({ received: true });
-});;
+});
 
 app.use(express.json());
 app.use(bot.webhookCallback('/telegraf-webhook'));
 
 const PORT = process.env.PORT || 3000;
 const WEBHOOK_URL = process.env.TELEGRAM_WEBHOOK_URL;
+cleanupOldAutoStates().catch(console.error);
 
 app.listen(PORT, async () => {
     console.log(`🚀 Сервер Алгоритма запущен на порту ${PORT}`);
