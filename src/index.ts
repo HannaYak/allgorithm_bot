@@ -1562,12 +1562,16 @@ bot.action('view_women_world', async (ctx) => {
                `Твой личный портал в мир, где эстетика встречается с глубиной. Это комьюнити девушек, которые устали от пустого шума и хотят качественного окружения.\n\n` +
                `Мы создаем события, которые хочется сохранить в памяти, и диалоги, которые меняют состояние. Добро пожаловать в круг Муз.`;
 
-  return ctx.editMessageText(text, {
+  // Используем editMessageCaption, так как это сообщение с фото
+  return ctx.editMessageCaption(text, {
     parse_mode: 'HTML',
     ...Markup.inlineKeyboard([
       [Markup.button.callback('🥐 Breakfast at Tiffany\'s', 'game_tiffany')],
-      [Markup.button.callback('⬅️ Назад', 'back_to_games')]
+      [Markup.button.callback('⬅️ Назад к меню игр', 'back_to_games')]
     ])
+  }).catch(() => {
+     // Если вдруг возникла ошибка (например, сообщение уже без фото), пробуем просто отправить новое
+     ctx.replyWithHTML(text, Markup.inlineKeyboard([...]));
   });
 });
 
@@ -1586,6 +1590,9 @@ bot.action('view_men_world', async (ctx) => {
       [Markup.button.callback('🥃 Mad Men ', 'game_lockload')],
       [Markup.button.callback('⬅️ Назад', 'back_to_games')]
     ])
+  }).catch(() => {
+     // Если вдруг возникла ошибка (например, сообщение уже без фото), пробуем просто отправить новое
+     ctx.replyWithHTML(text, Markup.inlineKeyboard([...]));
   });
 });
 
