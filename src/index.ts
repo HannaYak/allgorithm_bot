@@ -1555,47 +1555,54 @@ bot.hears('🎮 Игры', async (ctx) => {
 
 // --- ЖЕНСКИЙ МИР ---
 bot.action('view_women_world', async (ctx) => {
+  await ctx.answerCbQuery();
   const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
   if (user?.gender === 'Мужчина') return ctx.answerCbQuery('🚫 Только для женщин', { show_alert: true });
-
+	
   const text = `✨ <b>Mind & Muse</b>\n\n` +
                `Твой личный портал в мир, где эстетика встречается с глубиной. Это комьюнити девушек, которые устали от пустого шума и хотят качественного окружения.\n\n` +
                `Мы создаем события, которые хочется сохранить в памяти, и диалоги, которые меняют состояние. Добро пожаловать в круг Муз.`;
 
   // Используем editMessageCaption, так как это сообщение с фото
+// Используем editMessageCaption, так как это сообщение с фото
   return ctx.editMessageCaption(text, {
     parse_mode: 'HTML',
     ...Markup.inlineKeyboard([
       [Markup.button.callback('🥐 Breakfast at Tiffany\'s', 'game_tiffany')],
       [Markup.button.callback('⬅️ Назад к меню игр', 'back_to_games')]
     ])
-  }).catch(() => {
-     // Если вдруг возникла ошибка (например, сообщение уже без фото), пробуем просто отправить новое
-     ctx.replyWithHTML(text, Markup.inlineKeyboard([...]));
+  }).catch(async () => {
+     await ctx.replyWithHTML(text, Markup.inlineKeyboard([
+      [Markup.button.callback('🥐 Breakfast at Tiffany\'s', 'game_tiffany')],
+      [Markup.button.callback('⬅️ Назад к меню игр', 'back_to_games')]
+    ]));
   });
 });
 
 // --- МУЖСКОЙ МИР ---
 bot.action('view_men_world', async (ctx) => {
+  await ctx.answerCbQuery();
   const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
   if (user?.gender === 'Женщина') return ctx.answerCbQuery('🚫 Только для мужчин', { show_alert: true });
-
+	
   const text = `🥃 <b>Lock & Load</b>\n\n` +
                `Закрытый мужской круг для тех, кто ценит время и интеллект. Это нетворкинг без галстуков, стратегия без лишних слов и общество мужчин, с которыми есть о чем молчать и о чем спорить.\n\n` +
                `Здесь мы качаем не только связи, но и критическое мышление. Твоя территория правил.`;
 
-  return ctx.editMessageText(text, {
+// ИСПРАВЛЕНО: editMessageCaption вместо editMessageText
+  return ctx.editMessageCaption(text, {
     parse_mode: 'HTML',
     ...Markup.inlineKeyboard([
-      [Markup.button.callback('🥃 Mad Men ', 'game_lockload')],
-      [Markup.button.callback('⬅️ Назад', 'back_to_games')]
+      [Markup.button.callback('🥃 Mad Men', 'game_lockload')],
+      [Markup.button.callback('⬅️ Назад к меню игр', 'back_to_games')]
     ])
-  }).catch(() => {
-     // Если вдруг возникла ошибка (например, сообщение уже без фото), пробуем просто отправить новое
-     ctx.replyWithHTML(text, Markup.inlineKeyboard([...]));
+  }).catch(async () => {
+     await ctx.replyWithHTML(text, Markup.inlineKeyboard([
+      [Markup.button.callback('🥃 Mad Men', 'game_lockload')],
+      [Markup.button.callback('⬅️ Назад к меню игр', 'back_to_games')]
+    ]));
   });
 });
-
 
 
 bot.action('book_lockload', async (ctx) => bookGame(ctx, 'lockload'));
@@ -1626,7 +1633,9 @@ bot.action('back_to_games', async (ctx) => {
 
 // --- BREAKFAST AT TIFFANY'S ---
 bot.action('game_tiffany', async (ctx) => {
-  await ctx.answerCbQuery(); // ОБЯЗАТЕЛЬНО: это "гасит" кнопку
+  await ctx.answerCbQuery();
+  
+  // 1. Сначала удаляем старое сообщение
   await ctx.deleteMessage().catch(() => {});
   const text = `🥐 <b>Breakfast at Tiffany's</b>\n\n` +
                `Утро в стиле Холли Голайтли. Мы воссоздали атмосферу того самого «безопасного места», где эстетика лечит, а кофе кажется вкуснее. Это не просто завтрак, это время для себя среди своих.\n\n` +
@@ -1634,19 +1643,20 @@ bot.action('game_tiffany', async (ctx) => {
                `💰 <b>Стоимость:</b> 55 zł\n` +
                `⏳ <b>Время:</b> 2 часа`;
 
-  return ctx.replyWithPhoto('AgACAgIAAxkBAAEBGfVqB1qtg2JrlkEDRxgzI3k6MYjM3wACLRdrG-uQQUhAtMr_b8vGdwEAAwIAA3kAAzsE', { 
+await ctx.replyWithPhoto('AgACAgIAAxkBAAEBGfVqB1qtg2JrlkEDRxgzI3k6MYjM3wACLRdrG-uQQUhAtMr_b8vGdwEAAwIAA3kAAzsE', { 
     caption: text, 
     parse_mode: 'HTML', 
     ...Markup.inlineKeyboard([
       [Markup.button.callback('📅 Посмотреть даты', 'book_tiffany')],
-      [Markup.button.callback('⬅️ Назад', 'view_women_world')]
+      [Markup.button.callback('⬅️ Назад в Mind & Muse', 'view_women_world')]
     ]) 
   });
 });
 
 // --- MAD MEN ---
 bot.action('game_lockload', async (ctx) => {
-  await ctx.answerCbQuery(); // ОБЯЗАТЕЛЬНО: это "гасит" кнопку
+  await ctx.answerCbQuery();
+  // Удаляем текущее сообщение, чтобы не плодить мусор
   await ctx.deleteMessage().catch(() => {});
 
   const text = `🥃 <b>Mad Men (Безумцы)</b>\n\n` +
@@ -1655,12 +1665,12 @@ bot.action('game_lockload', async (ctx) => {
                `💰 <b>Стоимость:</b> 75 zł\n` +
                `⏳ <b>Формат:</b> Talk & Toast (Strategic)`;
 
-  return ctx.replyWithPhoto('AgACAgIAAxkBAAEBGfdqB1yjP-CnLuOhnzSUkw54ZvYnAwACNRdrG-uQQUj8d0eo3mThUAEAAwIAA3kAAzsE', { 
+return ctx.replyWithPhoto('AgACAgIAAxkBAAEBGfdqB1yjP-CnLuOhnzSUkw54ZvYnAwACNRdrG-uQQUj8d0eo3mThUAEAAwIAA3kAAzsE', { 
     caption: text, 
     parse_mode: 'HTML', 
     ...Markup.inlineKeyboard([
       [Markup.button.callback('📅 Посмотреть даты', 'book_lockload')],
-      [Markup.button.callback('⬅️ Назад', 'view_men_world')]
+      [Markup.button.callback('⬅️ Назад в Lock & Load', 'view_men_world')] // Возврат в мужской мир
     ]) 
   });
 });
