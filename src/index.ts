@@ -2056,35 +2056,19 @@ async function bookGame(ctx: any, gameType: string) {
       return ctx.reply('Нажми /start');
     }
 
-    // === ЖЁСТКАЯ БЛОКИРОВКА ПО АНКЕТЕ ===
+    // === БЛОКИРОВКА ТОЛЬКО ДЛЯ ТЕХ, КТО ВООБЩЕ НЕ ЗАПОЛНИЛ АНКЕТУ ===
     if (!user.profileCompleted) {
       await ctx.replyWithHTML(
-      `📝 <b>Остался один шаг до билета!</b>\n\n` +
-`Мы ввели короткую анкету, чтобы собирать только интересных и приятных людей.\n\n` +
-`🎁 <b>После быстрой модерации ты сразу получишь -10 PLN</b> на первый билет.\n\n` +
-`Нажми кнопку ниже и заполни за 1 минуту 👇`
-   );
+        `📝 <b>Остался один шаг до билета!</b>\n\n` +
+        `Мы ввели короткую анкету, чтобы собирать только интересных и приятных людей.\n\n` +
+        `🎁 <b>После быстрой модерации ты сразу получишь -10 PLN</b> на первый билет.\n\n` +
+        `Нажми кнопку ниже и заполни за 1 минуту 👇`
+      );
       return ctx.scene.enter('REGISTER_SCENE');
     }
 
     // Проверка, одобрена ли анкета
-    const activeVoucher = await db.query.vouchers.findFirst({
-      where: and(
-        eq(schema.vouchers.userId, user.id),
-        or(
-          eq(schema.vouchers.status, 'approved_10'),
-          eq(schema.vouchers.status, 'approved_free')
-        )
-      )
-    });
-if (!activeVoucher) {
-      return ctx.replyWithHTML(
-     `⏳ <b>Анкета на проверке</b>\n\n` +
-`Обычно это занимает до 24 часов. Как только мы одобрим — сразу пришлём тебе <b>-10 PLN</b> и откроем возможность купить билет со скидкой.\n\n` +
-`Спасибо, что помогаешь нам делать вечера качественными! ✨`
-      );
-    }
-
+   
     await ctx.deleteMessage().catch(() => {});
   
 const events = await db.query.events.findMany({
