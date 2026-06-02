@@ -1554,17 +1554,17 @@ bot.hears('🎮 Игры', async (ctx) => {
 // --- 2. ОБРАБОТЧИКИ С ЖЕСТКИМ БЛОКОМ ПО ПОЛУ ---
 
 // --- ЖЕНСКИЙ МИР ---
+// --- ЖЕНСКИЙ МИР ---
 bot.action('view_women_world', async (ctx) => {
   await ctx.answerCbQuery();
   const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
   if (user?.gender === 'Мужчина') return ctx.answerCbQuery('🚫 Только для женщин', { show_alert: true });
-	
-  const text = `✨ <b>Mind & Muse</b>\n\n` +
-               `Твой личный портал в мир, где эстетика встречается с глубиной. Это комьюнити девушек, которые устали от пустого шума и хотят качественного окружения.\n\n` +
-               `Мы создаем события, которые хочется сохранить в памяти, и диалоги, которые меняют состояние. Добро пожаловать в круг Муз.`;
+    
+  const text = `✨ <b>Mind & Muse</b>\n` +
+               `<i>Интеллект как эстетика. Клуб без «девочковых» тем.</i>\n\n` +
+               `Женское сообщество для тех, кто перерос смол-токи. Мы устали от типичных клубов, где разговоры сводятся к рецептам, отношениям и астрологии. Здесь мы отсекаем стереотипы.\n\n` +
+               `Mind & Muse — это безопасная среда для глубоких диалогов. Мы обсуждаем философию, социальную динамику, личные амбиции и поиск смыслов. Это место, где сложные темы становятся лучшим поводом для нетворкинга.`;
 
-  // Используем editMessageCaption, так как это сообщение с фото
-// Используем editMessageCaption, так как это сообщение с фото
   return ctx.editMessageCaption(text, {
     parse_mode: 'HTML',
     ...Markup.inlineKeyboard([
@@ -1584,12 +1584,12 @@ bot.action('view_men_world', async (ctx) => {
   await ctx.answerCbQuery();
   const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
   if (user?.gender === 'Женщина') return ctx.answerCbQuery('🚫 Только для мужчин', { show_alert: true });
-	
-  const text = `🥃 <b>Lock & Load</b>\n\n` +
-               `Закрытый мужской круг для тех, кто ценит время и интеллект. Это нетворкинг без галстуков, стратегия без лишних слов и общество мужчин, с которыми есть о чем молчать и о чем спорить.\n\n` +
-               `Здесь мы качаем не только связи, но и критическое мышление. Твоя территория правил.`;
+    
+  const text = `🥃 <b>Lock & Load</b>\n` +
+               `<i>Территория прагматики и проверенных связей.</i>\n\n` +
+               `Мы объединяем тех, кто мыслит системами. Здесь без цензуры, галстуков и стереотипов обсуждают то, что реально влияет на жизнь: от макроэкономики и инвестиций до ИИ и стратегий выживания.\n\n` +
+               `Это твой личный социальный фильтр. Место, где можно найти надежного партнера, забрать контакты толковых подрядчиков или честно выговориться среди равных, опираясь на реальный чужой опыт, а не книжные советы.`;
 
-// ИСПРАВЛЕНО: editMessageCaption вместо editMessageText
   return ctx.editMessageCaption(text, {
     parse_mode: 'HTML',
     ...Markup.inlineKeyboard([
@@ -1603,7 +1603,6 @@ bot.action('view_men_world', async (ctx) => {
     ]));
   });
 });
-
 
 bot.action('book_lockload', async (ctx) => bookGame(ctx, 'lockload'));
 
@@ -1634,20 +1633,21 @@ bot.action('back_to_games', async (ctx) => {
 // --- BREAKFAST AT TIFFANY'S ---
 bot.action('game_tiffany', async (ctx) => {
   await ctx.answerCbQuery();
-  
-  // 1. Сначала удаляем старое сообщение
   await ctx.deleteMessage().catch(() => {});
+  
   const text = `🥐 <b>Breakfast at Tiffany's</b>\n\n` +
-               `Утро в стиле Холли Голайтли. Мы воссоздали атмосферу того самого «безопасного места», где эстетика лечит, а кофе кажется вкуснее. Это не просто завтрак, это время для себя среди своих.\n\n` +
-               `Мы надеваем жемчуг (по желанию), берем круассаны и обсуждаем не быт, а мечты, амбиции и поиск своего места в мире. Ведь в <b>Mind & Muse</b> с тобой не может случиться ничего плохого.\n\n` +
-               `💰 <b>Стоимость:</b> 55 zł\n` +
-               `⏳ <b>Время:</b> 2 часа`;
+               `Утро, где кофе дополняет смысл, а не наоборот. Мы собираемся в узком кругу, чтобы обсудить то, на что в повседневной суете не хватает времени.\n\n` +
+               `Сегодняшняя тема — не поиск «ресурса», а реальные механизмы управления своим состоянием и амбициями. Никакого шума, никакой оценки. Надеваем жемчуг (или любимое худи), отключаем телефоны и погружаемся в диалог, после которого хочется действовать.\n\n` +
+               `💰 <b>Стоимость:</b> 55 zł (кофе и закуски уже включены!)\n` +
+               `⏳ <b>Время:</b> 2 часа\n\n` +
+               `👇 <i>Узнать пошагово, как всё проходит — нажимай «Подробнее о формате»!</i>`;
 
-await ctx.replyWithPhoto('AgACAgIAAxkBAAEBGfVqB1qtg2JrlkEDRxgzI3k6MYjM3wACLRdrG-uQQUhAtMr_b8vGdwEAAwIAA3kAAzsE', { 
+  return ctx.replyWithPhoto('AgACAgIAAxkBAAEBGfVqB1qtg2JrlkEDRxgzI3k6MYjM3wACLRdrG-uQQUhAtMr_b8vGdwEAAwIAA3kAAzsE', { 
     caption: text, 
     parse_mode: 'HTML', 
     ...Markup.inlineKeyboard([
       [Markup.button.callback('📅 Посмотреть даты', 'book_tiffany')],
+      [Markup.button.callback('👀 Подробнее о формате', 'details_tiffany')],
       [Markup.button.callback('⬅️ Назад в Mind & Muse', 'view_women_world')]
     ]) 
   });
@@ -1656,24 +1656,61 @@ await ctx.replyWithPhoto('AgACAgIAAxkBAAEBGfVqB1qtg2JrlkEDRxgzI3k6MYjM3wACLRdrG-
 // --- MAD MEN ---
 bot.action('game_lockload', async (ctx) => {
   await ctx.answerCbQuery();
-  // Удаляем текущее сообщение, чтобы не плодить мусор
   await ctx.deleteMessage().catch(() => {});
 
   const text = `🥃 <b>Mad Men (Безумцы)</b>\n\n` +
-               `Добро пожаловать на Мэдисон-авеню. Это интеллектуальный клуб для тех, кто понимает: жизнь — это серия переговоров и стратегий. Как говорил Дон Дрейпер: <i>"Если тебе не нравится то, о чем говорят — просто измени тему разговора"</i>.\n\n` +
-               `Мы убираем лишний шум и оставляем суть: нетворкинг на максималках, вопросы о власти, наследии и искусстве влияния. Это территория тех, кто строит империи. Только факты, только логика, только статус.\n\n` +
+               `Встреча для тех, кто строит проекты, хочет открыть свое дело или просто ищет сильное бизнес-окружение. Мы убираем теорию и оставляем только жесткую прагматику.\n\n` +
+               `Никто не будет учить тебя жить. Мы просто даем доступ к реальному опыту людей, которые уже набили те же шишки.\n\n` +
                `💰 <b>Стоимость:</b> 75 zł\n` +
-               `⏳ <b>Формат:</b> Talk & Toast (Strategic)`;
+               `⏳ <b>Формат:</b> Talk & Toast (Strategic)\n\n` +
+               `👇 <i>Узнать пошагово, как всё проходит — нажимай «Подробнее о формате»!</i>`;
 
-return ctx.replyWithPhoto('AgACAgIAAxkBAAEBGfdqB1yjP-CnLuOhnzSUkw54ZvYnAwACNRdrG-uQQUj8d0eo3mThUAEAAwIAA3kAAzsE', { 
+  return ctx.replyWithPhoto('AgACAgIAAxkBAAEBGfdqB1yjP-CnLuOhnzSUkw54ZvYnAwACNRdrG-uQQUj8d0eo3mThUAEAAwIAA3kAAzsE', { 
     caption: text, 
     parse_mode: 'HTML', 
     ...Markup.inlineKeyboard([
       [Markup.button.callback('📅 Посмотреть даты', 'book_lockload')],
-      [Markup.button.callback('⬅️ Назад в Lock & Load', 'view_men_world')] // Возврат в мужской мир
+      [Markup.button.callback('👀 Подробнее о формате', 'details_lockload')],
+      [Markup.button.callback('⬅️ Назад в Lock & Load', 'view_men_world')]
     ]) 
   });
 });
+
+
+// --- ПОДРОБНЕЕ: TIFFANY ---
+bot.action('details_tiffany', async (ctx) => {
+  const text = `🥐 <b>Как проходит Breakfast at Tiffany's:</b>\n\n` +
+    `<b>1. Эстетика и вкус ✨</b>\nЗакуски и напитки уже включены в стоимость. Вам остается принести только свой острый ум и расслабиться.\n\n` +
+    `<b>2. Глубокий старт 🎲</b>\nНикаких неловких пауз. Бот подкидывает небанальные темы для обсуждения, которые выводят диалог на совершенно новый уровень.\n\n` +
+    `<b>3. Безопасная среда 🎙</b>\nЭто круг равных. Мы общаемся без советов «как надо жить», осуждения и токсичности. Только поддержка и качественный нетворкинг.\n\n` +
+    `<b>4. Тайный мэтч ❤️</b>\nВ конце бранча вы сможете тайно отметить в телефоне тех участниц, с кем хотели бы продолжить общение. Симпатия взаимна? Мы обменяем вас контактами!`;
+
+  return ctx.editMessageCaption(text, {
+    parse_mode: 'HTML',
+    ...Markup.inlineKeyboard([
+      [Markup.button.callback('📅 Посмотреть даты', 'book_tiffany')],
+      [Markup.button.callback('⬅️ К короткому описанию', 'game_tiffany')]
+    ])
+  });
+});
+
+// --- ПОДРОБНЕЕ: MAD MEN ---
+bot.action('details_lockload', async (ctx) => {
+  const text = `🥃 <b>Как проходит Mad Men (Механика):</b>\n\n` +
+    `<b>1. Знакомство 🤝</b>\nКоротко и по делу: кто ты, в чем твоя суперсила, чем можешь быть полезен.\n\n` +
+    `<b>2. Hot Seat (Горячий стул) 🔥</b>\nБерем 2-3 реальные проблемы участников (застряли продажи, кинул партнер, масштабирование) и разбираем их коллективным разумом. Ты получаешь конкретные решения от профи из других ниш.\n\n` +
+    `<b>3. Прямой запрос 🎯</b>\nФормат быстрых сделок. У каждого есть минута, чтобы сказать: «Ищу толкового налоговика» или «Нужен выход на этот рынок». Остальные делятся проверенными контактами.\n\n` +
+    `<b>4. Тайный мэтч 🤝</b>\nОтмечай в боте тех, чей опыт был тебе полезен. При взаимном интересе бот свяжет вас после ужина.`;
+
+  return ctx.editMessageCaption(text, {
+    parse_mode: 'HTML',
+    ...Markup.inlineKeyboard([
+      [Markup.button.callback('📅 Посмотреть даты', 'book_lockload')],
+      [Markup.button.callback('⬅️ К короткому описанию', 'game_lockload')]
+    ])
+  });
+});
+
 
 bot.action('book_tiffany', async (ctx) => bookGame(ctx, 'tiffany'));
 
