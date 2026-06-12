@@ -1220,27 +1220,44 @@ await bot.telegram.sendMessage(u.telegramId,
 ).catch(() => {});
 
     // 4. Тайный мэтч (только для обычных игр)
-    if (!event.type.startsWith('speed_dating')) { 
-        const others = bks.filter(bk => bk.userId !== u.id);
-        const buttons = [];
-        for (const ob of others) {
-            const target = await db.query.users.findFirst({ where: eq(schema.users.id, ob.userId) });
-            if (target?.name) {
-                buttons.push(Markup.button.callback(target.name, `secret_like_${eventId}_${target.id}`));
-            }
-        }
-        if (buttons.length > 0) {
-            await bot.telegram.sendMessage(u.telegramId, 
-                `🤫 <b>Тайный мэтч</b>\n\nКто тебе сегодня понравился? Если это взаимно, я пришлю контакты! ✨`,
-                { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons, { columns: 2 }) }
-            ).catch(() => {});
-        }
-    }
+    // 4. Тайный мэтч (только для обычных игр)
+    if (!event.type.startsWith('speed_dating')) {
+        const others = bks.filter(bk => bk.userId !== u.id);
+        const buttons = [];
+        for (const ob of others) {
+            const target = await db.query.users.findFirst({ where: eq(schema.users.id, ob.userId) });
+            if (target?.name) {
+                buttons.push(Markup.button.callback(target.name, `secret_like_${eventId}_${target.id}`));
+            }
+        }
+        
+        if (buttons.length > 0) {
+            // Разбиваем кнопки с именами на 2 колонки
+            const keyboard = [];
+            for (let i = 0; i < buttons.length; i += 2) {
+                keyboard.push(buttons.slice(i, i + 2));
+            }
+            // Добавляем ВНИЗУ кнопку перехода к оценкам
+            keyboard.push([Markup.button.callback('➡️ Завершить выбор и перейти к оценкам', `go_to_ratings_${eventId}`)]);
+
+            await bot.telegram.sendMessage(u.telegramId, 
+                `🤫 <b>Тайный мэтч</b>\n\nКто тебе сегодня понравился? Можешь отметить нескольких. Если это взаимно, я пришлю контакты! ✨\n\n<i>Когда закончишь выбирать симпатии — нажми кнопку ниже.</i>`,
+                { parse_mode: 'HTML', reply_markup: { inline_keyboard: keyboard } }
+            ).catch(() => {});
+        }
+    } else {
+        // Для Speed Dating тайный мэтч работает иначе, но мы всё равно даем им кнопку оценки
+        await bot.telegram.sendMessage(u.telegramId,
+            `Надеемся, вечер прошел отлично! Перейдем к обратной связи? 👇`,
+            { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('➡️ Перейти к оценкам', `go_to_ratings_${eventId}`)]]) }
+        ).catch(() => {});
+    }
   }
+} // <--- Закрывающая скобка функции autoCloseEvent
 
   // --- 5. ОФФЕР "ВТОРОЙ ШАНС" (Привязан к закрытию игры) -- // <-- ТАЙМЕР: 2 минуты. Позже для 30 минут поменяй на 30 * 60 * 1000
 
-} // <--- Функция закрыта// <--- ВОТ ЭТА СКОБКА БЫЛА ПРОПУЩЕНА! Теперь функция закрыта.
+ // <--- Функция закрыта// <--- ВОТ ЭТА СКОБКА БЫЛА ПРОПУЩЕНА! Теперь функция закрыта.
 // --- 7. ОБРАБОТЧИКИ ---
 
 async function sendSecondChanceOffers(eventId: number) {
@@ -3888,7 +3905,114 @@ bot.action(/stock_send_phase_(\d+)/, async (ctx) => {
   
   await ctx.editMessageText(`Фаза ${phase} отправлена игрокам игры №${eventId}.`, Markup.inlineKeyboard(buttons));
 });
-  
+
+// ==========================================
+// --- СИСТЕМА ОЦЕНКИ И ЖАЛОБ (POST-EVENT) ---
+// ==========================================
+
+// Вспомогательная функция: Показывает список участников для оценки
+async function sendRatingMenu(ctx: any, eventId: number, userId: number) {
+    const bks = await db.query.bookings.findMany({ where: and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true)) });
+    const others = bks.filter(bk => bk.userId !== userId);
+    
+    const buttons = [];
+    for (const ob of others) {
+        const target = await db.query.users.findFirst({ where: eq(schema.users.id, ob.userId) });
+        if (target?.name) {
+            // Кнопка с именем для перехода к оценке этого человека
+            buttons.push([Markup.button.callback(`Оценить: ${target.name}`, `rate_select_${eventId}_${target.id}`)]);
+        }
+    }
+    
+    // Кнопка полного выхода
+    buttons.push([Markup.button.callback('🏁 Закончить оценку (Пропустить)', 'finish_rating_flow')]);
+
+    const text = `⭐ <b>Оценка участников (По желанию)</b>\n\n` +
+                 `Ты можешь оставить анонимный фидбек о людях, с которыми сегодня общался(ась). Это поможет нам сохранять крутое комьюнити и фильтровать неадекватов.\n\n` +
+                 `⚠️ <b>Ты не обязан(а) оценивать всех или вообще кого-либо.</b> Выбирай только тех, о ком хочется оставить отзыв (хороший или плохой). Если не хочешь никого оценивать — просто нажми «Закончить оценку».`;
+
+    await ctx.editMessageText(text, { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) }).catch(()=>{});
+}
+
+// 1. Обработка нажатия "Перейти к оценкам"
+bot.action(/go_to_ratings_(\d+)/, async (ctx) => {
+    const eventId = parseInt(ctx.match[1]);
+    const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
+    if(!user) return;
+    await sendRatingMenu(ctx, eventId, user.id);
+});
+
+// 2. Обработка выбора конкретного человека для оценки
+bot.action(/rate_select_(\d+)_(\d+)/, async (ctx) => {
+    const eventId = parseInt(ctx.match[1]);
+    const targetId = parseInt(ctx.match[2]);
+    const target = await db.query.users.findFirst({ where: eq(schema.users.id, targetId) });
+    
+    if(!target) return ctx.answerCbQuery("Пользователь не найден.");
+
+    const text = `Оцени участника: <b>${target.name}</b>\n\nТвоя оценка полностью анонимна.`;
+    const buttons = [
+        [
+            Markup.button.callback('1 ⭐️', `do_rate_${eventId}_${targetId}_1`),
+            Markup.button.callback('2 ⭐️', `do_rate_${eventId}_${targetId}_2`),
+            Markup.button.callback('3 ⭐️', `do_rate_${eventId}_${targetId}_3`),
+            Markup.button.callback('4 ⭐️', `do_rate_${eventId}_${targetId}_4`),
+            Markup.button.callback('5 ⭐️', `do_rate_${eventId}_${targetId}_5`)
+        ],
+        [Markup.button.callback('🚩 Было некомфортно / Жалоба', `do_rate_${eventId}_${targetId}_alert`)],
+        [Markup.button.callback('🔙 Вернуться к списку участников', `go_to_ratings_${eventId}`)]
+    ];
+
+    await ctx.editMessageText(text, { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) }).catch(()=>{});
+});
+
+// 3. Обработка самой оценки (нажатие на звезду или жалобу)
+bot.action(/do_rate_(\d+)_(\d+)_(\w+)/, async (ctx) => {
+    const eventId = parseInt(ctx.match[1]);
+    const targetId = parseInt(ctx.match[2]);
+    const action = ctx.match[3]; // '1', '2', '3', '4', '5' или 'alert'
+    
+    const rater = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
+    const target = await db.query.users.findFirst({ where: eq(schema.users.id, targetId) });
+    const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
+
+    if(rater && target && event) {
+         if (action === 'alert') {
+            // АЛЕРТ АДМИНУ
+            await bot.telegram.sendMessage(ADMIN_ID, 
+                `🚨 <b>ЖАЛОБА НА УЧАСТНИКА!</b>\n\n` +
+                `Кто жалуется: <b>${rater.name}</b> (@${rater.username || 'скрыт'})\n` +
+                `На кого: <b>${target.name}</b> (@${target.username || 'скрыт'} | ID: <code>${target.telegramId}</code>)\n` +
+                `📍 Игра: №${eventId} (${event.dateString})\n\n` +
+                `Требуется проверка!`,
+                { parse_mode: 'HTML' }
+            );
+         } else {
+            const stars = parseInt(action);
+            if (stars <= 3) {
+                 // НИЗКАЯ ОЦЕНКА АДМИНУ
+                 await bot.telegram.sendMessage(ADMIN_ID, 
+                    `⚠️ <b>НИЗКАЯ ОЦЕНКА: ${stars} ⭐️</b>\n\n` +
+                    `От: <b>${rater.name}</b>\n` +
+                    `Кому: <b>${target.name}</b> (@${target.username || 'скрыт'} | ID: <code>${target.telegramId}</code>)\n` +
+                    `📍 Игра: №${eventId} (${event.dateString})`,
+                    { parse_mode: 'HTML' }
+                );
+            }
+            // (В будущем здесь можно сохранять оценку в базу)
+         }
+    }
+
+    await ctx.answerCbQuery("Оценка принята!");
+    // Возвращаем человека обратно к списку, чтобы он мог оценить кого-то еще
+    await sendRatingMenu(ctx, eventId, rater!.id);
+});
+
+// 4. Завершение всего процесса оценки
+bot.action('finish_rating_flow', async (ctx) => {
+    await ctx.editMessageText(`🙏 <b>Спасибо!</b>\n\nМы сохранили твой фидбек. До новых встреч в Allgorithm! 🥂`, { parse_mode: 'HTML' }).catch(()=>{});
+});
+
 bot.on('message', async (ctx, next) => {
     const userId = ctx.from?.id;
     const sess = ctx.session as any;
