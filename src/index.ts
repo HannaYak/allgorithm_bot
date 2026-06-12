@@ -2,7 +2,7 @@ import { Telegraf, Markup, session, Scenes } from 'telegraf';
 import express from 'express';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
-import { eq, or, inArray, and, desc, asc, sql } from 'drizzle-orm'; // Добавь sql
+import { eq, or, inArray, and, desc, asc, sql, like, lt } from 'drizzle-orm';// Добавь sql
 import * as schema from '../drizzle/schema'; 
 import 'dotenv/config';
 import Stripe from 'stripe';
@@ -610,14 +610,13 @@ async function isProcessed(key: string): Promise<boolean> {
 // Отметить действие как обработанное
 
 async function markAsProcessed(key: string, expiresInHours = 24): Promise<void> {
-  // МЕНЯЕМ .toJSDate() на .toISO()
-  const expiresAt = DateTime.now().plus({ hours: expiresInHours }).toISO();
+  // Убираем .toISO() и возвращаем .toJSDate() — Drizzle ждет объект Date
+  const expiresAt = DateTime.now().plus({ hours: expiresInHours }).toJSDate();
   
   await db.insert(schema.autoStates)
-    .values({ key: key, value: 'done', expiresAt: expiresAt as any }) // <-- Добавляем as any для TypeScript
+    .values({ key: key, value: 'done', expiresAt: expiresAt })
     .onConflictDoNothing();
 }
-
 
 const STOCK_STATE = {
   isActive: false,
@@ -944,9 +943,8 @@ setInterval(async () => {
         // --- 1. НАПОМИНАНИЕ ЗА 3 ДНЯ (ровно в 20:00) ---
         // Проверяем: если отнять от даты игры 3 дня, это сегодняшний календарный день?
         const isThreeDaysBefore = start.minus({ days: 3 }).hasSame(now, 'day');
-
-        if (now.hour === 20 && isThreeDaysBefore && !(await isProcessed(`remind_3d_${event.id}`))) {
-          await markAsProcessed(`remind_3d_${event.id}`, 30);
+            if (now.hour >= 20 && isThreeDaysBefore && !(await isProcessed(`remind_3d_${event.id}`))) {
+              await markAsProcessed(`remind_3d_${event.id}`, 30);
           
           const evBookings = await db.query.bookings.findMany({
             where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true))
@@ -974,8 +972,8 @@ setInterval(async () => {
         }
 
         // --- 2. НАПОМИНАНИЕ УТРОМ В ДЕНЬ ИГРЫ (в 09:00) ---
-        if (now.hour === 9 && isSameDay && !(await isProcessed(`remind_today_${event.id}`))) {
-          await markAsProcessed(`remind_today_${event.id}`, 14);
+        if (now.hour >= 9 && isSameDay && !(await isProcessed(`remind_today_${event.id}`))) {
+              await markAsProcessed(`remind_today_${event.id}`, 14);
 
           const evBookings = await db.query.bookings.findMany({
             where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true))
@@ -989,18 +987,18 @@ setInterval(async () => {
           }
         }
       // 2. РАСКРЫТИЕ АДРЕСА (ЗА 3 ЧАСА)
-      if (minutesSinceStart <= -150 && minutesSinceStart >= -210 && !(await isProcessed(`reveal_${event.id}`))) {
-          await markAsProcessed(`reveal_${event.id}`, 8);
+if (minutesSinceStart >= -210 && minutesSinceStart <= 0 && !(await isProcessed(`reveal_${event.id}`))) {
+              await markAsProcessed(`reveal_${event.id}`, 8);
         const { address } = parseEventDesc(event.description);
         
-        const rules = `📍 <b>Место встречи: ${address}</b>\n\n, встретимся через 3,5 часа\n` +
-          `ВАЖНО: ЕСЛИ ВЫ НЕ СМОЖЕТЕ ПРИДТИ, НАПИШИТЕ ПОДЮАЛУЙСТА ОБ ЭТОМ В SOS, НАМ ВАЖНО ЗНАТЬ КОЛИЧЕСТВО УЧАСТНИКОВ!\n` +
+        const rules = `📍 <b>Место встречи: ${address}</b>\n\nВстретимся уже через 3 часа! 🥂\n` +
+          `ВАЖНО: ЕСЛИ ВЫ НЕ СМОЖЕТЕ ПРИЙТИ, НАПИШИТЕ ПОЖАЛУЙСТА ОБ ЭТОМ В SOS, НАМ ВАЖНО ЗНАТЬ КОЛИЧЕСТВО УЧАСТНИКОВ!\n` +
           `1️⃣ <b>Приходи за 10–15 минут:</b> Успеешь сделать заказ и снять куртку.\n` +
           `2️⃣ <b>Как найти стол:</b> Спрашивай ТОЛЬКО столик на имя <b>"АЛГОРИТМ"</b>, ничего более.\n` +
           `3️⃣ <b>Если ты первый:</b> Не беспокойся, садись, компания скоро будет, стоит немного подождать. ✨\n` +
           `4️⃣ <b>Еда и напитки:</b> Оплачиваются отдельно на месте. 🍲\n` +
           `5️⃣ <b>Зарядка:</b> Заряди телефон! Бот — твой ведущий и поможет провести ваш вечер. 🔋`;
-
+	
         let gameSpec = "";
         if (event.type === 'talk_toast') gameSpec = `🥂 <b>Talk & Toast:</b> Тебя ждут глубокие темы и викторина!`;
         else if (event.type === 'stock_know') gameSpec = `🧠 <b>Stock & Know:</b> Битва за банк! Твой номер придет следом.`;
@@ -1070,8 +1068,8 @@ setInterval(async () => {
 
 
       // 3. СТАРТ ИГРЫ (ПРИВЕТСТВИЕ + КНОПКА)
-      if (minutesSinceStart >= 0 && minutesSinceStart <= 8 && !(await isProcessed(`start_greet_${event.id}`))) {
-        await markAsProcessed(`start_greet_${event.id}`, 15);
+      if (minutesSinceStart >= 0 && minutesSinceStart <= 60 && !(await isProcessed(`start_greet_${event.id}`))) {
+              await markAsProcessed(`start_greet_${event.id}`, 15);
         const { title } = parseEventDesc(event.description);
         
         // Кнопка нужна ТОЛЬКО для Talk-игр и Свиданий. Stock & Know — мимо.
@@ -1120,18 +1118,18 @@ setInterval(async () => {
       
 
           // 4. ВИКТОРИНА (105 МИН) И ЗАВЕРШЕНИЕ (135 МИН)
-     if (minutesSinceStart >= 105 && minutesSinceStart <= 115 && event.type.includes('talk_toast') && 
-            !(await isProcessed(`quiz_${event.id}`))) {
-          await markAsProcessed(`quiz_${event.id}`, 40);
-          await runAutoQuiz(event.id);
-        }
-
+     if (minutesSinceStart >= 105 && minutesSinceStart <= 180 && event.type.includes('talk_toast') && 
+                !(await isProcessed(`quiz_${event.id}`))) {
+              await markAsProcessed(`quiz_${event.id}`, 40);
+              await runAutoQuiz(event.id);
+            }
+		  
       // 5. ВТОРОЙ ШАНС (195 МИН = 135 минут игры + 60 минут ожидания)
       // Сразу отсекаем Speed Dating, чтобы не гонять пустые запросы к БД
-      if (minutesSinceStart >= 195 && minutesSinceStart <= 210 && !event.type.startsWith('speed_dating') && 
-            !(await isProcessed(`second_chance_${event.id}`))) {
-          await markAsProcessed(`second_chance_${event.id}`, 120);
-          await sendSecondChanceOffers(event.id);
+      if (minutesSinceStart >= 195 && minutesSinceStart <= 300 && !event.type.startsWith('speed_dating') && 
+                !(await isProcessed(`second_chance_${event.id}`))) {
+              await markAsProcessed(`second_chance_${event.id}`, 120);
+              await sendSecondChanceOffers(event.id);
         }
       }
     }
@@ -1285,32 +1283,52 @@ async function sendSecondChanceOffers(eventId: number) {
     }
 }
 
+// === 1. ПОКАЗ АНКЕТ (ПО ОДНОЙ ЗА РАЗ) ===
 async function showModerateMenu(ctx: any) {
-    const pendingUsers = await db.query.users.findMany({
+    // Ищем ТОЛЬКО тех, у кого висит ваучер за анкету в статусе 'pending'
+    const pendingVouchers = await db.query.vouchers.findMany({
         where: and(
-            eq(schema.users.profileCompleted, true),
-            eq(schema.users.expectations, sql`expectations IS NOT NULL`)
+            eq(schema.vouchers.status, 'pending'),
+            eq(schema.vouchers.photoFileId, 'PROFILE_ANSWERS')
         )
     });
 
-    if (pendingUsers.length === 0) {
-        return ctx.editMessageText('✅ На данный момент нет анкет на модерацию.');
+    // Если список пуст — радуем админа
+    if (pendingVouchers.length === 0) {
+        const emptyText = '✅ <b>Все анкеты проверены!</b>\nНа данный момент новых заявок нет.';
+        try {
+            return await ctx.editMessageText(emptyText, { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('🔙 В админку', 'admin_events_menu')]]) });
+        } catch {
+            return await ctx.replyWithHTML(emptyText, Markup.inlineKeyboard([[Markup.button.callback('🔙 В админку', 'admin_events_menu')]]));
+        }
     }
 
-    let text = `🆕 <b>Анкеты на модерацию (${pendingUsers.length})</b>\n\n`;
-    const buttons = [];
+    // Берем ПЕРВОГО пользователя из очереди
+    const firstPending = pendingVouchers[0];
+    const u = await db.query.users.findFirst({ where: eq(schema.users.id, firstPending.userId) });
 
-    for (const u of pendingUsers) {
-        text += `👤 <b>${u.name}</b> (${u.birthDate}, ${u.gender})\n`;
-        text += `Ожидания: ${u.expectations?.substring(0, 80)}\n\n`;
+    if (!u) {
+        // Если юзера удалили, чистим баг базы и идем к следующему
+        await db.delete(schema.vouchers).where(eq(schema.vouchers.id, firstPending.id));
+        return showModerateMenu(ctx); 
+    }
 
-        buttons.push([
-            Markup.button.callback(`✅ Одобрить ${u.name}`, `approve_profile_${u.id}`),
+    // Собираем красивую карточку одной анкеты
+    let text = `🆕 <b>Анкета на модерацию (В очереди: ${pendingVouchers.length})</b>\n\n`;
+    text += `👤 <b>Имя:</b> ${u.name}\n`;
+    text += `🎂 <b>Возраст:</b> ${u.birthDate} | <b>Пол:</b> ${u.gender}\n\n`;
+    text += `💬 <b>Ожидания от клуба:</b>\n<i>${u.expectations || 'Пусто'}</i>\n\n`;
+    text += `🎲 <b>Интересный факт:</b>\n<i>${u.fact || 'Пусто'}</i>\n`;
+
+    // Всего две большие кнопки под сообщением
+    const buttons = [
+        [
+            Markup.button.callback(`✅ Одобрить`, `approve_profile_${u.id}`),
             Markup.button.callback(`❌ Отклонить`, `reject_profile_${u.id}`)
-        ]);
-    }
+        ],
+        [Markup.button.callback('🛑 Выйти из модерации', 'admin_events_menu')]
+    ];
 
-    // Если сообщение уже есть — редактируем, если нет — отправляем новое
     try {
         await ctx.editMessageText(text, { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) });
     } catch {
@@ -2853,6 +2871,8 @@ bot.command('reschedule', async (ctx) => {
         // 2. Обновляем время в базе
         await db.update(schema.events).set({ dateString: newDateStr }).where(eq(schema.events.id, eventId));
 
+		await db.delete(schema.autoStates).where(like(schema.autoStates.key, `%_${eventId}`));
+
         // 3. АВТОМАТИЧЕСКАЯ РАССЫЛКА всем участникам
         const rescheduleMsg = `⚠️ <b>ВНИМАНИЕ! ИЗМЕНЕНИЕ В РАСПИСАНИИ!</b>\n\n` +
             `Игра "${event.type}" перенесена на другое время:\n` +
@@ -3454,37 +3474,60 @@ bot.action('admin_moderate_profiles', async (ctx) => {
 bot.action(/approve_profile_(\d+)/, async (ctx) => {
     const userId = parseInt(ctx.match[1]);
     const user = await db.query.users.findFirst({ where: eq(schema.users.id, userId) });
-    if (!user) return ctx.answerCbQuery('Пользователь не найден');
+    if (!user) return ctx.answerCbQuery('❌ Пользователь не найден', { show_alert: true });
 
-    // ... (твоя логика добавления ваучера) ...
-    await db.insert(schema.vouchers).values({
-        userId: user.id, status: 'approved_10', photoFileId: 'PROFILE_APPROVED'
-    }).onConflictDoNothing();
+    // 1. Превращаем его pending-ваучер в настоящую скидку, чтобы он ушел из списка модерации
+    await db.update(schema.vouchers)
+        .set({ status: 'approved_10', photoFileId: 'PROFILE_APPROVED' })
+        .where(
+            and(
+                eq(schema.vouchers.userId, user.id),
+                eq(schema.vouchers.photoFileId, 'PROFILE_ANSWERS')
+            )
+        );
 
-   await bot.telegram.sendMessage(user.telegramId,
-    `🎉 <b>Поздравляем! Твоя анкета одобрена!</b>\n\n` +
-    `Тебе автоматически начислена скидка <b>-10 PLN</b> на первый билет.\n\n` +
-    `Теперь можешь переходить в «🎮 Игры» и покупать билет со скидкой! 🥂`,
-    { parse_mode: 'HTML' }
-  ).catch(() => {});
+    // 2. Радуем юзера
+    await bot.telegram.sendMessage(user.telegramId,
+        `🎉 <b>Поздравляем! Твоя анкета одобрена!</b>\n\n` +
+        `Тебе автоматически начислена скидка <b>-10 PLN</b> на первый билет.\n\n` +
+        `Теперь можешь переходить в «🎮 Игры» и покупать билет со скидкой! 🥂`,
+        { parse_mode: 'HTML' }
+    ).catch(() => {});
 
-  // ИСПРАВЛЕНИЕ: Удалили лишние точки после .catch() и перед await
-  await ctx.editMessageText(`✅ Анкета ${user.name} одобрена. Скидка -10 PLN начислена.`, { 
-    parse_mode: 'HTML' 
-  });
-  
-  await ctx.answerCbQuery('Одобрено!');
+    await ctx.answerCbQuery(`✅ ${user.name} одобрен(а)!`);
+
+    // 3. МАГИЯ: Автоматически загружаем СЛЕДУЮЩУЮ анкету на место старой
+    await showModerateMenu(ctx);
 });
 
 bot.action(/reject_profile_(\d+)/, async (ctx) => {
     const userId = parseInt(ctx.match[1]);
     const user = await db.query.users.findFirst({ where: eq(schema.users.id, userId) });
-    if (!user) return ctx.answerCbQuery('Пользователь не найден');
+    if (!user) return ctx.answerCbQuery('❌ Пользователь не найден', { show_alert: true });
 
-    await bot.telegram.sendMessage(user.telegramId, "❌ К сожалению, твоя анкета не прошла модерацию.").catch(() => {});
-    await ctx.answerCbQuery('Отклонено');
+    // 1. Удаляем pending-ваучер, чтобы человек ушел из списка модерации
+    await db.delete(schema.vouchers).where(
+        and(
+            eq(schema.vouchers.userId, user.id),
+            eq(schema.vouchers.photoFileId, 'PROFILE_ANSWERS')
+        )
+    );
 
-    // ВАЖНО: Обновляем список анкет
+    // 2. Сбрасываем поля юзеру, чтобы он мог попытаться заполнить анкету заново
+    await db.update(schema.users).set({
+        profileCompleted: false,
+        expectations: null,
+        fact: null
+    }).where(eq(schema.users.id, user.id));
+
+    // 3. Сообщаем плохую новость
+    await bot.telegram.sendMessage(user.telegramId, 
+        "❌ К сожалению, твоя анкета не прошла модерацию.\nЕсли хочешь, ты можешь заполнить её заново в Личном кабинете."
+    ).catch(() => {});
+    
+    await ctx.answerCbQuery(`❌ ${user.name} отклонен(а)`);
+
+    // 4. МАГИЯ: Автоматически загружаем СЛЕДУЮЩУЮ анкету
     await showModerateMenu(ctx);
 });
 
@@ -4375,11 +4418,12 @@ bot.catch((err: any, ctx) => {
 });
 
 // Очистка старых записей в autoStates (чтобы база не разрасталась)
+// Очистка старых записей в autoStates
 async function cleanupOldAutoStates() {
-  const oneMonthAgo = DateTime.now().minus({ days: 30 }).toISO();
+  const oneMonthAgo = DateTime.now().minus({ days: 30 }).toJSDate();
   
   await db.delete(schema.autoStates)
-    .where(sql`${schema.autoStates.expiresAt} < ${oneMonthAgo}`);
+    .where(lt(schema.autoStates.expiresAt, oneMonthAgo));
   
   console.log('🧹 Автоочистка старых состояний выполнена');
 }
