@@ -1309,7 +1309,9 @@ async function showModerateMenu(ctx: any) {
         where: and(
             eq(schema.vouchers.status, 'pending'),
             eq(schema.vouchers.photoFileId, 'PROFILE_ANSWERS')
-        )
+        ),
+        // 🔥 ВОТ ТУТ МЫ ПЕРЕВОРАЧИВАЕМ ОЧЕРЕДЬ! Показываем самые свежие анкеты первыми
+        orderBy: [desc(schema.vouchers.id)] 
     });
 
     // Если список пуст — радуем админа
@@ -1322,7 +1324,7 @@ async function showModerateMenu(ctx: any) {
         }
     }
 
-    // Берем ПЕРВОГО пользователя из очереди
+    // Берем ПЕРВОГО пользователя из очереди (теперь это самый НОВЫЙ пользователь)
     const firstPending = pendingVouchers[0];
     const u = await db.query.users.findFirst({ where: eq(schema.users.id, firstPending.userId) });
 
