@@ -737,6 +737,7 @@ const registerWizard = new Scenes.WizardScene(
   },
 
   // --- ФИНАЛ: Сохранение ---
+// --- ФИНАЛ: Сохранение ---
   async (ctx: any, next: any) => {
     if (ctx.callbackQuery) { await ctx.scene.leave(); return next(); }
     if (ctx.message?.text === '/cancel') { await ctx.scene.leave(); return ctx.reply('❌ Регистрация отменена.', getMainKeyboard()); }
@@ -757,7 +758,7 @@ const registerWizard = new Scenes.WizardScene(
 
     if (!dbUser) return ctx.scene.leave();
 
-    // 2. Ищем, давали ли мы ему уже ваучер за анкету
+    // 2. Ищем, давали ли мы ему уже ваучер за анкету (в ожидании или уже выданный)
     const existingVoucher = await db.query.vouchers.findFirst({
       where: and(
         eq(schema.vouchers.userId, dbUser.id),
@@ -770,7 +771,7 @@ const registerWizard = new Scenes.WizardScene(
 
     const wasProfileCompleted = dbUser.profileCompleted || false;
 
-    // 3. Обновляем данные пользователя
+    // 3. Обновляем данные пользователя в базе (чтобы факт и ожидания всегда были актуальными)
     await db.update(schema.users).set({
       name: data.name,
       birthDate: data.age,
@@ -781,38 +782,38 @@ const registerWizard = new Scenes.WizardScene(
       lastActive: new Date()
     }).where(eq(schema.users.id, dbUser.id));
 
-    // 4. Выдаем ваучер ТОЛЬКО если его ещё нет
+    // 4. Логика выдачи скидки и уведомления админа
     if (!existingVoucher && !wasProfileCompleted) {
+      // ПЕРВЫЙ РАЗ: Создаем ваучер на ожидание
       await db.insert(schema.vouchers).values({
         userId: dbUser.id,
         status: 'pending',
         photoFileId: 'PROFILE_ANSWERS'
       });
 
-      // Возвращаем главное меню!
       await ctx.replyWithHTML(
         `✅ <b>Анкета отправлена на модерацию!</b>\n\n` +
         `Администратор проверит её в ближайшие 24 часа.\n\n` +
         `Как только анкету одобрят — ты сразу получишь <b>-10 PLN</b> на первый билет.`,
         getMainKeyboard() 
       );
+
+      // Уведомление админу ТОЛЬКО для новых анкет
+      await bot.telegram.sendMessage(ADMIN_ID, 
+        `🔔 <b>Новая анкета на модерацию!</b>\n\n` +
+        `Имя: ${data.name}\nВозраст: ${data.age}\nПол: ${data.gender}\n` +
+        `Ожидания: ${data.expectations}\nФакт: ${fact}\n\n` +
+        `TG ID: <code>${telegramId}</code>`,
+        { parse_mode: 'HTML' }
+      );
     } else {
-      // Возвращаем главное меню!
+      // ПОВТОРНОЕ ИЗМЕНЕНИЕ: Просто молча отвечаем юзеру, админа не трогаем
       await ctx.replyWithHTML(
         `✅ <b>Анкета обновлена!</b>\n\n` +
-        `Спасибо! Твои данные успешно сохранены.`,
+        `Спасибо! Твои новые данные успешно сохранены.`,
         getMainKeyboard()
       );
     }
-
-    // 5. Уведомление админу
-    await bot.telegram.sendMessage(ADMIN_ID, 
-      `🔔 <b>${wasProfileCompleted ? 'Обновление' : 'Новая'} анкета!</b>\n\n` +
-      `Имя: ${data.name}\nВозраст: ${data.age}\nПол: ${data.gender}\n` +
-      `Ожидания: ${data.expectations}\nФакт: ${fact}\n\n` +
-      `TG ID: <code>${telegramId}</code>`,
-      { parse_mode: 'HTML' }
-    );
 
     return ctx.scene.leave();
   }
@@ -1284,6 +1285,7 @@ async function sendSecondChanceOffers(eventId: number) {
 }
 
 // === 1. ПОКАЗ АНКЕТ (ПО ОДНОЙ ЗА РАЗ) ===
+// === 1. ПОКАЗ АНКЕТ (ПО ОДНОЙ ЗА РАЗ) ===
 async function showModerateMenu(ctx: any) {
     // Ищем ТОЛЬКО тех, у кого висит ваучер за анкету в статусе 'pending'
     const pendingVouchers = await db.query.vouchers.findMany({
@@ -1312,6 +1314,23 @@ async function showModerateMenu(ctx: any) {
         await db.delete(schema.vouchers).where(eq(schema.vouchers.id, firstPending.id));
         return showModerateMenu(ctx); 
     }
+
+    // === АВТО-ОЧИСТКА СТАРЫХ (УЖЕ ОДОБРЕННЫХ) АНКЕТ ===
+    // Ищем, есть ли у юзера УЖЕ одобренный ваучер за анкету от старого кода
+    const alreadyApproved = await db.query.vouchers.findFirst({
+        where: and(
+            eq(schema.vouchers.userId, u.id),
+            eq(schema.vouchers.photoFileId, 'PROFILE_APPROVED')
+        )
+    });
+
+    if (alreadyApproved) {
+        // Если он уже был одобрен старым кодом, удаляем этот "фантомный" pending-ваучер
+        await db.delete(schema.vouchers).where(eq(schema.vouchers.id, firstPending.id));
+        // И мгновенно переходим к следующей анкете (цикл прокрутится за миллисекунду)
+        return showModerateMenu(ctx);
+    }
+    // ==================================================
 
     // Собираем красивую карточку одной анкеты
     let text = `🆕 <b>Анкета на модерацию (В очереди: ${pendingVouchers.length})</b>\n\n`;
