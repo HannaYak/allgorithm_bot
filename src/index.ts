@@ -8,7 +8,7 @@ import 'dotenv/config';
 import Stripe from 'stripe';
 import { DateTime } from 'luxon';
 import * as SD from './speedDating';
-import { users, events, bookings, vouchers, secretLikes } from '../drizzle/schema';
+import { users, events, bookings, vouchers, secretLikes, ratings } from '../drizzle/schema';
 
 let IS_BROADCASTING = false; 
 const PENDING_PAYMENTS = new Map<number, { time: DateTime, notified: boolean }>();// Этот "замок" не даст запустить две рассылки одновременно
@@ -3969,6 +3969,7 @@ bot.action(/rate_select_(\d+)_(\d+)/, async (ctx) => {
 });
 
 // 3. Обработка самой оценки (нажатие на звезду или жалобу)
+// 3. Обработка самой оценки (нажатие на звезду или жалобу)
 bot.action(/do_rate_(\d+)_(\d+)_(\w+)/, async (ctx) => {
     const eventId = parseInt(ctx.match[1]);
     const targetId = parseInt(ctx.match[2]);
@@ -3991,6 +3992,27 @@ bot.action(/do_rate_(\d+)_(\d+)_(\w+)/, async (ctx) => {
             );
          } else {
             const stars = parseInt(action);
+            
+            // 🔥 ТИХОЕ СОХРАНЕНИЕ ОЦЕНКИ В БАЗУ ДЛЯ "ДОСЬЕ"
+            // Проверяем, не ставил ли он уже оценку этому человеку на этой игре
+            const existingRating = await db.query.ratings.findFirst({
+                where: and(
+                    eq(schema.ratings.eventId, eventId),
+                    eq(schema.ratings.raterId, rater.id),
+                    eq(schema.ratings.targetId, targetId)
+                )
+            });
+
+            // Если оценки еще нет — записываем втихую
+            if (!existingRating) {
+                await db.insert(schema.ratings).values({
+                    eventId: eventId,
+                    raterId: rater.id,
+                    targetId: targetId,
+                    stars: stars
+                });
+            }
+
             if (stars <= 3) {
                  // НИЗКАЯ ОЦЕНКА АДМИНУ
                  await bot.telegram.sendMessage(ADMIN_ID, 
@@ -4001,7 +4023,6 @@ bot.action(/do_rate_(\d+)_(\d+)_(\w+)/, async (ctx) => {
                     { parse_mode: 'HTML' }
                 );
             }
-            // (В будущем здесь можно сохранять оценку в базу)
          }
     }
 
