@@ -23,6 +23,8 @@ export const users = pgTable('users', {
   banReason: text('ban_reason'),
 
   // Системные поля
+  isApproved: boolean('is_approved').default(false),
+  gotProfileDiscount: boolean('got_profile_discount').default(false),
   isAdmin: boolean('is_admin').default(false),
   gamesPlayed: integer('games_played').default(0),
   loyaltyPoints: integer('loyalty_points').default(0),
