@@ -738,6 +738,7 @@ const registerWizard = new Scenes.WizardScene(
 
   // --- ФИНАЛ: Сохранение ---
 // --- ФИНАЛ: Сохранение ---
+  // --- ФИНАЛ: Сохранение ---
   async (ctx: any, next: any) => {
     if (ctx.callbackQuery) { await ctx.scene.leave(); return next(); }
     if (ctx.message?.text === '/cancel') { await ctx.scene.leave(); return ctx.reply('❌ Регистрация отменена.', getMainKeyboard()); }
@@ -758,39 +759,21 @@ const registerWizard = new Scenes.WizardScene(
 
     if (!dbUser) return ctx.scene.leave();
 
-    // 2. Ищем, давали ли мы ему уже ваучер за анкету (в ожидании или уже выданный)
-    const existingVoucher = await db.query.vouchers.findFirst({
-      where: and(
-        eq(schema.vouchers.userId, dbUser.id),
-        or(
-          eq(schema.vouchers.photoFileId, 'PROFILE_ANSWERS'),
-          eq(schema.vouchers.photoFileId, 'PROFILE_APPROVED')
-        )
-      )
-    });
-
-    const wasProfileCompleted = dbUser.profileCompleted || false;
-
-    // 3. Обновляем данные пользователя в базе (чтобы факт и ожидания всегда были актуальными)
+    // 2. Обновляем данные пользователя
     await db.update(schema.users).set({
       name: data.name,
       birthDate: data.age,
       gender: data.gender,
       expectations: data.expectations,
       fact: fact,
-      profileCompleted: true,
+      profileCompleted: true, // Анкета заполнена
+      isApproved: false,      // Сбрасываем одобрение (нужна проверка!)
       lastActive: new Date()
     }).where(eq(schema.users.id, dbUser.id));
 
-    // 4. Логика выдачи скидки и уведомления админа
-    if (!existingVoucher && !wasProfileCompleted) {
-      // ПЕРВЫЙ РАЗ: Создаем ваучер на ожидание
-      await db.insert(schema.vouchers).values({
-        userId: dbUser.id,
-        status: 'pending',
-        photoFileId: 'PROFILE_ANSWERS'
-      });
-
+    // 3. Логика уведомлений (получал ли он уже скидку за жизнь?)
+    if (!dbUser.gotProfileDiscount) {
+      // Это НОВИЧОК
       await ctx.replyWithHTML(
         `✅ <b>Анкета отправлена на модерацию!</b>\n\n` +
         `Администратор проверит её в ближайшие 24 часа.\n\n` +
@@ -798,7 +781,6 @@ const registerWizard = new Scenes.WizardScene(
         getMainKeyboard() 
       );
 
-      // Уведомление админу ТОЛЬКО для новых анкет
       await bot.telegram.sendMessage(ADMIN_ID, 
         `🔔 <b>Новая анкета на модерацию!</b>\n\n` +
         `Имя: ${data.name}\nВозраст: ${data.age}\nПол: ${data.gender}\n` +
@@ -807,12 +789,13 @@ const registerWizard = new Scenes.WizardScene(
         { parse_mode: 'HTML' }
       );
     } else {
-      // ПОВТОРНОЕ ИЗМЕНЕНИЕ: Просто молча отвечаем юзеру, админа не трогаем
+      // Это СТАРИЧОК (просто обновил текст анкеты)
       await ctx.replyWithHTML(
-        `✅ <b>Анкета обновлена!</b>\n\n` +
-        `Спасибо! Твои новые данные успешно сохранены.`,
+        `✅ <b>Анкета отправлена на проверку!</b>\n\n` +
+        `Спасибо! Твои новые данные сохранены.`,
         getMainKeyboard()
       );
+      // Если хочешь, чтобы старички при изменении анкеты тоже падали тебе на стол — эту ветку можно убрать, но лучше не спамить себя.
     }
 
     return ctx.scene.leave();
@@ -1303,19 +1286,19 @@ async function sendSecondChanceOffers(eventId: number) {
 
 // === 1. ПОКАЗ АНКЕТ (ПО ОДНОЙ ЗА РАЗ) ===
 // === 1. ПОКАЗ АНКЕТ (ПО ОДНОЙ ЗА РАЗ) ===
+// === 1. ПОКАЗ АНКЕТ (ПО ОДНОЙ ЗА РАЗ) ===
 async function showModerateMenu(ctx: any) {
-    // Ищем ТОЛЬКО тех, у кого висит ваучер за анкету в статусе 'pending'
-    const pendingVouchers = await db.query.vouchers.findMany({
+    // Ищем тех, кто заполнил анкету, но еще НЕ одобрен
+    const pendingUsers = await db.query.users.findMany({
         where: and(
-            eq(schema.vouchers.status, 'pending'),
-            eq(schema.vouchers.photoFileId, 'PROFILE_ANSWERS')
+            eq(schema.users.profileCompleted, true),
+            eq(schema.users.isApproved, false),
+            sql`expectations IS NOT NULL` // Убеждаемся, что анкета реально есть
         ),
-        // 🔥 ВОТ ТУТ МЫ ПЕРЕВОРАЧИВАЕМ ОЧЕРЕДЬ! Показываем самые свежие анкеты первыми
-        orderBy: [desc(schema.vouchers.id)] 
+        orderBy: [desc(schema.users.id)] // Самые свежие сверху
     });
 
-    // Если список пуст — радуем админа
-    if (pendingVouchers.length === 0) {
+    if (pendingUsers.length === 0) {
         const emptyText = '✅ <b>Все анкеты проверены!</b>\nНа данный момент новых заявок нет.';
         try {
             return await ctx.editMessageText(emptyText, { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('🔙 В админку', 'admin_events_menu')]]) });
@@ -1324,41 +1307,15 @@ async function showModerateMenu(ctx: any) {
         }
     }
 
-    // Берем ПЕРВОГО пользователя из очереди (теперь это самый НОВЫЙ пользователь)
-    const firstPending = pendingVouchers[0];
-    const u = await db.query.users.findFirst({ where: eq(schema.users.id, firstPending.userId) });
+    // Берем первую анкету в очереди
+    const u = pendingUsers[0];
 
-    if (!u) {
-        // Если юзера удалили, чистим баг базы и идем к следующему
-        await db.delete(schema.vouchers).where(eq(schema.vouchers.id, firstPending.id));
-        return showModerateMenu(ctx); 
-    }
-
-    // === АВТО-ОЧИСТКА СТАРЫХ (УЖЕ ОДОБРЕННЫХ) АНКЕТ ===
-    // Ищем, есть ли у юзера УЖЕ одобренный ваучер за анкету от старого кода
-    const alreadyApproved = await db.query.vouchers.findFirst({
-        where: and(
-            eq(schema.vouchers.userId, u.id),
-            eq(schema.vouchers.photoFileId, 'PROFILE_APPROVED')
-        )
-    });
-
-    if (alreadyApproved) {
-        // Если он уже был одобрен старым кодом, удаляем этот "фантомный" pending-ваучер
-        await db.delete(schema.vouchers).where(eq(schema.vouchers.id, firstPending.id));
-        // И мгновенно переходим к следующей анкете (цикл прокрутится за миллисекунду)
-        return showModerateMenu(ctx);
-    }
-    // ==================================================
-
-    // Собираем красивую карточку одной анкеты
-    let text = `🆕 <b>Анкета на модерацию (В очереди: ${pendingVouchers.length})</b>\n\n`;
+    let text = `🆕 <b>Анкета на модерацию (В очереди: ${pendingUsers.length})</b>\n\n`;
     text += `👤 <b>Имя:</b> ${u.name}\n`;
     text += `🎂 <b>Возраст:</b> ${u.birthDate} | <b>Пол:</b> ${u.gender}\n\n`;
-    text += `💬 <b>Ожидания от клуба:</b>\n<i>${u.expectations || 'Пусто'}</i>\n\n`;
-    text += `🎲 <b>Интересный факт:</b>\n<i>${u.fact || 'Пусто'}</i>\n`;
+    text += `💬 <b>Ожидания от клуба:</b>\n<i>${u.expectations}</i>\n\n`;
+    text += `🎲 <b>Интересный факт:</b>\n<i>${u.fact}</i>\n`;
 
-    // Всего две большие кнопки под сообщением
     const buttons = [
         [
             Markup.button.callback(`✅ Одобрить`, `approve_profile_${u.id}`),
@@ -1373,6 +1330,60 @@ async function showModerateMenu(ctx: any) {
         await ctx.replyWithHTML(text, Markup.inlineKeyboard(buttons));
     }
 }
+
+bot.action(/approve_profile_(\d+)/, async (ctx) => {
+    const userId = parseInt(ctx.match[1]);
+    const user = await db.query.users.findFirst({ where: eq(schema.users.id, userId) });
+    if (!user) return ctx.answerCbQuery('❌ Пользователь не найден', { show_alert: true });
+
+    // 1. Ставим флаг одобрения
+    await db.update(schema.users).set({ isApproved: true }).where(eq(schema.users.id, userId));
+
+    // 2. Выдаем скидку ТОЛЬКО если он её еще не получал
+    if (!user.gotProfileDiscount) {
+        await db.insert(schema.vouchers).values({
+            userId: user.id, 
+            status: 'approved_10', 
+            photoFileId: 'PROFILE_APPROVED'
+        });
+        // Отмечаем, что скидка за регу получена навсегда
+        await db.update(schema.users).set({ gotProfileDiscount: true }).where(eq(schema.users.id, userId));
+
+        await bot.telegram.sendMessage(user.telegramId,
+            `🎉 <b>Поздравляем! Твоя анкета одобрена!</b>\n\n` +
+            `Тебе автоматически начислена скидка <b>-10 PLN</b> на первый билет.\n` +
+            `Теперь можешь переходить в «🎮 Игры» и покупать билет со скидкой! 🥂`,
+            { parse_mode: 'HTML' }
+        ).catch(() => {});
+    } else {
+        // Если это старичок, который просто обновил текст — радуем тихо
+        await bot.telegram.sendMessage(user.telegramId, "✅ Твоя обновленная анкета успешно прошла модерацию!").catch(() => {});
+    }
+
+    await ctx.answerCbQuery(`✅ ${user.name} одобрен(а)!`);
+    await showModerateMenu(ctx);
+});
+
+bot.action(/reject_profile_(\d+)/, async (ctx) => {
+    const userId = parseInt(ctx.match[1]);
+    const user = await db.query.users.findFirst({ where: eq(schema.users.id, userId) });
+    if (!user) return ctx.answerCbQuery('❌ Пользователь не найден', { show_alert: true });
+
+    // Сбрасываем анкету, чтобы он заполнил заново
+    await db.update(schema.users).set({
+        profileCompleted: false,
+        isApproved: false,
+        expectations: null,
+        fact: null
+    }).where(eq(schema.users.id, user.id));
+
+    await bot.telegram.sendMessage(user.telegramId, 
+        "❌ К сожалению, твоя анкета не прошла модерацию.\nЕсли хочешь, ты можешь заполнить её заново в Личном кабинете."
+    ).catch(() => {});
+    
+    await ctx.answerCbQuery(`❌ ${user.name} отклонен(а)`);
+    await showModerateMenu(ctx);
+});
 
 bot.start(async (ctx) => {
   try {
@@ -3508,66 +3519,6 @@ bot.action('admin_moderate_profiles', async (ctx) => {
     await showModerateMenu(ctx);
 });
 
-// Одобрить анкету
-bot.action(/approve_profile_(\d+)/, async (ctx) => {
-    const userId = parseInt(ctx.match[1]);
-    const user = await db.query.users.findFirst({ where: eq(schema.users.id, userId) });
-    if (!user) return ctx.answerCbQuery('❌ Пользователь не найден', { show_alert: true });
-
-    // 1. Превращаем его pending-ваучер в настоящую скидку, чтобы он ушел из списка модерации
-    await db.update(schema.vouchers)
-        .set({ status: 'approved_10', photoFileId: 'PROFILE_APPROVED' })
-        .where(
-            and(
-                eq(schema.vouchers.userId, user.id),
-                eq(schema.vouchers.photoFileId, 'PROFILE_ANSWERS')
-            )
-        );
-
-    // 2. Радуем юзера
-    await bot.telegram.sendMessage(user.telegramId,
-        `🎉 <b>Поздравляем! Твоя анкета одобрена!</b>\n\n` +
-        `Тебе автоматически начислена скидка <b>-10 PLN</b> на первый билет.\n\n` +
-        `Теперь можешь переходить в «🎮 Игры» и покупать билет со скидкой! 🥂`,
-        { parse_mode: 'HTML' }
-    ).catch(() => {});
-
-    await ctx.answerCbQuery(`✅ ${user.name} одобрен(а)!`);
-
-    // 3. МАГИЯ: Автоматически загружаем СЛЕДУЮЩУЮ анкету на место старой
-    await showModerateMenu(ctx);
-});
-
-bot.action(/reject_profile_(\d+)/, async (ctx) => {
-    const userId = parseInt(ctx.match[1]);
-    const user = await db.query.users.findFirst({ where: eq(schema.users.id, userId) });
-    if (!user) return ctx.answerCbQuery('❌ Пользователь не найден', { show_alert: true });
-
-    // 1. Удаляем pending-ваучер, чтобы человек ушел из списка модерации
-    await db.delete(schema.vouchers).where(
-        and(
-            eq(schema.vouchers.userId, user.id),
-            eq(schema.vouchers.photoFileId, 'PROFILE_ANSWERS')
-        )
-    );
-
-    // 2. Сбрасываем поля юзеру, чтобы он мог попытаться заполнить анкету заново
-    await db.update(schema.users).set({
-        profileCompleted: false,
-        expectations: null,
-        fact: null
-    }).where(eq(schema.users.id, user.id));
-
-    // 3. Сообщаем плохую новость
-    await bot.telegram.sendMessage(user.telegramId, 
-        "❌ К сожалению, твоя анкета не прошла модерацию.\nЕсли хочешь, ты можешь заполнить её заново в Личном кабинете."
-    ).catch(() => {});
-    
-    await ctx.answerCbQuery(`❌ ${user.name} отклонен(а)`);
-
-    // 4. МАГИЯ: Автоматически загружаем СЛЕДУЮЩУЮ анкету
-    await showModerateMenu(ctx);
-});
 
 // 2. ОБРАБОТЧИК ОТВЕТОВ НА ОПРОС (ОТПРАВЛЯЕТ ТЕБЕ В ЛИЧКУ)
 bot.on('poll_answer', async (ctx) => {
