@@ -107,3 +107,12 @@ export const stockScores = pgTable('stock_scores', {
   isWinner: boolean('is_winner').default(false), // Флаг победы в раунде
   createdAt: timestamp('created_at').defaultNow(),
 });
+
+export const ratings = pgTable('ratings', {
+  id: serial('id').primaryKey(),
+  eventId: integer('event_id').notNull(),
+  raterId: integer('rater_id').notNull(),    // Кто ставит оценку
+  targetId: integer('target_id').notNull(),  // Кому ставят оценку
+  stars: integer('stars').notNull(),         // Количество звезд (1-5)
+  createdAt: timestamp('created_at').defaultNow(),
+});
