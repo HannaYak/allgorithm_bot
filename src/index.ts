@@ -594,6 +594,11 @@ async function notifyNextInWaitlist(eventId: number, eventType: string, dateStri
 }
 
 
+// Функция для системных логов
+async function sendLog(title: string, text: string) {
+    const msg = `📝 <b>ЛОГ | ${title}</b>\n${text}`;
+    await bot.telegram.sendMessage(ADMIN_ID, msg, { parse_mode: 'HTML' }).catch(() => {});
+}
 
 // --- 4. STATE ---
 
@@ -1866,7 +1871,7 @@ bot.action(/conf_visit_no_(\d+)/, async (ctx) => {
   
   const user = await db.query.users.findFirst({ where: eq(schema.users.id, booking.userId) });
   if (user) {
-    await bot.telegram.sendMessage(ADMIN_ID, `❌ <b>Отказ от игры за 3 дня!</b>\nИмя: ${user.name} (@${user.username || 'нет'})\nИгра №${event.id}: ${event.dateString}`).catch(() => {});
+    await sendLog('ОТКАЗ ЗА 3 ДНЯ ❌', `👤 Игрок: <b>${user.name}</b> (@${user.username || 'скрыт'})\n🎫 Игра: №${event.id} (${event.dateString})\n⚠️ Место освобождено, требуется возврат средств!`);
   }
 
   // Сразу зовем человека из вайтлиста на пустое место!
@@ -2336,6 +2341,9 @@ bot.action(/exec_canc_(\d+)/, async (ctx) => {
     }
     
     // 5. Удаляем запись из базы
+	// Логируем отмену
+    const u = await db.query.users.findFirst({ where: eq(schema.users.id, booking.userId) });
+    await sendLog('ОТМЕНА ЗАПИСИ ❌', `👤 Игрок: <b>${u?.name}</b> (@${u?.username || 'скрыт'})\n🎫 Игра: №${event.id} (${event.type})\n⏳ До старта: ${eventDate.diffNow('hours').hours.toFixed(1)} ч.\n⚠️ Требуется оформить возврат в Stripe!`);
     await db.delete(schema.bookings).where(eq(schema.bookings.id, bookingId));
 
     // 6. Уменьшаем количество игроков
@@ -2640,6 +2648,8 @@ bot.action(/confirm_pay_(\d+)/, async (ctx) => {
 
         // Записываем и обновляем счетчик по факту (real count + 1)
         PENDING_PAYMENTS.delete(user.id);
+		// Отправляем лог админу
+        await sendLog('ОПЛАТА БИЛЕТА 💳 (Ручная кнопка)', `👤 Игрок: <b>${user.name}</b> (@${user.username || 'скрыт'})\n🎫 Игра: №${eid} (${event.type})`);
         await db.insert(schema.bookings).values({ userId: user.id, eventId: eid, paid: true });
         await db.update(schema.events).set({ currentPlayers: realBookingsCount.length + 1 }).where(eq(schema.events.id, eid));
         
@@ -4519,7 +4529,9 @@ if (event.type.includes('talk_toast')) {
 
 messageText += `Ждём тебя! Это будет особенный вечер 🥂`;
   await bot.telegram.sendMessage(tId, messageText, { parse_mode: 'HTML' }).catch(() => {});
-  PENDING_PAYMENTS.delete(`${user.id}`);
+  PENDING_PAYMENTS.delete(user.id);
+	  // Отправляем лог админу
+  await sendLog('ОПЛАТА БИЛЕТА 💳', `👤 Игрок: <b>${user.name}</b> (@${user.username || 'скрыт'})\n🎫 Игра: №${eId} (${event.type})`);
 } catch (e) {
     console.error("Ошибка в handleSuccessfulPayment:", e);
   }
