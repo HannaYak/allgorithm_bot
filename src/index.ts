@@ -1292,15 +1292,16 @@ async function sendSecondChanceOffers(eventId: number) {
 // === 1. ПОКАЗ АНКЕТ (ПО ОДНОЙ ЗА РАЗ) ===
 // === 1. ПОКАЗ АНКЕТ (ПО ОДНОЙ ЗА РАЗ) ===
 // === 1. ПОКАЗ АНКЕТ (ПО ОДНОЙ ЗА РАЗ) ===
+// === 1. ПОКАЗ АНКЕТ (ПО ОДНОЙ ЗА РАЗ) ===
 async function showModerateMenu(ctx: any) {
     // Ищем тех, кто заполнил анкету, но еще НЕ одобрен
     const pendingUsers = await db.query.users.findMany({
         where: and(
             eq(schema.users.profileCompleted, true),
-            eq(schema.users.isApproved, false),
-            sql`expectations IS NOT NULL` // Убеждаемся, что анкета реально есть
+            eq(schema.users.isApproved, false)
         ),
-        orderBy: [desc(schema.users.id)] // Самые свежие сверху
+        // 🔥 Сортируем по времени заполнения (новые сверху), а не по ID!
+        orderBy: [desc(schema.users.lastActive)]
     });
 
     if (pendingUsers.length === 0) {
