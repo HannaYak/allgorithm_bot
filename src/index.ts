@@ -890,8 +890,49 @@ const msgEventWizard = new Scenes.WizardScene(
   }
 );
 
+// --- СЦЕНА РЕДАКТИРОВАНИЯ ФАКТА ---
+const editFactWizard = new Scenes.WizardScene(
+  'EDIT_FACT_SCENE',
+  async (ctx) => {
+    await ctx.replyWithHTML(
+      `📝 <b>Отправь мне новую историю (факт) о себе:</b>\n\n` +
+      `Она будет использоваться в викторине «Чей это факт?» на вечере.\n` +
+      `<i>Примеры:\n• Однажды я встретил(-а) медведя в лесу\n• Умею жонглировать\n• Боюсь кукол Барби</i>\n\n` +
+      `(Напиши /cancel чтобы отменить)`,
+      Markup.removeKeyboard() // Убираем главное меню на время ввода
+    );
+    return ctx.wizard.next();
+  },
+  async (ctx: any, next: any) => {
+    if (ctx.callbackQuery) { await ctx.scene.leave(); return next(); }
+    if (ctx.message?.text === '/cancel') { 
+      await ctx.scene.leave(); 
+      return ctx.reply('❌ Изменение отменено.', getMainKeyboard()); 
+    }
+    if (!ctx.message || !('text' in ctx.message)) return;
+
+    const newFact = ctx.message.text.trim();
+    if (newFact.length < 8) {
+      return ctx.reply("Пожалуйста, напиши факт подлиннее 🙂");
+    }
+
+    const telegramId = ctx.from!.id;
+    const dbUser = await db.query.users.findFirst({
+      where: eq(schema.users.telegramId, telegramId)
+    });
+
+    if (dbUser) {
+      await db.update(schema.users).set({ fact: newFact }).where(eq(schema.users.id, dbUser.id));
+      await ctx.replyWithHTML(`✅ <b>Твоя история успешно обновлена!</b>`, getMainKeyboard());
+    }
+
+    return ctx.scene.leave();
+  }
+);
+
 // Регистрация всех сцен и подключение сессий
-const stage = new Scenes.Stage<any>([registerWizard, addEventWizard, msgEventWizard, addPromoWizard]);
+// Регистрация всех сцен и подключение сессий
+const stage = new Scenes.Stage<any>([registerWizard, addEventWizard, msgEventWizard, addPromoWizard, editFactWizard]);
 bot.use(session()); 
 bot.use(stage.middleware());
 
