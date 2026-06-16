@@ -2452,6 +2452,14 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
         return ctx.scene.enter('REGISTER_SCENE', { returnToEvent: eid });
     }
 
+	// === ЗАМОК МОДЕРАЦИИ ===
+    if (!user.isApproved) {
+        return ctx.replyWithHTML(
+            `⏳ <b>Твоя анкета еще на проверке!</b>\n\n` +
+            `Подожди совсем немного, администратор уже читает её. Как только она будет одобрена, ты сможешь бронировать билеты! ✨`
+        );
+    }
+
     // 1. СТРОГИЙ ЗАМОК ДЛЯ ВСЕХ ИГР (Проверка лимита)
     if (event.currentPlayers >= event.maxPlayers) {
         return ctx.reply(`❌ Ой, пока ты заполнял анкету, места на эту игру закончились!`, 
