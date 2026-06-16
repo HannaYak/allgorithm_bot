@@ -2224,6 +2224,11 @@ bot.action('book_dating', async (ctx) => bookGame(ctx, 'speed_dating'));
 
 async function bookGame(ctx: any, gameType: string) {
   try {
+    if (ctx.callbackQuery) {
+        await ctx.answerCbQuery().catch(() => {}); // Гасим часики на кнопке загрузки
+    }
+
+    // 🔥 ИСПРАВЛЕНО: Вернули потерянные скобки и условие поиска
     const user = await db.query.users.findFirst({
       where: eq(schema.users.telegramId, ctx.from!.id)
     });
