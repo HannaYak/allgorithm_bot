@@ -32,7 +32,7 @@ export const users = pgTable('users', {
   createdAt: timestamp('created_at').defaultNow(),
   invitedBy: bigint('invited_by', { mode: 'number' }),
   // (добавь эту строчку к остальным полям пользователя)
-  referralCount: integer('referral_count').default(0)
+  referralCount: integer('referral_count').default(0),
 });
 
 // Таблица событий (Игр)
