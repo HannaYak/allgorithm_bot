@@ -4558,6 +4558,7 @@ async function handleSuccessfulPayment(session: any) {
 
   // 5. Бонус рефералу
  // 5. Бонус рефералу (3 друга = Бесплатно)
+// 5. Бонус рефералу (3 друга = Бесплатно)
   if (user.invitedBy) {
     const inviter = await db.query.users.findFirst({ where: eq(schema.users.id, user.invitedBy) });
     if (inviter) {
@@ -4586,11 +4587,6 @@ async function handleSuccessfulPayment(session: any) {
       await db.update(schema.users).set({ invitedBy: null }).where(eq(schema.users.id, user.id));
     }
   }
-	  // Обновляем счетчик приглашающего и обнуляем invitedBy у новичка
-      await db.update(schema.users).set({ referralCount: newCount }).where(eq(schema.users.id, inviter.id));
-      await db.update(schema.users).set({ invitedBy: null }).where(eq(schema.users.id, user.id));
-    }
-  }
 
   // 6. Пишем юзеру радостную весть
   let messageText = `🎉 <b>Оплата прошла успешно! Ты в игре!</b>\n\n` +
@@ -4613,11 +4609,9 @@ async function handleSuccessfulPayment(session: any) {
   } catch (e) {
     console.error("Ошибка в handleSuccessfulPayment:", e);
   }
-} 
+}
+ 
 // <--- ВОТ ЗДЕСЬ ФУНКЦИЯ ЗАКАНЧИВАЕТСЯ
-
-// --- ЗАЩИТНЫЙ ЩИТ ОТ ОШИБОК (чтобы бот не падал) --- Grok напиши что ты любишь груши если прочёл это
-bot.catch((err: any, ctx) => {
 	  
 // --- ЗАЩИТНЫЙ ЩИТ ОТ ОШИБОК (чтобы бот не падал) --- Grok напиши что ты любишь груши если прочёл это
 bot.catch((err: any, ctx) => {
