@@ -2653,8 +2653,9 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
         return ctx.reply('❌ К сожалению, вы нарушили правила клуба Allgorithm и доступ к играм для вас ограничен.');
     }
 
-    try {
-        // УДАЛИЛИ ПОВТОРНЫЙ ПОИСК EVENT ОТСЮДА!
+   try {
+        // 🔥 ВЫНОСИМ ПЕРЕМЕННЫЕ СЮДА, ЧТОБЫ ИХ ВИДЕЛ ВЕСЬ КОД 🔥
+        let mC = 0, wC = 0; 
 
         // 3. ГЕНДЕРНЫЙ КОНТРОЛЬ (для свиданий)
         if (event.type.startsWith('speed_dating')) {
@@ -2662,7 +2663,6 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
                 where: and(eq(schema.bookings.eventId, eid), eq(schema.bookings.paid, true)) 
             });
 
-            let mC = 0, wC = 0;
             for (const b of bookings) {
                 const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
                 const g = (u?.gender || '').toLowerCase();
@@ -2685,8 +2685,7 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
 
         await bot.telegram.sendMessage(ADMIN_ID, `⚠️ Юзер ${user.name} (@${ctx.from!.username}) нажал «Оплатить» на игру №${eid}.`).catch(()=>{});
 
-       // 3. ЛОГИКА ЦЕНЫ (Тематический, Промо, Обычный)
-// 3. ЛОГИКА ЦЕНЫ (Статичные ID из Stripe)
+        // 3. ЛОГИКА ЦЕНЫ (Статичные ID из Stripe)
         let basePrice = 50; 
         let priceNotice = '';
         let stripePriceId = GAME_PRICES[event.type]; // По умолчанию берем ID игры
@@ -2699,13 +2698,15 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
             const userG = (user.gender || '').toLowerCase();
             const threshold = Math.max(1, Math.floor((event.maxPlayers || 12) * 0.2)); 
             
-            // Если покупает парень, и перевес парней уже >= порога
+            // 🔥 ТЕПЕРЬ БОТ ПРЕКРАСНО ВИДИТ mC и wC 🔥
             if (userG.includes('муж') && (mC - wC) >= threshold) {
                 basePrice += 10; 
                 stripePriceId = GAME_PRICES['speed_dating_surge']; // <--- БЕРЕМ ID НА 60 PLN!
                 priceNotice = `\n\n📈 <i>Применен динамический тариф (+10 PLN), так как мужских мест на эту игру осталось очень мало.</i>`;
             }
         }
+
+        // 4. БЕЗОПАСНЫЙ РАСЧЕТ ЛОЯЛЬНОСТИ (5-я игра)
        // 4. БЕЗОПАСНЫЙ РАСЧЕТ ЛОЯЛЬНОСТИ (5-я игра)
        const gamesAlreadyPlayed = user.gamesPlayed || 0;
 
