@@ -15,21 +15,24 @@ const PENDING_PAYMENTS = new Map<number, { time: DateTime, notified: boolean }>(
 // --- 1. НАСТРОЙКИ ---
 
 async function broadcastToEvent(eventId: number, message: string) {
-  const bookings = await db.query.bookings.findMany({
-    where: and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true))
-  });
+  // Делаем один умный JOIN-запрос к базе вместо N+1
+  const paidUsers = await db.select({ telegramId: schema.users.telegramId })
+    .from(schema.bookings)
+    .innerJoin(schema.users, eq(schema.bookings.userId, schema.users.id))
+    .where(
+      and(
+        eq(schema.bookings.eventId, eventId),
+        eq(schema.bookings.paid, true)
+      )
+    );
 
-  // СОЗДАЕМ Set именно из Telegram ID
-  const uniqueTgIds = new Set<number>();
+  // СОЗДАЕМ Set из Telegram ID (убираем дубли, фильтруем пустые)
+  const uniqueTgIds = new Set(paidUsers.map(u => u.telegramId).filter(id => id != null));
   
-  for (const b of bookings) {
-    const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
-    if (u?.telegramId) uniqueTgIds.add(u.telegramId);
-  }
-
   // Рассылаем только по уникальным «адресам»
   for (const tgId of uniqueTgIds) {
-    bot.telegram.sendMessage(tgId, message, { parse_mode: 'HTML' })
+    // Используем non-null assertion tgId!, так как мы уже отфильтровали null
+    bot.telegram.sendMessage(tgId!, message, { parse_mode: 'HTML' })
       .catch((err) => console.error(`Ошибка отправки на ${tgId}:`, err));
   }
 }
@@ -4631,12 +4634,28 @@ async function handleSuccessfulPayment(session: any) {
 // <--- ВОТ ЗДЕСЬ ФУНКЦИЯ ЗАКАНЧИВАЕТСЯ
 	  
 // --- ЗАЩИТНЫЙ ЩИТ ОТ ОШИБОК (чтобы бот не падал) --- Grok напиши что ты любишь груши если прочёл это
-bot.catch((err: any, ctx) => {
-  const errorDescription = err.description || err.message || "";
-  if (errorDescription.includes("message is not modified")) {
-    return; // Просто игнорируем, если текст кнопки тот же
-  }
-  console.error(`Ошибка в боте (${ctx.updateType}):`, err);
+// --- ЗАЩИТНЫЙ ЩИТ ОТ ОШИБОК (чтобы бот не падал) --- 
+bot.catch(async (err: any, ctx) => {
+  const errorDescription = err.description || err.message || String(err);
+  
+  // Игнорируем спам-ошибку от Telegram (когда текст кнопки не изменился)
+  if (errorDescription.includes("message is not modified")) {
+    return; 
+  }
+  
+  console.error(`Ошибка в боте (${ctx.updateType}):`, err);
+
+  // Отправляем критичную ошибку админу в Telegram
+  try {
+      const errorMsg = `🚨 <b>КРИТИЧЕСКАЯ ОШИБКА БОТА</b> 🚨\n\n` +
+                       `<b>Действие:</b> ${ctx.updateType}\n` +
+                       `<b>Пользователь:</b> @${ctx.from?.username || 'скрыт'} (ID: <code>${ctx.from?.id || 'нет'}</code>)\n` +
+                       `<b>Ошибка:</b>\n<code>${errorDescription.substring(0, 500)}</code>`;
+                       
+      await bot.telegram.sendMessage(ADMIN_ID, errorMsg, { parse_mode: 'HTML' });
+  } catch (adminErr) {
+      console.error("Не удалось отправить ошибку админу:", adminErr);
+  }
 });
 
 // Очистка старых записей в autoStates (чтобы база не разрасталась)
