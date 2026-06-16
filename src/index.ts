@@ -2507,21 +2507,47 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
 
         await bot.telegram.sendMessage(ADMIN_ID, `⚠️ Юзер ${user.name} (@${ctx.from!.username}) нажал «Оплатить» на игру №${eid}.`).catch(()=>{});
 
-        // 3. ЛОГИКА ЦЕНЫ (Тематический, Промо, Обычный)
-        let basePrice = 50; // Стандартная цена (для Stock & Know)
-  
-        if (event.type.startsWith('talk_')) {
-            basePrice = 35; // Цена для всех Talk & Toast
-        } 
-      else if (event.type.startsWith('speed_dating')) {
-          basePrice = 50; // ВОТ ТУТ МЕНЯЕМ: теперь для всех свиданий база 25
-        }
+       // 3. ЛОГИКА ЦЕНЫ (Тематический, Промо, Обычный)
+        let basePrice = 50; 
+        let priceNotice = '';
+        let lineItems: any[] = [];
 
-        // 4. БЕЗОПАСНЫЙ РАСЧЕТ ЛОЯЛЬНОСТИ (5-я игра)
-        // 4. БЕЗОПАСНЫЙ РАСЧЕТ ЛОЯЛЬНОСТИ (5-я игра)
+        // 🔥 ДИНАМИКА ТОЛЬКО ДЛЯ СВИДАНИЙ 🔥
+        if (event.type.startsWith('speed_dating')) {
+            basePrice = 50; 
+            
+            const userG = (user.gender || '').toLowerCase();
+            const threshold = Math.max(1, Math.floor((event.maxPlayers || 12) * 0.2)); 
+            
+            // Если покупает парень, и перевес парней уже >= порога
+            if (userG.includes('муж') && (mC - wC) >= threshold) {
+                basePrice += 10; 
+                priceNotice = `\n\n📈 <i>Применен динамический тариф (+10 PLN), так как мужских мест на эту игру осталось очень мало.</i>`;
+            }
+
+            // Для Свиданий генерируем цену на лету (так как она плавающая)
+            lineItems = [{
+                price_data: {
+                    currency: 'pln',
+                    product_data: { name: getGameName(event.type) },
+                    unit_amount: basePrice * 100, // В грошах
+                },
+                quantity: 1,
+            }];
+        } else {
+            // Для ВСЕХ ОСТАЛЬНЫХ ИГР используем старую логику и жесткие ID из Stripe
+            if (event.type.startsWith('talk_')) {
+                basePrice = 35;
+            } else {
+                basePrice = 50;
+            }
+            
+            // Берем готовый price_id из словаря GAME_PRICES
+            lineItems = [{ price: GAME_PRICES[event.type], quantity: 1 }];
+        }
+       // 4. БЕЗОПАСНЫЙ РАСЧЕТ ЛОЯЛЬНОСТИ (5-я игра)
         const gamesAlreadyPlayed = user.gamesPlayed || 0;
 
-        // Считаем, сколько у юзера УЖЕ есть предстоящих оплаченных записей
         const upcomingBookings = await db.select()
             .from(schema.bookings)
             .innerJoin(schema.events, eq(schema.bookings.eventId, schema.events.id))
@@ -2529,14 +2555,12 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
                 and(
                     eq(schema.bookings.userId, user.id),
                     eq(schema.bookings.paid, true),
-                    eq(schema.events.isActive, true) // Только активные (не завершенные) игры
+                    eq(schema.events.isActive, true)
                 )
             );
 
-        // Общий прогресс = сыгранные в прошлом + уже забронированные на будущее
         const totalProgress = gamesAlreadyPlayed + upcomingBookings.length;
 
-        // Если следующая бронь (totalProgress + 1) кратна 5 — она бесплатная
         if (totalProgress > 0 && (totalProgress + 1) % 5 === 0) {
             const doubleCheck = await db.query.bookings.findFirst({
                 where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.eventId, eid))
@@ -2557,13 +2581,11 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
                 return ctx.reply("✅ Ты уже записан на эту игру! Проверь раздел «Мои записи».");
             }
         }
-
-        // 5. ПРОВЕРКА ВАУЧЕРОВ (FREE и -10 PLN)
+// 5. ПРОВЕРКА ВАУЧЕРОВ (FREE и -10 PLN)
         const activeVoucher = await db.query.vouchers.findFirst({ 
             where: and(eq(schema.vouchers.userId, user.id), or(eq(schema.vouchers.status, 'approved_10'), eq(schema.vouchers.status, 'approved_free'))) 
         });
 
-        // Если есть FREE ваучер
         if (activeVoucher?.status === 'approved_free') {
             const doubleCheck = await db.query.bookings.findFirst({
                 where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.eventId, eid))
@@ -2577,43 +2599,36 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
             return ctx.replyWithHTML(`🎫 <b>Оплачено FREE ваучером! Ты в игре!</b>\n\nИнструкция придет за 3 часа до начала. 🥂`);
         }
 
-        // Логика скидки -10 PLN
+       // Логика скидки -10 PLN
         let finalPrice = basePrice;
         let discounts = [];
         const sessionMetadata: any = { telegramId: ctx.from!.id.toString(), eventId: eid.toString() };
 
-       // Логика скидки -10 PLN — новая версия
-if (activeVoucher?.status === 'approved_10') {
-    if (basePrice >= 35) { // <-- Здесь стоит 35
-        finalPrice = basePrice - 10;
-        discounts = [{ coupon: STRIPE_COUPON_ID }];
-        sessionMetadata.voucherId = activeVoucher.id.toString();
-    } else {
-        // Для событий по 25 PLN (съёмки и т.д.) — скидка не применяется
-        await ctx.answerCbQuery("💡 На эту специальную игру скидка -10 PLN не действует.", { show_alert: true });
-    }
-}
-
-        // 6. ОПЛАТА STRIPE
-        // ... (вся твоя логика расчета цены и Stripe выше)
+        if (activeVoucher?.status === 'approved_10') {
+            if (basePrice >= 35) { 
+                finalPrice = basePrice - 10;
+                discounts = [{ coupon: STRIPE_COUPON_ID }];
+                sessionMetadata.voucherId = activeVoucher.id.toString();
+            } else {
+                await ctx.answerCbQuery("💡 На эту специальную игру скидка -10 PLN не действует.", { show_alert: true });
+            }
+        }
 
         // 6. ОПЛАТА STRIPE
         const stripeSession = await stripe.checkout.sessions.create({
             payment_method_types: ['card', 'blik', 'revolut_pay'],
-            line_items: [{ price: GAME_PRICES[event.type], quantity: 1 }],
+            line_items: lineItems, // <--- ТЕПЕРЬ ПОДСТАВЛЯЕТСЯ ПРАВИЛЬНЫЙ ФОРМАТ ЗАВИСИМО ОТ ИГРЫ
             metadata: sessionMetadata,
-            discounts: discounts,
+            discounts: discounts.length > 0 ? discounts : undefined,
             mode: 'payment',
             locale: 'ru',
             success_url: `https://t.me/${ctx.botInfo.username}`,
             cancel_url: `https://t.me/${ctx.botInfo.username}`,
         });
 
-        // ОСТАВЛЯЕМ ТОЛЬКО ЭТОТ ОТВЕТ (убрали лишний дубль выше)
-        // ОСТАВЛЯЕМ ТОЛЬКО ЭТОТ ОТВЕТ (убрали лишний дубль выше)
-        const priceText = `💳 <b>К оплате: ${finalPrice} PLN</b>`; // <--- ДОБАВЛЯЕМ ЭТУ СТРОКУ
+        const priceText = `💳 <b>К оплате: ${finalPrice} PLN</b>${priceNotice}`; 
 
-        await ctx.replyWithHTML( // <--- МЕНЯЕМ reply НА replyWithHTML
+        await ctx.replyWithHTML( 
             `${priceText}\n\nНажимай кнопку ниже, чтобы завершить покупку:`,
             Markup.inlineKeyboard([
                 [Markup.button.url('💳 Оплатить сейчас', stripeSession.url!)],
@@ -2624,7 +2639,7 @@ if (activeVoucher?.status === 'approved_10') {
 
     } catch (e) { 
         console.error(e); 
-        ctx.reply('Ошибка Stripe. Проверь валюту в Dashboard!'); 
+        ctx.reply('Ошибка Stripe. Проверь настройки платежей!'); 
     }
     
     PENDING_PAYMENTS.set(`${user.id}`, { time: DateTime.now(), notified: false });
