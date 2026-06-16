@@ -44,8 +44,9 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2023-10-
 const GAME_PRICES: Record<string, string> = {
   'talk_toast': 'price_1T427MHhXyjuCWwf7CK0DvCA', 
   'stock_know': 'price_1SUTkoHhXyjuCWwfxD89YIpP',
-  'speed_dating_25_35': 'price_1SUTlVHhXyjuCWwfU1IzNMlf', // ID товара на 50 PLN
+  'speed_dating_25_35': 'price_1SUTlVHhXyjuCWwfU1IzNMlf', // Стандартные 50 PLN
   'speed_dating_35_45': 'price_1SUTlVHhXyjuCWwfU1IzNMlf',
+  'speed_dating_surge': 'price_1TitbQHhXyjuCWwf5VCQOymy', // <--- НОВЫЙ ЦЕННИК НА 60 PLN
   'tiffany': 'price_1TWzzTHhXyjuCWwfLgliEFEP',
   'lockload': 'price_1TX08mHhXyjuCWwfvuk0S3j2',
   'talk_toast_review': 'price_1SiDMGHhXyjuCWwfzysRSphU',
@@ -2237,12 +2238,10 @@ async function bookGame(ctx: any, gameType: string) {
       );
       return ctx.scene.enter('REGISTER_SCENE');
     }
-
-    // Проверка, одобрена ли анкета
    
     await ctx.deleteMessage().catch(() => {});
   
-const events = await db.query.events.findMany({
+    const events = await db.query.events.findMany({
       where: and(
         eq(schema.events.isActive, true),
         gameType === 'speed_dating' 
@@ -2254,77 +2253,88 @@ const events = await db.query.events.findMany({
       )
     });
 
-  if (events.length === 0) return ctx.reply(`Расписание формируется! ✨`);
+    if (events.length === 0) return ctx.reply(`Расписание формируется! ✨`);
 
-  // --- ЛОГИКА ДЛЯ LOCK & LOAD И TIFFANY ---
-  if (gameType === 'lockload' || gameType === 'tiffany') {
-    const btns = events.map(e => [Markup.button.callback(`📅 ${e.dateString}`, `pay_event_${e.id}`)]);
-    return ctx.replyWithHTML('🎯 <b>Выберите удобную дату:</b>', 
-      Markup.inlineKeyboard([...btns, [Markup.button.callback('🔙 Назад', 'back_to_games')]])
+    // 🔥 ДОБАВЛЯЕМ УМНУЮ КНОПКУ НАЗАД 🔥
+    // Бот сам понимает, куда вернуть пользователя
+    let backBtn = 'back_to_games'; 
+    if (gameType === 'talk_toast') backBtn = 'game_talk';
+    else if (gameType === 'stock_know') backBtn = 'game_stock';
+    else if (gameType === 'speed_dating') backBtn = 'game_dating';
+    else if (gameType === 'talk_thematic') backBtn = 'game_thematic';
+    else if (gameType === 'tiffany') backBtn = 'game_tiffany';
+    else if (gameType === 'lockload') backBtn = 'game_lockload';
+
+    // --- ЛОГИКА ДЛЯ LOCK & LOAD И TIFFANY ---
+    if (gameType === 'lockload' || gameType === 'tiffany') {
+      const btns = events.map(e => [Markup.button.callback(`📅 ${e.dateString}`, `pay_event_${e.id}`)]);
+      return ctx.replyWithHTML('🎯 <b>Выберите удобную дату:</b>', 
+        Markup.inlineKeyboard([...btns, [Markup.button.callback('🔙 Назад', backBtn)]])
+      );
+    }
+
+    // --- ЛОГИКА ДЛЯ ОБЫЧНОГО TNT (Выбор кухни) ---
+    if (gameType === 'talk_toast') {
+      const uniqueTitles = new Set<string>(); 
+      events.forEach(e => uniqueTitles.add(parseEventDesc(e.description).title));
+      const kitchenBtns = Array.from(uniqueTitles).map(t => [Markup.button.callback(t, `cv_${TYPE_MAP[gameType]}_${encodeCat(t)}`)]);
+      return ctx.replyWithHTML('<b>Выбери направление кухни:</b>', 
+        Markup.inlineKeyboard([...kitchenBtns, [Markup.button.callback('🔙 Назад', backBtn)]])
+      );
+    }
+
+    // --- ЛОГИКА ДЛЯ СВИДАНИЙ И STOCK & KNOW ---
+    const finalButtons = events.map(e => {
+      let ageLabel = "";
+      if (e.type === 'speed_dating_25_35') ageLabel = " (25-35 лет)";
+      else if (e.type === 'speed_dating_35_45') ageLabel = " (35-45 лет)";
+
+      const isReview = e.type.includes('review');
+      const label = isReview ? `🎥 ${e.dateString}${ageLabel} (-50% ЗА ОБЗОР)` : `📅 ${e.dateString}${ageLabel}`;
+      return [Markup.button.callback(`${label} (${e.currentPlayers}/${e.maxPlayers})`, `pay_event_${e.id}`)];
+    });
+
+    const headerText = gameType === 'speed_dating' ? '🔥 <b>Выбери возрастную группу:</b>' : '<b>Выберите удобную дату:</b>';
+
+    return ctx.replyWithHTML(headerText, 
+      Markup.inlineKeyboard([...finalButtons, [Markup.button.callback('🔙 Назад', backBtn)]])
     );
-  }
-
-  // --- ЛОГИКА ДЛЯ ОБЫЧНОГО TNT (Выбор кухни) ---
-  if (gameType === 'talk_toast') {
-    const uniqueTitles = new Set<string>(); 
-    events.forEach(e => uniqueTitles.add(parseEventDesc(e.description).title));
-    const kitchenBtns = Array.from(uniqueTitles).map(t => [Markup.button.callback(t, `cv_${TYPE_MAP[gameType]}_${encodeCat(t)}`)]);
-    return ctx.replyWithHTML('<b>Выбери направление кухни:</b>', 
-      Markup.inlineKeyboard([...kitchenBtns, [Markup.button.callback('🔙 Назад', 'back_to_games')]])
-    );
-  }
-
-  // --- ЛОГИКА ДЛЯ СВИДАНИЙ И STOCK & KNOW ---
-  const finalButtons = events.map(e => {
-    let ageLabel = "";
-    if (e.type === 'speed_dating_25_35') ageLabel = " (25-35 лет)";
-    else if (e.type === 'speed_dating_35_45') ageLabel = " (35-45 лет)";
-
-    const isReview = e.type.includes('review');
-    const label = isReview ? `🎥 ${e.dateString}${ageLabel} (-50% ЗА ОБЗОР)` : `📅 ${e.dateString}${ageLabel}`;
-    return [Markup.button.callback(`${label} (${e.currentPlayers}/${e.maxPlayers})`, `pay_event_${e.id}`)];
-  });
-
-  const headerText = gameType === 'speed_dating' ? '🔥 <b>Выбери возрастную группу:</b>' : '<b>Выберите удобную дату:</b>';
-
- return ctx.replyWithHTML(headerText, 
-    Markup.inlineKeyboard([...finalButtons, [Markup.button.callback('🔙 Назад', 'back_to_games')]])
-  );
   
-} catch (e) {
+  } catch (e) {
     console.error("Ошибка в bookGame:", e);
     ctx.reply("Произошла ошибка. Попробуй ещё раз.");
   }
 }
 
-
 bot.action(/cv_(.+)_(.+)/, async (ctx) => {
- const type = REV_TYPE_MAP[ctx.match[1]]; 
+  const type = REV_TYPE_MAP[ctx.match[1]]; 
   const selectedTitle = decodeCat(ctx.match[2]);
-  // Теперь ищет и обычные, и ревью-игры
+  
   const events = await db.query.events.findMany({ 
     where: and(
       or(eq(schema.events.type, type), eq(schema.events.type, `${type}_review`)),
       eq(schema.events.isActive, true)
     ) 
   });
+  
   const filtered = events.filter(e => parseEventDesc(e.description).title === selectedTitle);
   const btns = filtered.map(e => {
     const isReview = e.type.includes('review');
     const label = isReview ? `🎥 ${e.dateString} (-50%)` : `📅 ${e.dateString}`;
     return [Markup.button.callback(`${label} (${e.currentPlayers}/${e.maxPlayers})`, `pay_event_${e.id}`)];
   });
-  return ctx.editMessageText(
-    `🍽 <b>Направление: ${selectedTitle}</b>\n\n` +
-    `Отличный выбор! Ниже список доступных дат для этой кухни. Выбирай удобное время и переходи к бронированию. 👇\n\n` +
-    `⚠️ <i>Напоминаем: в стоимость билета входит участие и организация. Заказы по меню ресторана оплачиваются отдельно на месте.</i>`, 
-    { 
-      parse_mode: 'HTML', 
-      ...Markup.inlineKeyboard([...btns, [Markup.button.callback('🔙 Назад к выбору', 'back_to_games')]]) 
-    }
-  );
-}); // <--- Теперь функция закрыта правильно здесь// <-- Теперь функция закрыта правильно
-
+  
+  return ctx.editMessageText(
+    `🍽 <b>Направление: ${selectedTitle}</b>\n\n` +
+    `Отличный выбор! Ниже список доступных дат для этой кухни. Выбирай удобное время и переходи к бронированию. 👇\n\n` +
+    `⚠️ <i>Напоминаем: в стоимость билета входит участие и организация. Заказы по меню ресторана оплачиваются отдельно на месте.</i>`, 
+    { 
+      parse_mode: 'HTML', 
+      // 🔥 ИСПРАВЛЕНО: Теперь кнопка Назад возвращает к списку кухонь (book_talk), а не в главное меню
+      ...Markup.inlineKeyboard([...btns, [Markup.button.callback('🔙 Назад к списку тем', 'book_talk')]]) 
+    }
+  );
+});
 
 bot.action('my_games', async (ctx) => {
     const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
@@ -2508,13 +2518,15 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
         await bot.telegram.sendMessage(ADMIN_ID, `⚠️ Юзер ${user.name} (@${ctx.from!.username}) нажал «Оплатить» на игру №${eid}.`).catch(()=>{});
 
        // 3. ЛОГИКА ЦЕНЫ (Тематический, Промо, Обычный)
+// 3. ЛОГИКА ЦЕНЫ (Статичные ID из Stripe)
         let basePrice = 50; 
         let priceNotice = '';
-        let lineItems: any[] = [];
+        let stripePriceId = GAME_PRICES[event.type]; // По умолчанию берем ID игры
 
-        // 🔥 ДИНАМИКА ТОЛЬКО ДЛЯ СВИДАНИЙ 🔥
-        if (event.type.startsWith('speed_dating')) {
-            basePrice = 50; 
+        if (event.type.startsWith('talk_')) {
+            basePrice = 35;
+        } else if (event.type.startsWith('speed_dating')) {
+            basePrice = 50;
             
             const userG = (user.gender || '').toLowerCase();
             const threshold = Math.max(1, Math.floor((event.maxPlayers || 12) * 0.2)); 
@@ -2522,31 +2534,12 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
             // Если покупает парень, и перевес парней уже >= порога
             if (userG.includes('муж') && (mC - wC) >= threshold) {
                 basePrice += 10; 
+                stripePriceId = GAME_PRICES['speed_dating_surge']; // <--- БЕРЕМ ID НА 60 PLN!
                 priceNotice = `\n\n📈 <i>Применен динамический тариф (+10 PLN), так как мужских мест на эту игру осталось очень мало.</i>`;
             }
-
-            // Для Свиданий генерируем цену на лету (так как она плавающая)
-            lineItems = [{
-                price_data: {
-                    currency: 'pln',
-                    product_data: { name: getGameName(event.type) },
-                    unit_amount: basePrice * 100, // В грошах
-                },
-                quantity: 1,
-            }];
-        } else {
-            // Для ВСЕХ ОСТАЛЬНЫХ ИГР используем старую логику и жесткие ID из Stripe
-            if (event.type.startsWith('talk_')) {
-                basePrice = 35;
-            } else {
-                basePrice = 50;
-            }
-            
-            // Берем готовый price_id из словаря GAME_PRICES
-            lineItems = [{ price: GAME_PRICES[event.type], quantity: 1 }];
         }
        // 4. БЕЗОПАСНЫЙ РАСЧЕТ ЛОЯЛЬНОСТИ (5-я игра)
-        const gamesAlreadyPlayed = user.gamesPlayed || 0;
+       const gamesAlreadyPlayed = user.gamesPlayed || 0;
 
         const upcomingBookings = await db.select()
             .from(schema.bookings)
@@ -2599,7 +2592,7 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
             return ctx.replyWithHTML(`🎫 <b>Оплачено FREE ваучером! Ты в игре!</b>\n\nИнструкция придет за 3 часа до начала. 🥂`);
         }
 
-       // Логика скидки -10 PLN
+        // Логика скидки -10 PLN
         let finalPrice = basePrice;
         let discounts = [];
         const sessionMetadata: any = { telegramId: ctx.from!.id.toString(), eventId: eid.toString() };
@@ -2614,10 +2607,10 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
             }
         }
 
-        // 6. ОПЛАТА STRIPE
+        // 6. ОПЛАТА STRIPE (СТАРЫЙ НАДЕЖНЫЙ МЕТОД)
         const stripeSession = await stripe.checkout.sessions.create({
             payment_method_types: ['card', 'blik', 'revolut_pay'],
-            line_items: lineItems, // <--- ТЕПЕРЬ ПОДСТАВЛЯЕТСЯ ПРАВИЛЬНЫЙ ФОРМАТ ЗАВИСИМО ОТ ИГРЫ
+            line_items: [{ price: stripePriceId, quantity: 1 }], // <--- ВОТ ТУТ РАБОТАЕТ ВЫБРАННЫЙ ЦЕННИК
             metadata: sessionMetadata,
             discounts: discounts.length > 0 ? discounts : undefined,
             mode: 'payment',
@@ -2639,7 +2632,7 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
 
     } catch (e) { 
         console.error(e); 
-        ctx.reply('Ошибка Stripe. Проверь настройки платежей!'); 
+        ctx.reply('❌ Ошибка связи со Stripe. Напиши в поддержку!'); 
     }
     
     PENDING_PAYMENTS.set(`${user.id}`, { time: DateTime.now(), notified: false });
