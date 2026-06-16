@@ -1722,7 +1722,11 @@ bot.action('view_men_world', async (ctx) => {
 bot.action('book_lockload', async (ctx) => bookGame(ctx, 'lockload'));
 
 // --- 3. КНОПКА НАЗАД (С пересчетом кнопок) ---
+// --- 3. КНОПКА НАЗАД (С пересчетом кнопок) ---
 bot.action('back_to_games', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {}); // Подтверждаем нажатие
+  await ctx.deleteMessage().catch(() => {}); // Удаляем текущее сообщение (фото или текст)
+
   const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
   
   const buttons: any[][] = [
@@ -1742,7 +1746,7 @@ bot.action('back_to_games', async (ctx) => {
     buttons.push([Markup.button.callback('🥃 Lock & Load', 'view_men_world')]);
   }
 
-  return ctx.editMessageText('Выберите игру:', Markup.inlineKeyboard(buttons)).catch(() => {});
+  return ctx.reply('Выберите игру:', Markup.inlineKeyboard(buttons));
 });
 
 // --- BREAKFAST AT TIFFANY'S ---
