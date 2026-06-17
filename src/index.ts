@@ -747,14 +747,67 @@ async function markAsProcessed(key: string, expiresInHours = 24): Promise<void> 
     .onConflictDoNothing();
 }
 
-const STOCK_STATE = {
-  isActive: false,
-  currentEventId: 0, // <--- Сюда бот запомнит ID игры после твоей команды
-  currentQuestionIndex: -1,
-  currentPhase: 0,
-  playerAnswers: new Map<number, number>(), // userId -> ответ
-  participants: new Map<number, { id: number, num: number, name: string }>() // userId -> инфо
-};
+// ====================== ПЕРЕНОС СОСТОЯНИЙ ИГР В БД ======================
+
+// --- СТОК И ЗНАНИЯ (STOCK) ---
+async function getStockState(eventId: number) {
+  const record = await db.query.autoStates.findFirst({
+    where: eq(schema.autoStates.key, `stock_state_${eventId}`)
+  });
+  if (!record?.value) {
+    return { currentQuestionIndex: -1, playerAnswers: {} as Record<string, number>, participants: {} as Record<string, any> };
+  }
+  return JSON.parse(record.value);
+}
+
+async function saveStockState(eventId: number, state: any) {
+  const expiresAt = DateTime.now().plus({ days: 2 }).toJSDate();
+  await db.insert(schema.autoStates)
+    .values({ key: `stock_state_${eventId}`, value: JSON.stringify(state), expiresAt })
+    .onConflictDoUpdate({ target: schema.autoStates.key, set: { value: JSON.stringify(state) } });
+}
+
+async function getCurrentStockEventId(): Promise<number> {
+  const record = await db.query.autoStates.findFirst({ where: eq(schema.autoStates.key, 'current_stock_event_id') });
+  return record?.value ? parseInt(record.value) : 0;
+}
+
+async function setCurrentStockEventId(eventId: number) {
+  const expiresAt = DateTime.now().plus({ days: 2 }).toJSDate();
+  await db.insert(schema.autoStates)
+    .values({ key: 'current_stock_event_id', value: eventId.toString(), expiresAt })
+    .onConflictDoUpdate({ target: schema.autoStates.key, set: { value: eventId.toString() } });
+}
+
+// --- БЫСТРЫЕ СВИДАНИЯ (SPEED DATING) ---
+async function getSpeedDatingState(eventId: number) {
+  const record = await db.query.autoStates.findFirst({
+    where: eq(schema.autoStates.key, `sd_state_${eventId}`)
+  });
+  if (!record?.value) {
+    return { eventId: eventId, currentRound: 0, participants: {} as Record<string, any> };
+  }
+  return JSON.parse(record.value);
+}
+
+async function saveSpeedDatingState(eventId: number, state: any) {
+  const expiresAt = DateTime.now().plus({ days: 2 }).toJSDate();
+  await db.insert(schema.autoStates)
+    .values({ key: `sd_state_${eventId}`, value: JSON.stringify(state), expiresAt })
+    .onConflictDoUpdate({ target: schema.autoStates.key, set: { value: JSON.stringify(state) } });
+}
+
+async function getCurrentSpeedDatingEventId(): Promise<number> {
+  const record = await db.query.autoStates.findFirst({ where: eq(schema.autoStates.key, 'current_sd_event_id') });
+  return record?.value ? parseInt(record.value) : 0;
+}
+
+async function setCurrentSpeedDatingEventId(eventId: number) {
+  const expiresAt = DateTime.now().plus({ days: 2 }).toJSDate();
+  await db.insert(schema.autoStates)
+    .values({ key: 'current_sd_event_id', value: eventId.toString(), expiresAt })
+    .onConflictDoUpdate({ target: schema.autoStates.key, set: { value: eventId.toString() } });
+}
 
 const TALK_STATE = { currentFact: '', currentUser: '', isActive: false };
 
@@ -1162,64 +1215,50 @@ if (minutesSinceStart >= -210 && minutesSinceStart <= 0 && !(await isProcessed(`
 
         // Раздача номеров
        // --- УМНАЯ РАЗДАЧА НОМЕРОВ ПРИ РАСКРЫТИИ (ЗА 3 ЧАСА) ---
-        const bks = await db.query.bookings.findMany({ 
-            where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true)) 
-        });
-
-        if (event.type.startsWith('speed_dating')) {
+      if (event.type.startsWith('speed_dating')) {
             const men: any[] = [], women: any[] = [];
-            
-            // 1. Сортируем оплативших по полу
             for (const b of bks) {
                 const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
                 if (u?.gender === 'Мужчина') men.push(u);
                 else if (u?.gender === 'Женщина') women.push(u);
             }
 
-            // 2. Раздаем пары (по меньшему количеству, чтобы никто не сидел один)
             const limit = Math.min(men.length, women.length);
+            const sdState = await getSpeedDatingState(event.id);
+            await setCurrentSpeedDatingEventId(event.id);
+
             for (let i = 0; i < limit; i++) {
-                const wNum = (i * 2) + 1; // 1, 3, 5...
-                const mNum = (i * 2) + 2; // 2, 4, 6...
+                const wNum = (i * 2) + 1;
+                const mNum = (i * 2) + 2;
 
-                // Записываем в память свиданий (используем telegramId как ключ)
-                SD.FAST_DATES_STATE.participants.set(women[i].telegramId, { id: women[i].telegramId, num: wNum, gender: 'Женщина', name: women[i].name });
-                SD.FAST_DATES_STATE.participants.set(men[i].telegramId, { id: men[i].telegramId, num: mNum, gender: 'Мужчина', name: men[i].name });
+                sdState.participants[women[i].telegramId.toString()] = { id: women[i].telegramId, num: wNum, gender: 'Женщина', name: women[i].name };
+                sdState.participants[men[i].telegramId.toString()] = { id: men[i].telegramId, num: mNum, gender: 'Мужчина', name: men[i].name };
 
-                // Шлем каждому его личный номер + КНОПКУ ТЕМЫ ЗАРАНЕЕ
-                // В районе строки 530 (раздача номеров свиданий)
-                // Шлем каждому его личный номер + ВКЛЮЧАЕМ КНОПКУ ТЕМЫ
-                const kb = getMainKeyboard(true); // Форсируем кнопку темы
-                bot.telegram.sendMessage(women[i].telegramId, `💘 <b>Твой номер на сегодня: ${wNum}</b> (Столик №${i + 1})\n\nЖдем тебя!`, { 
-                    parse_mode: 'HTML', 
-                    reply_markup: kb.reply_markup 
-                }).catch(()=>{});
-                
-                bot.telegram.sendMessage(men[i].telegramId, `💘 <b>Твой номер на сегодня: ${mNum}</b> (Столик №${i + 1})\n\nЖдем тебя!`, { 
-                    parse_mode: 'HTML', 
-                    reply_markup: kb.reply_markup 
-                }).catch(()=>{});
+                const kb = getMainKeyboard(true);
+                bot.telegram.sendMessage(women[i].telegramId, `💘 <b>Твой номер на сегодня: ${wNum}</b> (Столик №${i + 1})\n\nЖдем тебя!`, { parse_mode: 'HTML', reply_markup: kb.reply_markup }).catch(()=>{});
+                bot.telegram.sendMessage(men[i].telegramId, `💘 <b>Твой номер на сегодня: ${mNum}</b> (Столик №${i + 1})\n\nЖдем тебя!`, { parse_mode: 'HTML', reply_markup: kb.reply_markup }).catch(()=>{});
             }
+            await saveSpeedDatingState(event.id, sdState);
 
-            // 3. Уведомляем админа, если кто-то остался без пары
             if (men.length !== women.length) {
                 const extra = Math.abs(men.length - women.length);
-                bot.telegram.sendMessage(ADMIN_ID, `⚠️ <b>Внимание!</b> На игре "${event.type}" дисбаланс: ${extra} чел. остались без пары и номера не получили.`);
+                bot.telegram.sendMessage(ADMIN_ID, `⚠️ <b>Внимание!</b> На игре "${event.type}" дисбаланс: ${extra} чел. остались без пары.`);
             }
 
         } else if (event.type === 'stock_know') {
-            // Для Stock & Know пол не важен, просто даем номера по порядку
+            const stockState = await getStockState(event.id);
+            await setCurrentStockEventId(event.id);
+
             for (let i = 0; i < bks.length; i++) {
                 const u = await db.query.users.findFirst({ where: eq(schema.users.id, bks[i].userId) });
                 if (u) {
                     const pNum = i + 1;
-                    STOCK_STATE.participants.set(u.telegramId, { id: u.id, num: pNum, name: u.name || 'Игрок' });
+                    stockState.participants[u.telegramId.toString()] = { id: u.id, num: pNum, name: u.name || 'Игрок' };
                     bot.telegram.sendMessage(u.telegramId, `🧠 Твой номер в Stock & Know: ${pNum}\n\nЗапомни его для ставок! 🎰`).catch(()=>{});
                 }
             }
+            await saveStockState(event.id, stockState);
         }
-      }
-
 
       // 3. СТАРТ ИГРЫ (ПРИВЕТСТВИЕ + КНОПКА)
 
@@ -2103,9 +2142,13 @@ bot.hears('🎲 Новая тема', async (ctx) => {
 let usedSet = await getUsedTopics(currentEvent.id);
 
   // --- ЛОГИКА ДЛЯ СВИДАНИЙ ---
+// --- ЛОГИКА ДЛЯ СВИДАНИЙ ---
   if (currentEvent.type.startsWith('speed_dating')) {
-    const ps = Array.from(SD.FAST_DATES_STATE.participants.values());
+    // 🔥 ТЕПЕРЬ БЕРЕМ ИЗ БАЗЫ ДАННЫХ
+    const sdState = await getSpeedDatingState(currentEvent.id);
+    const ps = Object.values(sdState.participants) as any[];
     const me = ps.find(p => p.id === ctx.from.id);
+    
     if (!me || ps.length === 0) return ctx.reply("❌ Ошибка: Участники не загружены.");
 
     const available = CONVERSATION_TOPICS.filter(t => !usedSet.has(t));
@@ -2113,8 +2156,7 @@ let usedSet = await getUsedTopics(currentEvent.id);
     const randomTopic = pool[Math.floor(Math.random() * pool.length)];
     usedSet.add(randomTopic); 
 
-
-    const round = SD.FAST_DATES_STATE.currentRound;
+    const round = sdState.currentRound;
     const women = ps.filter(p => p.gender.toLowerCase().includes('жен')).sort((a,b) => a.num - b.num);
     const men = ps.filter(p => p.gender.toLowerCase().includes('муж')).sort((a,b) => a.num - b.num);
     
@@ -3206,18 +3248,21 @@ bot.command('load_dating', (ctx) => SD.loadDatingCommand(ctx, bot));
 
 // Команда для проверки: кто прямо сейчас находится в "мозгах" бота
 // Команда для проверки: кто прямо сейчас находится в "мозгах" бота
+// Команда для проверки: кто прямо сейчас находится в "мозгах" базы
 bot.command('check_nums', async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
-  const ps = Array.from(SD.FAST_DATES_STATE.participants.values());
-  const eventId = SD.FAST_DATES_STATE.eventId;
-  const round = SD.FAST_DATES_STATE.currentRound;
+  const eventId = await getCurrentSpeedDatingEventId();
+  if (!eventId) return ctx.reply("❌ Активная игра не выбрана.");
+
+  const sdState = await getSpeedDatingState(eventId);
+  const ps = Object.values(sdState.participants) as any[];
+  const round = sdState.currentRound;
 
   if (ps.length === 0) {
-    return ctx.reply("❌ <b>В памяти бота пусто!</b>\nУчастники не загружены. Используй /load_dating [ID]", { parse_mode: 'HTML' });
+    return ctx.reply("❌ <b>В памяти базы пусто!</b>\nУчастники не загружены.", { parse_mode: 'HTML' });
   }
 
-  // 🔥 Исправлено: добавили обратные кавычки для строк
   let report = `📊 <b>ИНСПЕКЦИЯ ПАМЯТИ:</b>\n`;
   report += `ID Игры: <b>${eventId}</b>\n`;
   report += `Текущий Раунд: <b>${round}</b>\n`;
@@ -3848,23 +3893,15 @@ bot.command('assign_stock', async (ctx) => {
 
         if (bookings.length === 0) return ctx.reply('❌ На эту игру пока нет оплаченных записей.');
 
-        // Очищаем старое состояние и ЗАПОМИНАЕМ новый ID игры
-        STOCK_STATE.participants.clear();
-        STOCK_STATE.playerAnswers.clear();
-        STOCK_STATE.currentEventId = eventId; // <--- Фиксируем игру
-
+        const newState = { currentQuestionIndex: -1, playerAnswers: {} as Record<string, number>, participants: {} as Record<string, any> };
         let count = 0;
+
         for (let i = 0; i < bookings.length; i++) {
             const user = await db.query.users.findFirst({ where: eq(schema.users.id, bookings[i].userId) });
             if (user) {
                 const playerNum = i + 1;
-                STOCK_STATE.participants.set(user.telegramId, { 
-                    id: user.id, 
-                    num: playerNum, 
-                    name: user.name || user.firstName || 'Игрок' 
-                });
+                newState.participants[user.telegramId.toString()] = { id: user.id, num: playerNum, name: user.name || user.firstName || 'Игрок' };
 
-                // Личное сообщение игроку (работает и для обычных, и для Review)
                 await bot.telegram.sendMessage(user.telegramId, 
                     `🧠 <b>Твой игровой номер в Stock & Know: ${playerNum}</b>\n\n` +
                     `Запомни его! Теперь твои ставки будут привязаны к этому номеру. Удачи! 💰🎰`,
@@ -3874,59 +3911,31 @@ bot.command('assign_stock', async (ctx) => {
             }
         }
 
-        await ctx.reply(`✅ Номера разданы для игры №${eventId} (${event.type})!\nВсего участников: ${count}\n\nТеперь вопросы в пульте будут улетать именно им.`, { parse_mode: 'HTML' });
+        await saveStockState(eventId, newState);
+        await setCurrentStockEventId(eventId);
+
+        await ctx.reply(`✅ Номера разданы для игры №${eventId} (${event.type})!\nВсего участников: ${count}`);
     } catch (e) {
         console.error(e);
         ctx.reply('❌ Ошибка при раздаче номеров.');
     }
 });
+
 bot.command('players', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
-    if (STOCK_STATE.participants.size === 0) return ctx.reply('Список игроков пуст. Сначала используй /assign_stock [ID]');
+    const currentEventId = await getCurrentStockEventId();
+    const stockState = await getStockState(currentEventId);
+    const participantsArray = Object.values(stockState.participants);
+
+    if (participantsArray.length === 0) return ctx.reply('Список игроков пуст. Сначала используй /assign_stock [ID]');
 
     let msg = `📋 <b>Текущие игроки Stock & Know:</b>\n\n`;
-    const sorted = Array.from(STOCK_STATE.participants.values()).sort((a, b) => a.num - b.num);
+    const sorted = (participantsArray as any[]).sort((a, b) => a.num - b.num);
     
     for (const p of sorted) {
         msg += `🔹 №${p.num} — ${p.name} (ID: <code>${p.id}</code>)\n`;
     }
-    
     await ctx.replyWithHTML(msg);
-});
-
-bot.action(/sk_win_(\d+)_(\d+)/, async (ctx) => {
-  const pNum = parseInt(ctx.match[1]);
-  const eventId = parseInt(ctx.match[2]);
-  
-  const participant = Array.from(STOCK_STATE.participants.values()).find(p => p.num === pNum);
-
-  if (participant) {
-    // Находим запись игрока за ЭТОТ вопрос в ЭТОЙ игре
-    const scoreEntry = await db.query.stockScores.findFirst({
-        where: and(
-            eq(schema.stockScores.eventId, eventId),
-            eq(schema.stockScores.userId, participant.id),
-            eq(schema.stockScores.questionIndex, STOCK_STATE.currentQuestionIndex)
-        )
-    });
-
-    if (scoreEntry) {
-        // Прибавляем 10 баллов к тем, что уже есть за точность
-        await db.update(schema.stockScores)
-            .set({ 
-                points: scoreEntry.points + 10,
-                isWinner: true 
-            })
-            .where(eq(schema.stockScores.id, scoreEntry.id));
-    }
-  }
-
-  // Объявляем победителя всем
-  const winAnnounce = `🎊 <b>РАУНД ЗАВЕРШЕН!</b> 🎊\n\n🏆 Победитель раунда — <b>Игрок №${pNum}</b>! Поздравляем! ✨📈`;
-  await broadcastToEvent(eventId, winAnnounce);
-  STOCK_STATE.playerAnswers.clear();
-  await ctx.answerCbQuery(`Баллы начислены игроку №${pNum}`);
-  await ctx.editMessageText(`✅ Победитель раунда выбран: <b>Игрок №${pNum}</b>`, { parse_mode: 'HTML' });
 });
 
 // --- ЛОГИКА СТАТИСТИКИ И МЭТЧЕЙ ---
@@ -3934,14 +3943,17 @@ bot.action(/sk_win_(\d+)_(\d+)/, async (ctx) => {
 // --- ИСПРАВЛЕННОЕ УПРАВЛЕНИЕ СВИДАНИЯМИ (в index.ts) ---
 
 bot.action('fd_start_game', async (ctx) => {
-    const ps = Array.from(SD.FAST_DATES_STATE.participants.values());
-    // Умная фильтрация: даже если в базе ошибка, мы поймем кто есть кто
-    const women = ps.filter(p => p.gender.toLowerCase().includes('жен')).sort((a,b) => a.num - b.num);
-    const men = ps.filter(p => p.gender.toLowerCase().includes('муж')).sort((a,b) => a.num - b.num);
+    const sdEventId = await getCurrentSpeedDatingEventId();
+    const sdState = await getSpeedDatingState(sdEventId);
+    const ps = Object.values(sdState.participants);
+    
+    const women = ps.filter((p: any) => p.gender.toLowerCase().includes('жен')).sort((a: any, b: any) => a.num - b.num);
+    const men = ps.filter((p: any) => p.gender.toLowerCase().includes('муж')).sort((a: any, b: any) => a.num - b.num);
 
     if (women.length === 0 || men.length === 0) return ctx.reply("❌ Ошибка: участники не загружены!");
 
-    SD.FAST_DATES_STATE.currentRound = 1;
+    sdState.currentRound = 1;
+    await saveSpeedDatingState(sdEventId, sdState);
     const topic = CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)];
 
     for (let i = 0; i < women.length; i++) {
@@ -3949,38 +3961,30 @@ bot.action('fd_start_game', async (ctx) => {
         const woman = women[i];
         const man = men[i];
 
-        // Сообщение ЖЕНЩИНЕ (Нечетные: 1, 3, 5...)
-        const msgW = `🚀 <b>РАУНД №1</b>\n\n` +
-                    `Займите место за <b>столиком №${tableNum}</b>.\n` +
-                    `К вам подсаживается: <b>Участник №${man.num}</b>\n\n` +
-                    `<b>Тема:</b> ${topic}\n` +
-                    `<i>Начинает участница №${woman.num}!</i>`;
-
-        // Сообщение МУЖЧИНЕ (Четные: 2, 4, 6...)
-        const msgM = `🚀 <b>РАУНД №1</b>\n\n` +
-                    `Пожалуйста, пройдите за <b>столик №${tableNum}</b>.\n` +
-                    `Вас ждёт: <b>Участница №${woman.num}</b>\n\n` +
-                    `<b>Тема:</b> ${topic}\n` +
-                    `<i>Начинает участница №${woman.num}!</i>`;
+        const msgW = `🚀 <b>РАУНД №1</b>\n\nЗаймите место за <b>столиком №${tableNum}</b>.\nК вам подсаживается: <b>Участник №${man.num}</b>\n\n<b>Тема:</b> ${topic}`;
+        const msgM = `🚀 <b>РАУНД №1</b>\n\nПожалуйста, пройдите за <b>столик №${tableNum}</b>.\nВас ждёт: <b>Участница №${woman.num}</b>\n\n<b>Тема:</b> ${topic}`;
 
         await bot.telegram.sendMessage(woman.id, msgW, { parse_mode: 'HTML', ...getMainKeyboard(true) }).catch(()=>{});
         await bot.telegram.sendMessage(man.id, msgM, { parse_mode: 'HTML', ...getMainKeyboard(true) }).catch(()=>{});
     }
-    await ctx.editMessageText("📢 Раунд №1 запущен! Кнопки тем отправлены.");
+    await ctx.editMessageText("📢 Раунд №1 запущен!");
 });
 
 bot.action('fd_next_round', async (ctx) => {
-    const ps = Array.from(SD.FAST_DATES_STATE.participants.values());
-    const women = ps.filter(p => p.gender.toLowerCase().includes('жен')).sort((a,b) => a.num - b.num);
-    const men = ps.filter(p => p.gender.toLowerCase().includes('муж')).sort((a,b) => a.num - b.num);
+    const sdEventId = await getCurrentSpeedDatingEventId();
+    const sdState = await getSpeedDatingState(sdEventId);
+    const ps = Object.values(sdState.participants);
+    
+    const women = ps.filter((p: any) => p.gender.toLowerCase().includes('жен')).sort((a: any, b: any) => a.num - b.num);
+    const men = ps.filter((p: any) => p.gender.toLowerCase().includes('муж')).sort((a: any, b: any) => a.num - b.num);
 
-    SD.FAST_DATES_STATE.currentRound++;
-    const round = SD.FAST_DATES_STATE.currentRound;
+    sdState.currentRound++;
+    const round = sdState.currentRound;
 
     if (round > women.length) {
         return ctx.editMessageText("🏁 <b>Все участники познакомились!</b>", { parse_mode: 'HTML' });
     }
-
+    await saveSpeedDatingState(sdEventId, sdState);
     const topic = CONVERSATION_TOPICS[Math.floor(Math.random() * CONVERSATION_TOPICS.length)];
 
     for (let i = 0; i < women.length; i++) {
@@ -3988,24 +3992,20 @@ bot.action('fd_next_round', async (ctx) => {
         const woman = women[i];
         const man = men[(i + round - 1) % men.length];
 
-        // ТЕКСТ ДЛЯ ЖЕНЩИНЫ (Она остается)
-        const msgW = `🔄 <b>РАУНД №${round}</b>\n\n` +
-                    `Оставайтесь за <b>столиком №${tableNum}</b>.\n` +
-                    `К вам переходит: <b>Участник №${man.num}</b>\n\n` +
-                    `<b>Тема:</b> ${topic}\n` +
-                    `<i>Начинает участница №${woman.num}!</i>`;
-
-        // ТЕКСТ ДЛЯ МУЖЧИНЫ (Он переходит)
-        const msgM = `🔄 <b>РАУНД №${round}</b>\n\n` +
-                    `Переходите к <b>столику №${tableNum}</b>.\n` +
-                    `Там вас ждёт: <b>Участница №${woman.num}</b>\n\n` +
-                    `<b>Тема:</b> ${topic}\n` +
-                    `<i>Начинает участница №${woman.num}!</i>`;
+        const msgW = `🔄 <b>РАУНД №${round}</b>\n\nОставайтесь за <b>столиком №${tableNum}</b>.\nК вам переходит: <b>Участник №${man.num}</b>\n\n<b>Тема:</b> ${topic}`;
+        const msgM = `🔄 <b>РАУНД №${round}</b>\n\nПереходите к <b>столику №${tableNum}</b>.\nТам вас ждёт: <b>Участница №${woman.num}</b>\n\n<b>Тема:</b> ${topic}`;
 
         await bot.telegram.sendMessage(woman.id, msgW, { parse_mode: 'HTML', ...getMainKeyboard(true) }).catch(()=>{});
         await bot.telegram.sendMessage(man.id, msgM, { parse_mode: 'HTML', ...getMainKeyboard(true) }).catch(()=>{});
     }
     await ctx.reply(`📢 Запущен раунд №${round}!`);
+});
+
+bot.action('fd_input_start', async (ctx) => { 
+  const sdEventId = await getCurrentSpeedDatingEventId();
+  const sdState = await getSpeedDatingState(sdEventId);
+  const btns = Object.values(sdState.participants).sort((a: any, b: any) => a.num - b.num).map((p: any) => [Markup.button.callback(`№${p.num} (${p.gender[0]})`, `fd_edit_${p.id}`)]); 
+  ctx.editMessageText('Чью анкету вводим?', Markup.inlineKeyboard([...btns, [Markup.button.callback('🔙', 'admin_fd_panel')]])); 
 });
 
 bot.action('admin_stats', async (ctx) => {
@@ -4032,26 +4032,25 @@ bot.action('fd_calc_matches', (ctx) => SD.calculateMatches(ctx, bot));
 
 // --- ВОЗВРАТ ФУНКЦИЙ ПУЛЬТА ---
 // --- ПУЛЬТЫ (FD И STOCK) ---
-bot.action('fd_input_start', ctx => { 
-  const btns = Array.from(SD.FAST_DATES_STATE.participants.values()).sort((a,b)=>a.num-b.num).map(p => [Markup.button.callback(`№${p.num} (${p.gender[0]})`, `fd_edit_${p.id}`)]); 
-  ctx.editMessageText('Чью анкету вводим?', Markup.inlineKeyboard([...btns, [Markup.button.callback('🔙', 'admin_fd_panel')]])); 
-});
 
-bot.action(/sk_pick_(\d+)/, (ctx) => {
-  STOCK_STATE.currentQuestionIndex = parseInt(ctx.match[1]); STOCK_STATE.playerAnswers.clear();
-  ctx.editMessageText(`Вопрос выбран.`, Markup.inlineKeyboard([[Markup.button.callback('🚀 ОТПРАВИТЬ', 'stock_send_phase_0')]]));
+
+bot.action(/sk_pick_(\d+)/, async (ctx) => {
+    const currentEventId = await getCurrentStockEventId();
+    const stockState = await getStockState(currentEventId);
+    stockState.currentQuestionIndex = parseInt(ctx.match[1]); 
+    stockState.playerAnswers = {};
+    await saveStockState(currentEventId, stockState);
+    ctx.editMessageText(`Вопрос выбран.`, Markup.inlineKeyboard([[Markup.button.callback('🚀 ОТПРАВИТЬ', 'stock_send_phase_0')]]));
 });
 
 bot.action(/stock_send_phase_(\d+)/, async (ctx) => {
   const phase = parseInt(ctx.match[1]);
-  const q = STOCK_QUESTIONS[STOCK_STATE.currentQuestionIndex];
-  const eventId = STOCK_STATE.currentEventId; 
+  const eventId = await getCurrentStockEventId(); 
+  if (!eventId) return ctx.reply('❌ Сначала выбери игру.');
 
-  if (!eventId) {
-    return ctx.reply('❌ Сначала выбери игру командой /assign_stock [ID]');
-  }
+  const stockState = await getStockState(eventId);
+  const q = STOCK_QUESTIONS[stockState.currentQuestionIndex];
 
-  // 1. Отправляем сообщение игрокам в зависимости от фазы
   let msg = "";
   if (phase === 0) msg = `❓ <b>ВОПРОС:</b>\n${q.question}`;
   else if (phase <= 3) msg = `💡 <b>ПОДСКАЗКА №${phase}:</b>\n${q.hints[phase-1]}`;
@@ -4059,57 +4058,59 @@ bot.action(/stock_send_phase_(\d+)/, async (ctx) => {
 
   await broadcastToEvent(eventId, msg);
 
-  // 2. Если это финал (фаза 4), считаем баллы и шлем отчет админу
   if (phase === 4) {
     const correctVal = parseInt(q.answer);
     let resultsMsg = `📊 <b>РЕЗУЛЬТАТЫ (Игра №${eventId}):</b>\nОтвет: <b>${q.answer}</b>\n\n`;
     const winnerBtns = [];
 
-    for (const [tgId, bet] of STOCK_STATE.playerAnswers.entries()) {
-      const p = STOCK_STATE.participants.get(tgId);
+    for (const [tgId, bet] of Object.entries(stockState.playerAnswers)) {
+      const p = stockState.participants[tgId];
       if (p) {
-        const diff = Math.abs(correctVal - bet);
+        const diff = Math.abs(correctVal - (bet as number));
         let accuracyPoints = 0;
-
-        // Начисляем баллы за точность
         if (diff === 0) accuracyPoints = 5;
         else if (diff <= 10) accuracyPoints = 4;
         else if (diff <= 20) accuracyPoints = 3;
-        else if (diff <= 30) accuracyPoints = 2;
-        else if (diff <= 40) accuracyPoints = 1;
 
         await db.insert(schema.stockScores).values({
-          eventId: eventId,
-          userId: p.id,
-          questionIndex: STOCK_STATE.currentQuestionIndex,
-          points: accuracyPoints,
-          isWinner: false
+          eventId: eventId, userId: p.id, questionIndex: stockState.currentQuestionIndex, points: accuracyPoints, isWinner: false
         });
-
         resultsMsg += `№${p.num} (${p.name}): <b>${bet}</b> (разница: ${diff})\n`;
         winnerBtns.push([Markup.button.callback(`🏆 Победа №${p.num}`, `sk_win_${p.num}_${eventId}`)]);
       }
     }
-    
-    await bot.telegram.sendMessage(ADMIN_ID, resultsMsg, { 
-      parse_mode: 'HTML', 
-      ...Markup.inlineKeyboard(winnerBtns) 
-    });
+    await bot.telegram.sendMessage(ADMIN_ID, resultsMsg, { parse_mode: 'HTML', ...Markup.inlineKeyboard(winnerBtns) });
   }
 
-  // 3. ОБНОВЛЯЕМ КНОПКИ В ПАНЕЛИ АДМИНА (тот самый код, который ты не знала куда вставить)
   const buttons = [];
   if (phase < 4) {
-    // Если еще не финал, показываем кнопку перехода к следующей подсказке или ответу
     buttons.push([Markup.button.callback(phase === 3 ? '✅ ПОКАЗАТЬ ОТВЕТ' : `💡 Подсказка ${phase+1}`, `stock_send_phase_${phase+1}`)]);
   } else {
-    // Если ответили на всё, кнопка возврата к списку вопросов
     buttons.push([Markup.button.callback('➡️ Следующий вопрос', 'admin_stock_list')]);
   }
-  
-  await ctx.editMessageText(`Фаза ${phase} отправлена игрокам игры №${eventId}.`, Markup.inlineKeyboard(buttons));
+  await ctx.editMessageText(`Фаза ${phase} отправлена.`, Markup.inlineKeyboard(buttons));
 });
 
+bot.action(/sk_win_(\d+)_(\d+)/, async (ctx) => {
+  const pNum = parseInt(ctx.match[1]);
+  const eventId = parseInt(ctx.match[2]);
+  const stockState = await getStockState(eventId);
+  const participant = Object.values(stockState.participants).find((p: any) => p.num === pNum) as any;
+
+  if (participant) {
+    const scoreEntry = await db.query.stockScores.findFirst({
+        where: and(eq(schema.stockScores.eventId, eventId), eq(schema.stockScores.userId, participant.id), eq(schema.stockScores.questionIndex, stockState.currentQuestionIndex))
+    });
+    if (scoreEntry) {
+        await db.update(schema.stockScores).set({ points: scoreEntry.points + 10, isWinner: true }).where(eq(schema.stockScores.id, scoreEntry.id));
+    }
+  }
+
+  await broadcastToEvent(eventId, `🎊 <b>РАУНД ЗАВЕРШЕН!</b> 🎊\n\n🏆 Победитель раунда — <b>Игрок №${pNum}</b>!`);
+  stockState.playerAnswers = {};
+  await saveStockState(eventId, stockState);
+  await ctx.editMessageText(`✅ Победитель раунда выбран: <b>Игрок №${pNum}</b>`, { parse_mode: 'HTML' });
+});
 // ==========================================
 // --- СИСТЕМА ОЦЕНКИ И ЖАЛОБ (POST-EVENT) ---
 // ==========================================
@@ -4343,16 +4344,22 @@ bot.on('message', async (ctx, next) => {
         }
 
         // Ставки Stock & Know
-        if (STOCK_STATE.currentQuestionIndex !== -1 && !isNaN(parseInt(text)) && !text.startsWith('/')) {
-            const player = STOCK_STATE.participants.get(userId);
-            if (player && !STOCK_STATE.playerAnswers.has(userId)) {
-                STOCK_STATE.playerAnswers.set(userId, parseInt(text));
-                await ctx.reply(`✅ Игрок №${player.num}, твоя ставка ${text} принята! 🎰`);
-                await bot.telegram.sendMessage(ADMIN_ID, `📈 Ставка от №${player.num} (${player.name}): <b>${text}</b>`).catch(()=>{});
-                return;
+        // Ставки Stock & Know
+        const currentStockId = await getCurrentStockEventId();
+        if (currentStockId > 0 && !text.startsWith('/')) {
+            const stockState = await getStockState(currentStockId);
+            if (stockState.currentQuestionIndex !== -1 && !isNaN(parseInt(text))) {
+                const player = stockState.participants[userId.toString()];
+                if (player && stockState.playerAnswers[userId.toString()] === undefined) {
+                    stockState.playerAnswers[userId.toString()] = parseInt(text);
+                    await saveStockState(currentStockId, stockState);
+                    
+                    await ctx.reply(`✅ Игрок №${player.num}, твоя ставка ${text} принята! 🎰`);
+                    await bot.telegram.sendMessage(ADMIN_ID, `📈 Ставка от №${player.num} (${player.name}): <b>${text}</b>`).catch(()=>{});
+                    return;
+                }
             }
         }
-    }
     return next();
 });
 
@@ -4904,6 +4911,12 @@ app.use(bot.webhookCallback('/telegraf-webhook'));
 
 const PORT = process.env.PORT || 3000;
 const WEBHOOK_URL = process.env.TELEGRAM_WEBHOOK_URL;
+
+// 🔥 ГЛОБАЛЬНЫЙ ЩИТ ОТ ПАДЕНИЙ СЕТИ 🔥
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('⚠️ Сбой сети (скорее всего Telegram API):', reason);
+});
+
 cleanupOldAutoStates().catch(console.error);
 
 app.listen(PORT, async () => {
