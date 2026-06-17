@@ -3580,35 +3580,46 @@ bot.command('status', async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
 
   try {
-    // 1. Берем все активные игры
     const activeEvents = await db.query.events.findMany({ where: eq(schema.events.isActive, true) });
+    const allUsers = await db.query.users.findMany();
+    
+    // Считаем метрики аудитории
+    const approvedUsers = allUsers.filter(u => u.isApproved).length;
+    const incompleteUsers = allUsers.filter(u => !u.profileCompleted).length;
+
+    let report = `📊 <b>СТАТУС КЛУБА (LIVE)</b>\n\n`;
+    report += `👥 <b>Аудитория:</b>\n`;
+    report += `Всего в боте: <b>${allUsers.length}</b> чел.\n`;
+    report += `В клубе (одобрены): <b>${approvedUsers}</b> чел.\n`;
+    report += `Брошенных анкет: <b>${incompleteUsers}</b> чел. <i>(авто-дожим включен)</i>\n\n`;
 
     if (activeEvents.length === 0) {
-      return ctx.reply('📭 Нет активных игр.');
-    }
+      report += `📭 Нет активных игр.\n`;
+    } else {
+      report += `📅 <b>АКТИВНЫЕ ИГРЫ:</b>\n`;
+      for (const ev of activeEvents) {
+        const bookings = await db.query.bookings.findMany({ 
+          where: and(eq(schema.bookings.eventId, ev.id), eq(schema.bookings.paid, true)) 
+        });
 
-    let report = `📊 <b>ОТЧЕТ ПО АКТИВНЫМ ИГРАМ:</b>\n\n`;
+        let m = 0, w = 0;
+        for (const b of bookings) {
+          const u = allUsers.find(user => user.id === b.userId);
+          if (u?.gender === 'Мужчина') m++;
+          else if (u?.gender === 'Женщина') w++;
+        }
 
-    for (const ev of activeEvents) {
-      // 2. Считаем РЕАЛЬНОЕ кол-во оплат прямо сейчас
-      const bookings = await db.query.bookings.findMany({ 
-        where: and(eq(schema.bookings.eventId, ev.id), eq(schema.bookings.paid, true)) 
-      });
-
-      // Считаем по полу для статистики
-      let m = 0, w = 0;
-      for (const b of bookings) {
-        const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
-        if (u?.gender === 'Мужчина') m++;
-        else if (u?.gender === 'Женщина') w++;
+        const freeSpots = ev.maxPlayers - bookings.length;
+        // Примерный подсчет кассы (35 для Talk, 50 для остального)
+        const estPrice = ev.type.startsWith('talk_') ? 35 : 50; 
+        const revenue = bookings.length * estPrice;
+        
+        report += `🔹 <b>${ev.dateString}</b> | ${getGameName(ev.type)}\n`;
+        report += `   Свободно: <b>${freeSpots}</b> / ${ev.maxPlayers}\n`;
+        report += `   Баланс: 🕺 ${m} | 💃 ${w}\n`;
+        report += `   Касса слота: <b>~${revenue} PLN</b>\n`;
+        report += `   ID игры: <code>${ev.id}</code>\n\n`;
       }
-
-      const freeSpots = ev.maxPlayers - bookings.length;
-      
-      report += `🔹 <b>${ev.dateString}</b> | ${getGameName(ev.type)}\n`;
-      report += `   Свободно: <b>${freeSpots}</b> / ${ev.maxPlayers}\n`;
-      report += `   Баланс: 🕺 ${m} | 💃 ${w}\n`;
-      report += `   ID игры: <code>${ev.id}</code>\n\n`;
     }
 
     await ctx.replyWithHTML(report);
@@ -3617,7 +3628,6 @@ bot.command('status', async (ctx) => {
     ctx.reply("❌ Ошибка при формировании отчета.");
   }
 });
-
 bot.command('broadcast_m35', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     
@@ -4827,12 +4837,44 @@ async function cleanupOldAutoStates() {
 }
 
 // Запускаем очистку раз в сутки (например в 4:00 ночи)
+// Запускаем фоновые задачи
 setInterval(async () => {
   const now = DateTime.now().setZone('Europe/Warsaw');
+  
+  // 1. Очистка старых стейтов в 4:00 утра
   if (now.hour === 4 && now.minute === 0) {
     await cleanupOldAutoStates();
   }
-}, 60000); // проверяем каждую минуту
+
+  // 2. Дожим брошенных анкет (ТОЛЬКО ПО СРЕДАМ В 18:00)
+  // now.weekday: 1 = Пн, 2 = Вт, 3 = Ср, 4 = Чт, 5 = Пт, 6 = Сб, 7 = Вс
+  if (now.weekday === 3 && now.hour === 18 && now.minute === 0) {
+      try {
+          const incompleteUsers = await db.query.users.findMany({
+              where: eq(schema.users.profileCompleted, false)
+          });
+
+          for (const u of incompleteUsers) {
+              // Шлем напоминание только один раз на юзера (ставим метку на год)
+              if (!(await isProcessed(`nudge_profile_${u.id}`))) {
+                  await markAsProcessed(`nudge_profile_${u.id}`, 24 * 365);
+                  
+                  await bot.telegram.sendMessage(u.telegramId, 
+                      `👋 Привет! Кажется, ты сделал(а) первый шаг, но так и не завершил(а) анкету.\n\n` +
+                      `Клуб Allgorithm — это закрытое комьюнити. Без заполненного профиля бот не сможет показать тебе расписание и пустить на встречи 🔒\n\n` +
+                      `Нажми кнопку ниже, регистрация займет ровно 1 минуту 👇`,
+                      {
+                          parse_mode: 'HTML',
+                          ...Markup.inlineKeyboard([[Markup.button.callback('📝 Завершить регистрацию', 'start_registration')]])
+                      }
+                  ).catch(() => {});
+              }
+          }
+      } catch (e) {
+          console.error("Ошибка авто-дожима:", e);
+      }
+  }
+}, 60000); // проверяем каждую минуту // проверяем каждую минуту
 
 // --- ЗАПУСК СЕРВЕРА --- 
 const app = express();
