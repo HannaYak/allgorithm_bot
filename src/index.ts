@@ -2485,11 +2485,18 @@ async function bookGame(ctx: any, gameType: string) {
     }
 
     // --- ЛОГИКА ДЛЯ ОБЫЧНОГО TNT (Выбор кухни) ---
+// --- ЛОГИКА ДЛЯ ОБЫЧНОГО TNT (Выбор кухни) ---
     if (gameType === 'talk_toast') {
       const uniqueTitles = new Set<string>(); 
       events.forEach(e => uniqueTitles.add(parseEventDesc(e.description).title));
       const kitchenBtns = Array.from(uniqueTitles).map(t => [Markup.button.callback(t, `cv_${TYPE_MAP[gameType]}_${encodeCat(t)}`)]);
-      return ctx.replyWithHTML('<b>Выбери направление кухни:</b>', 
+      
+      const tastyMenuText = `🥂 <b>Выбери атмосферу и кухню на вечер:</b>\n\n` +
+                            `Для каждой встречи мы подбираем особенные заведения. Что тебе ближе сегодня?\n\n` +
+                            `Горячие грузинские хинкали с бокалом саперави, домашняя итальянская паста с терпким кьянти или, может, изысканная паназия? 🍷🍲\n\n` +
+                            `<i>Выбирай направление ниже, чтобы посмотреть свободные даты:</i>`;
+
+      return ctx.replyWithHTML(tastyMenuText, 
         Markup.inlineKeyboard([...kitchenBtns, [Markup.button.callback('🔙 Назад', backBtn)]])
       );
     }
@@ -2534,14 +2541,29 @@ bot.action(/cv_(.+)_(.+)/, async (ctx) => {
     const label = isReview ? `🎥 ${e.dateString} (-50%)` : `📅 ${e.dateString}`;
     return [Markup.button.callback(`${label} (${e.currentPlayers}/${e.maxPlayers})`, `pay_event_${e.id}`)];
   });
+
+  // --- УМНОЕ ВКУСНОЕ ОПИСАНИЕ ПОД КУХНЮ ---
+  let tastyDesc = `Отличный выбор! Ниже список доступных дат для этой кухни. Выбирай удобное время и переходи к бронированию. 👇`;
+  
+  const titleLower = selectedTitle.toLowerCase();
+  if (titleLower.includes('груз')) {
+      tastyDesc = `🍷 <b>Грузинский вайб:</b> Горячие хачапури по-аджарски, сочные хинкали и бокал насыщенного саперави... Идеальное комбо для душевных разговоров!\n\nВыбирай дату ниже 👇`;
+  } else if (titleLower.includes('итал')) {
+      tastyDesc = `🍝 <b>Итальянская классика:</b> Неаполитанская пицца из дровяной печи, домашняя паста и ледяное просекко... Настоящая la dolce vita!\n\nВыбирай дату ниже 👇`;
+  } else if (titleLower.includes('ази') || titleLower.includes('япон') || titleLower.includes('кита')) {
+      tastyDesc = `🥢 <b>Азиатские мотивы:</b> Пряный том-ям, свежие роллы или авторские коктейли... Ярко, сочно и очень атмосферно!\n\nВыбирай дату ниже 👇`;
+  } else if (titleLower.includes('испан')) {
+      tastyDesc = `🥘 <b>Испанская страсть:</b> Разнообразные тапас, сочная паэлья и кувшин прохладной сангрии... Вечер обещает быть вкусным!\n\nВыбирай дату ниже 👇`;
+  } else if (titleLower.includes('франц')) {
+      tastyDesc = `🥐 <b>Французский шик:</b> Изысканные закуски, свежий багет и элегантное вино... Идеальная атмосфера для красивого вечера!\n\nВыбирай дату ниже 👇`;
+  }
   
   return ctx.editMessageText(
     `🍽 <b>Направление: ${selectedTitle}</b>\n\n` +
-    `Отличный выбор! Ниже список доступных дат для этой кухни. Выбирай удобное время и переходи к бронированию. 👇\n\n` +
+    `${tastyDesc}\n\n` +
     `⚠️ <i>Напоминаем: в стоимость билета входит участие и организация. Заказы по меню ресторана оплачиваются отдельно на месте.</i>`, 
     { 
       parse_mode: 'HTML', 
-      // 🔥 ИСПРАВЛЕНО: Теперь кнопка Назад возвращает к списку кухонь (book_talk), а не в главное меню
       ...Markup.inlineKeyboard([...btns, [Markup.button.callback('🔙 Назад к списку тем', 'book_talk')]]) 
     }
   );
