@@ -2962,8 +2962,10 @@ bot.command('panel', async (ctx) => {
 });
 
 // --- МЕНЮ УПРАВЛЕНИЯ ИГРАМИ (ЗДЕСЬ ВСЕ ТВОИ КНОПКИ!) ---
-bot.action('admin_events_menu', (ctx) => {
-    ctx.editMessageText(`🎮 <b>Управление Играми и Пульты</b>`, {
+// --- МЕНЮ УПРАВЛЕНИЯ ИГРАМИ (ЗДЕСЬ ВСЕ ТВОИ КНОПКИ!) ---
+bot.action('admin_events_menu', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    await ctx.editMessageText(`🎮 <b>Управление Играми и Пульты</b>`, {
         parse_mode: 'HTML',
         ...Markup.inlineKeyboard([
             [Markup.button.callback('➕ Добавить игру', 'admin_add_event')],
@@ -2972,40 +2974,43 @@ bot.action('admin_events_menu', (ctx) => {
             [Markup.button.callback('💘 ПУЛЬТ Speed Dating', 'admin_fd_panel')],
             [Markup.button.callback('🧠 ПУЛЬТ Stock & Know', 'admin_stock_list')],
             [Markup.button.callback('📋 Список записей', 'admin_bookings')],
-            [Markup.button.callback('🆕 Новые анкеты на модерацию', 'admin_moderate_profiles')],  // ← НОВАЯ КНОПКА
+            [Markup.button.callback('🆕 Новые анкеты на модерацию', 'admin_moderate_profiles')],
             [Markup.button.callback('🏁 Завершить игру', 'admin_close_event')],
             [Markup.button.callback('🔙 Назад', 'admin_back_main')]
         ])
-    });
+    }).catch(() => {}); // <--- Локальный щит от падений
 });
 
 // --- 2. МЕНЮ СТАТИСТИКИ ---
-bot.action('admin_stats_menu', (ctx) => {
-    ctx.editMessageText(`📊 <b>Статистика и Аналитика</b>`, {
+bot.action('admin_stats_menu', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    await ctx.editMessageText(`📊 <b>Статистика и Аналитика</b>`, {
         parse_mode: 'HTML',
         ...Markup.inlineKeyboard([
             [Markup.button.callback('📈 Общий статус (Status)', 'admin_trigger_status')],
-            [Markup.button.callback('🔎 Инспекция игры (Inspect)', 'admin_bookings')], // Используем список игр для выбора
+            [Markup.button.callback('🔎 Инспекция игры (Inspect)', 'admin_bookings')],
             [Markup.button.callback('🔙 Назад в меню', 'admin_back_main')]
         ])
-    });
+    }).catch(() => {});
 });
 
 // --- 3. МЕНЮ ТЕХ. ОБСЛУЖИВАНИЯ ---
-bot.action('admin_db_menu', (ctx) => {
-    ctx.editMessageText(`🧼 <b>Технический раздел</b>`, {
+bot.action('admin_db_menu', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    await ctx.editMessageText(`🧼 <b>Технический раздел</b>`, {
         parse_mode: 'HTML',
         ...Markup.inlineKeyboard([
             [Markup.button.callback('✨ Нормализовать полы', 'admin_trigger_normalize')],
             [Markup.button.callback('🔄 Пересчитать счетчики', 'admin_trigger_recount')],
             [Markup.button.callback('🔙 Назад в меню', 'admin_back_main')]
         ])
-    });
+    }).catch(() => {});
 });
 
 // Кнопка возврата
-bot.action('admin_back_main', (ctx) => {
-    ctx.editMessageText(`🚀 <b>Админ-пульт Allgorithm 2.0</b>`, {
+bot.action('admin_back_main', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    await ctx.editMessageText(`🚀 <b>Админ-пульт Allgorithm 2.0</b>`, {
         parse_mode: 'HTML',
         ...Markup.inlineKeyboard([
             [Markup.button.callback('🎮 Управление Играми', 'admin_events_menu')],
@@ -3013,9 +3018,8 @@ bot.action('admin_back_main', (ctx) => {
             [Markup.button.callback('🧼 Тех. обслуживание (База)', 'admin_db_menu')],
             [Markup.button.callback('📢 Глобальная рассылка', 'admin_global_broadcast')]
         ])
-    });
+    }).catch(() => {});
 });
-
 
 // Запуск статуса
 // Запуск статуса прямо в пульт
