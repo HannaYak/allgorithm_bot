@@ -4360,6 +4360,7 @@ bot.on('message', async (ctx, next) => {
                     return;
                 }
             }
+		}
         }
     return next();
 });
