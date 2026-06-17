@@ -1259,6 +1259,7 @@ if (minutesSinceStart >= -210 && minutesSinceStart <= 0 && !(await isProcessed(`
             }
             await saveStockState(event.id, stockState);
         }
+}
 
       // 3. СТАРТ ИГРЫ (ПРИВЕТСТВИЕ + КНОПКА)
 
