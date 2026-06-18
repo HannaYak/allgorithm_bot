@@ -3364,6 +3364,53 @@ bot.command('cancel_with_voucher', async (ctx) => {
     }
 });
 
+// --- КОМАНДА: ВЫДАТЬ ВАУЧЕР НА -10 PLN ВРУЧНУЮ ---
+bot.command('give_discount', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+
+    const parts = ctx.message.text.split(' ');
+    // Формат: /give_discount [TG_ID]
+    if (parts.length < 2) return ctx.reply('Используй: /give_discount [TG_ID]');
+
+    const targetTgId = parseInt(parts[1]);
+
+    if (isNaN(targetTgId)) {
+        return ctx.reply('❌ Ошибка: TG ID должен быть числом.');
+    }
+
+    try {
+        // 1. Ищем юзера
+        const user = await db.query.users.findFirst({ 
+            where: eq(schema.users.telegramId, targetTgId) 
+        });
+
+        if (!user) return ctx.reply('❌ Юзер с таким ID не найден в базе.');
+
+        // 2. Добавляем ваучер
+        await db.insert(schema.vouchers).values({
+            userId: user.id,
+            status: 'approved_10',
+            photoFileId: 'MANUAL_ADMIN_GIFT' // Пометка для базы, что выдано вручную админом
+        });
+
+        // 3. Радуем участника
+        const giftMsg = `🎁 <b>Сюрприз от организаторов!</b>\n\n` +
+                        `Мы начислили тебе ваучер со скидкой <b>-10 PLN</b> на любую следующую игру!\n\n` +
+                        `Он уже ждет тебя в Личном кабинете и автоматически применится при бронировании билета. До встречи! 🥂`;
+                        
+        await bot.telegram.sendMessage(targetTgId, giftMsg, { parse_mode: 'HTML' }).catch(() => {
+            console.error(`Не удалось отправить сообщение юзеру ${targetTgId} о подарке.`);
+        });
+
+        // 4. Отчитываемся админу
+        await ctx.reply(`✅ <b>Успешно!</b>\nЮзеру ${user.name} (TG: <code>${targetTgId}</code>) выдан ваучер на -10 PLN.`, { parse_mode: 'HTML' });
+
+    } catch (e) {
+        console.error("Ошибка в /give_discount:", e);
+        ctx.reply('❌ Произошла ошибка при выдаче ваучера.');
+    }
+});
+
 bot.command('check_user', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     const parts = ctx.message.text.split(' ');
