@@ -1354,12 +1354,12 @@ if (minutesSinceStart >= -210 && minutesSinceStart <= 0 && !(await isProcessed(`
 
   
         // 6. ОБРАБОТКА ПРОСРОЧЕННЫХ ПЛАТЕЖЕЙ (PENDING)
-    for (const [userIdStr, data] of PENDING_PAYMENTS.entries()) {
+    for (const [userId, data] of PENDING_PAYMENTS.entries()) {
       const minutesPassed = now.diff(data.time, 'minutes').minutes;
 
       if (minutesPassed >= 30 && !data.notified) {
         const user = await db.query.users.findFirst({ 
-          where: eq(schema.users.id, parseInt(userIdStr)) 
+          where: eq(schema.users.id, userId) 
         });
 
         if (user) {
@@ -1371,12 +1371,12 @@ if (minutesSinceStart >= -210 && minutesSinceStart <= 0 && !(await isProcessed(`
           ).catch(() => {});
         }
 
-        PENDING_PAYMENTS.set(userIdStr, { ...data, notified: true });
+        PENDING_PAYMENTS.set(userId, { ...data, notified: true });
       }
 
       // Удаляем старые записи (старше 2 часов)
       if (minutesPassed > 120) {
-        PENDING_PAYMENTS.delete(userIdStr);
+        PENDING_PAYMENTS.delete(userId);
       }
     }
   } catch (e) { console.error("Ошибка автопилота:", e); }
@@ -2869,7 +2869,7 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
         ctx.reply('❌ Ошибка связи со Stripe. Напиши в поддержку!'); 
     }
     
-    PENDING_PAYMENTS.set(`${user.id}`, { time: DateTime.now(), notified: false });
+    PENDING_PAYMENTS.set(user.id, { time: DateTime.now(), notified: false });
 });
 
 bot.action(/apply_promo_(\d+)/, async (ctx) => {
@@ -2949,8 +2949,7 @@ await ctx.editMessageText(
     `🎉 <b>Оплата подтверждена! Ты в игре!</b>\n\n` +
     `📍 <b>Что теперь?</b>\n` +
     `• Твоя запись уже появилась в разделе 👤 <b>Личный кабинет</b>.\n` +
-    `• Ровно за <b>3 часа</b> до старта я пришлю сюда точный адрес и инструкцию, как найти наш столик.\n` +
-    `• Если ты идешь на <b>Talk & Toast</b> — обязательно заполни <b>«Историю»</b> в кабинете прямо сейчас, это важная часть нашей викторины! ✨\n\n` +
+    `• Ровно за <b>3 часа</b> до старта я пришлю сюда точный адрес и инструкцию, как найти наш столик.\n\n` +
     `⚠️ <b>Важные правила:</b>\n` +
     `• <b>Отмена и перенос:</b> Возможны не позднее чем за <b>36 часов</b> до начала. Позже сумма, к сожалению, сгорает.\n` +
     `• <b>Заказы:</b> Напоминаем, что еда и напитки в ресторане оплачиваются отдельно.\n\n` +
@@ -4857,18 +4856,14 @@ async function handleSuccessfulPayment(session: any) {
     }
   }
 
-  // 6. Пишем юзеру радостную весть
+// 6. Пишем юзеру радостную весть
   let messageText = `🎉 <b>Оплата прошла успешно! Ты в игре!</b>\n\n` +
                     `Мы очень рады тебя видеть ❤️\n\n` +
                     `📍 Адрес и вся информация придёт ровно за 3 часа до начала.\n` +
                     `• Отмена возможна за 36 часов\n` +
-                    `• Еда и напитки — за отдельную плату\n\n`;
+                    `• Еда и напитки — за отдельную плату\n\n` +
+                    `Ждём тебя! Это будет особенный вечер 🥂`;
 
-  if (event.type.includes('talk_toast')) {
-      messageText += `🤫 Не забудь добавить в кабинете свою историю — она будет использоваться в нашей крутой викторине «Чей это факт?»\n\n`;
-  }
-
-  messageText += `Ждём тебя! Это будет особенный вечер 🥂`;
   await bot.telegram.sendMessage(tId, messageText, { parse_mode: 'HTML' }).catch(() => {});
   PENDING_PAYMENTS.delete(user.id);
   
