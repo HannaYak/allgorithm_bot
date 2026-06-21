@@ -888,7 +888,7 @@ const registerWizard = new Scenes.WizardScene(
       `<b>4. Цель присутствия:</b>\n\n` +
       `Каких людей и какие форматы взаимодействия ты ожидаешь найти в Algorythm?\n\n` +
       `<i>Ответ в 2–3 предложениях. Этот фильтр помогает нам собирать правильные столы.</i>`,
-      Markup.removeKeyboard()) 
+      Markup.removeKeyboard() 
     );
     return ctx.wizard.next();
   },
