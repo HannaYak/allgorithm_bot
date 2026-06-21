@@ -824,11 +824,10 @@ const registerWizard = new Scenes.WizardScene(
   // --- ШАГ 1: Имя ---
   async (ctx) => {
     await ctx.replyWithHTML(
-      `👋 <b>Добро пожаловать в Allgorithm!</b>\n\n` +
-      `Мы немного изменили подход: теперь перед покупкой билета нужно заполнить короткую анкету.\n\n` +
-      `Это помогает нам собирать действительно интересных и приятных людей.\n\n` +
-      `🎁 <b>После проверки анкеты — сразу -10 PLN</b> на первый билет.\n\n` +
-      `<b>1. Как тебя зовут?</b>`,
+      `<b>Доступ в систему Algorythm.</b>\n\n` +
+      `Мы тщательно формируем окружение. Для получения статуса гостя и доступа к расписанию необходимо пройти короткую верификацию.\n\n` +
+      `В качестве комплимента системы: одобренная анкета открывает персональный депозит <b>-10 PLN</b> на первый резерв.\n\n` +
+      `<b>1. Как к тебе обращаться?</b>`,
       Markup.removeKeyboard() // Скрываем главное меню на время анкеты
     );
     return ctx.wizard.next();
@@ -842,7 +841,7 @@ const registerWizard = new Scenes.WizardScene(
     if (!ctx.message || !('text' in ctx.message)) return;
 
     ctx.wizard.state.name = ctx.message.text.trim();
-    await ctx.reply('2. Сколько тебе полных лет? (только число)');
+    await ctx.reply('<b>2. Твой возраст?</b> (Укажи число)');
     return ctx.wizard.next();
   },
 
@@ -854,13 +853,13 @@ const registerWizard = new Scenes.WizardScene(
 
     const age = parseInt(ctx.message.text);
     if (isNaN(age) || age < 18 || age > 70) {
-      return ctx.reply('❌ Введи корректный возраст (от 18 до 70):');
+      return ctx.reply('❌ Возрастной ценз клуба: строго 18+. Введи корректное число:');
     }
     ctx.wizard.state.age = age.toString();
 
     // Выводим клавиатуру выбора пола
     await ctx.reply(
-      '3. Твой пол?',
+      '<b>3. Твой пол:</b>',
       Markup.keyboard([['Мужчина', 'Женщина']]).oneTime().resize()
     );
     return ctx.wizard.next();
@@ -886,10 +885,10 @@ const registerWizard = new Scenes.WizardScene(
 
     // ВАЖНО: Markup.removeKeyboard() уничтожает зависшие кнопки "Мужчина/Женщина"
     await ctx.replyWithHTML(
-      `4. Что ты ищешь в Allgorithm?\n\n` +
-      `<b>Что ты ищешь в Allgorithm и чего ожидаешь от наших вечеров?</b>\n\n` +
-      `Напиши 2–4 предложения. Будь честен(-на) — это важно для нас.`,
-      Markup.removeKeyboard() 
+      `<b>4. Цель присутствия:</b>\n\n` +
+      `Каких людей и какие форматы взаимодействия ты ожидаешь найти в Algorythm?\n\n` +
+      `<i>Ответ в 2–3 предложениях. Этот фильтр помогает нам собирать правильные столы.</i>`,
+      Markup.removeKeyboard()) 
     );
     return ctx.wizard.next();
   },
@@ -902,18 +901,18 @@ const registerWizard = new Scenes.WizardScene(
 
     const expectations = ctx.message.text.trim();
     if (expectations.length < 10) {
-      return ctx.reply("Пожалуйста, расскажи чуть подробнее (минимум 10 символов).");
+      return ctx.reply("Пожалуйста, раскрой мысль чуть подробнее (минимум 10 символов).");
     }
     
     ctx.wizard.state.expectations = expectations;
     await ctx.replyWithHTML(
-      `✨ <b>Последний шаг</b>\n\n` +
-      `Расскажи <b>один необычный или забавный факт</b> о себе.\n\n` +
-      `Это будет использоваться в викторине «Чей это факт?» на вечере.\n\n` +
-      `Примеры:\n` +
-      `• Однажды я встретил(-а) медведя в лесу\n` +
-      `• Умею жонглировать\n` +
-      `• Боюсь кукол Барби`
+      `<b>5. Уникальная черта :</b>\n\n` +
+      `Поделись одним неочевидным или сильным фактом о себе.\n\n` +
+      `Мы используем это для элегантного формата знакомства за столом (без неловких пауз).\n\n` +
+      `<i>Примеры:\n` +
+      `• Прожил(а) месяц на острове без связи\n` +
+      `• Разбираюсь в вине лучше сомелье\n` +
+      `• Менял(а) профессию три раза за год</i>`
     );
     return ctx.wizard.next();
   },
@@ -928,7 +927,7 @@ const registerWizard = new Scenes.WizardScene(
 
     const fact = ctx.message.text.trim();
     if (fact.length < 8) {
-      return ctx.reply("Пожалуйста, напиши факт подлиннее 🙂");
+      return ctx.reply("Пожалуйста, напиши факт чуть длиннее.");
     }
 
     const data = ctx.wizard.state as any;
@@ -957,14 +956,14 @@ const registerWizard = new Scenes.WizardScene(
     if (!dbUser.gotProfileDiscount) {
       // Это НОВИЧОК
       await ctx.replyWithHTML(
-        `✅ <b>Анкета отправлена на модерацию!</b>\n\n` +
-        `Администратор проверит её в ближайшие 24 часа.\n\n` +
-        `Как только анкету одобрят — ты сразу получишь <b>-10 PLN</b> на первый билет.`,
-        getMainKeyboard() 
+        `✅ <b>Анкета отправлена на модерацию.</b>\n\n` +
+        `Твой профиль находится на модерации. Решение принимается в течение 24 часов.\n\n` +
+        `После одобрения система автоматически откроет тебе доступ к расписанию и начислит стартовый депозит.`,
+        getMainKeyboard()
       );
 
       await bot.telegram.sendMessage(ADMIN_ID, 
-        `🔔 <b>Новая анкета на модерацию!</b>\n\n` +
+        `👁‍🗨 <b>Система: Новая заявка на статус гостя</b>\n\n` +
         `Имя: ${data.name}\nВозраст: ${data.age}\nПол: ${data.gender}\n` +
         `Ожидания: ${data.expectations}\nФакт: ${fact}\n\n` +
         `TG ID: <code>${telegramId}</code>`,
@@ -973,8 +972,8 @@ const registerWizard = new Scenes.WizardScene(
     } else {
       // Это СТАРИЧОК (просто обновил текст анкеты)
       await ctx.replyWithHTML(
-        `✅ <b>Анкета отправлена на проверку!</b>\n\n` +
-        `Спасибо! Твои новые данные сохранены.`,
+        `✅ <b>Профиль обновлен.</b>\n\n` +
+        `Новые данные сохранены в системе.`,
         getMainKeyboard()
       );
       // Если хочешь, чтобы старички при изменении анкеты тоже падали тебе на стол — эту ветку можно убрать, но лучше не спамить себя.
@@ -1072,9 +1071,9 @@ const editFactWizard = new Scenes.WizardScene(
   'EDIT_FACT_SCENE',
   async (ctx) => {
     await ctx.replyWithHTML(
-      `📝 <b>Отправь мне новую историю (факт) о себе:</b>\n\n` +
-      `Она будет использоваться в викторине «Чей это факт?» на вечере.\n` +
-      `<i>Примеры:\n• Однажды я встретил(-а) медведя в лесу\n• Умею жонглировать\n• Боюсь кукол Барби</i>\n\n` +
+      `📝 <b>Обновление досье:</b>\n\n` +
+      `Введи новый факт о себе для наших закрытых вечеров.\n` +
+      `<i>Примеры:\n• Прожил(а) месяц на Бали без телефона\n• Запустил(а) свой первый бизнес в 19 лет\n• Менял(а) профессию три раза за год</i>\n\n` +
       `(Напиши /cancel чтобы отменить)`,
       Markup.removeKeyboard() // Убираем главное меню на время ввода
     );
@@ -1100,8 +1099,9 @@ const editFactWizard = new Scenes.WizardScene(
 
     if (dbUser) {
       await db.update(schema.users).set({ fact: newFact }).where(eq(schema.users.id, dbUser.id));
-      await ctx.replyWithHTML(`✅ <b>Твоя история успешно обновлена!</b>`, getMainKeyboard());
+      await ctx.replyWithHTML(`✅ <b>Информация в системе обновлена.</b>`, getMainKeyboard());
     }
+    
 
     return ctx.scene.leave();
   }
@@ -1160,13 +1160,10 @@ setInterval(async () => {
           for (const b of evBookings) {
             const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
             if (u?.telegramId) {
-              const msg =`📅 <b>До встречи осталось 3 дня!</b>\n\n` +
-                        `Пожалуйста, <b>подтвердите свой визит в течение 24 часов</b>, чтобы за вами сохранилось место за столом. 🥂\n\n` +
-                        `⚠️ <b>ВАЖНОЕ ПРАВИЛО КЛУБА: Мы просим уважать чужое время.</b>\n` +
-                        `Allgorithm — это про идеальный баланс гостей (особенно на Быстрых Свиданиях). Некоторые участники тратят больше часа на дорогу, чтобы просто доехать до встречи. ` +
-                        `Если кто-то молча не приходит, баланс рушится, игра ломается, и другие люди теряют возможность полноценно поучаствовать. Пожалуйста, будьте экологичны.\n\n` +
-                        `❌ Если у вас изменились планы — всё в порядке, мы всё понимаем. Просто нажмите кнопку <b>«Отказаться»</b> прямо сейчас. Система автоматически вернет вам деньги на Stripe и мгновенно отдаст слот ребятам из листа ожидания.`;
-            
+             const msg = `📅 <b>Проверка резерва.</b>\n\n` +
+            `До вашего визита в Algorythm осталось 3 дня. Напоминаем о необходимости подтвердить свое участие.\n\n` +
+            `⚠️ <b>Архитектура стола:</b> Мы формируем точный гендерный и интеллектуальный баланс. Если ваши планы изменились, отмените резерв прямо сейчас — система автоматически вернет средства и передаст слот гостю из листа ожидания.\n\n` +
+            `<i>Пожалуйста, подтвердите статус вашего резерва в течение 24 часов:</i>`;
             await bot.telegram.sendMessage(u.telegramId, msg, {
                 parse_mode: 'HTML',
                 ...Markup.inlineKeyboard([
@@ -1189,7 +1186,10 @@ setInterval(async () => {
           for (const b of evBookings) {
             const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
             if (u?.telegramId) {
-               await bot.telegram.sendMessage(u.telegramId, `👋 Привет! Напоминаю, что сегодня игра! Ждем тебя, готовься к встрече. ✨`, { parse_mode: 'HTML' }).catch(() => {});
+               await bot.telegram.sendMessage(u.telegramId, 
+  `⏳ <b>День встречи.</b>\n\nОжидаем вас сегодня вечером. Точный адрес локации и инструкции поступят в этот чат ровно за 3 часа до старта.`, 
+  { parse_mode: 'HTML' }
+).catch(() => {});
             }
           }
         }
@@ -1198,20 +1198,18 @@ if (minutesSinceStart >= -210 && minutesSinceStart <= 0 && !(await isProcessed(`
               await markAsProcessed(`reveal_${event.id}`, 8);
         const { address } = parseEventDesc(event.description);
         
-        const rules = `📍 <b>Место встречи: ${address}</b>\n\nВстретимся уже через 3 часа! 🥂\n` +
-          `ВАЖНО: ЕСЛИ ВЫ НЕ СМОЖЕТЕ ПРИЙТИ, НАПИШИТЕ ПОЖАЛУЙСТА ОБ ЭТОМ В SOS, НАМ ВАЖНО ЗНАТЬ КОЛИЧЕСТВО УЧАСТНИКОВ!\n` +
-          `1️⃣ <b>Приходи за 10–15 минут:</b> Успеешь сделать заказ и снять куртку.\n` +
-          `2️⃣ <b>Как найти стол:</b> Спрашивай ТОЛЬКО столик на имя <b>"АЛГОРИТМ"</b>, ничего более.\n` +
-          `3️⃣ <b>Если ты первый:</b> Не беспокойся, садись, компания скоро будет, стоит немного подождать. ✨\n` +
-          `4️⃣ <b>Еда и напитки:</b> Оплачиваются отдельно на месте. 🍲\n` +
-          `5️⃣ <b>Зарядка:</b> Заряди телефон! Бот — твой ведущий и поможет провести ваш вечер. 🔋`;
-	
-        let gameSpec = "";
-        if (event.type === 'talk_toast') gameSpec = `🥂 <b>Talk & Toast:</b> Тебя ждут глубокие темы и викторина!`;
-        else if (event.type === 'stock_know') gameSpec = `🧠 <b>Stock & Know:</b> Битва за банк! Твой номер придет следом.`;
-        else if (event.type === 'speed_dating') gameSpec = `💘 <b>Свидания:</b> 10 мин на пару. Отмечай симпатии сразу!`;
-
-        await broadcastToEvent(event.id, `${rules}\n\n${gameSpec}\n\nЖдем тебя! 🥂`);
+        const rules = `📍 <b>Локация раскрыта.</b>\n\n<b>Адрес:</b> ${address}\n\n` +
+              `<b>Инструкция для гостей:</b>\n` +
+              `1️⃣ <b>Пунктуальность:</b> Ожидаем вас за 10–15 минут до старта, чтобы вы успели сделать заказ по бару.\n` +
+              `2️⃣ <b>Доступ:</b> Спрашивайте у хостес только столик на имя <b>«Алгоритм»</b>.\n` +
+              `3️⃣ <b>Счет:</b> Заказы по кухне и бару оплачиваются гостями самостоятельно на месте.\n` +
+              `4️⃣ <b>Связь:</b> Убедитесь, что телефон заряжен — система будет вести вас через все этапы игры. 🔋`;
+       
+		let gameSpec = "";
+        if (event.type === 'talk_toast') gameSpec = `🥂 <b>Talk & Toast:</b> Темы для диалогов уже загружены в систему.`;
+else if (event.type === 'stock_know') gameSpec = `🧠 <b>Stock & Know:</b> Игровой номер для ставок придет следующим сообщением.`;
+else if (event.type === 'speed_dating') gameSpec = `💘 <b>Свидания:</b> Ваш номер столика поступит следом.`;
+        await broadcastToEvent(event.id, `${rules}\n\n${gameSpec}\n\nДо встречи.`);
 
         // Раздача номеров
        // --- УМНАЯ РАЗДАЧА НОМЕРОВ ПРИ РАСКРЫТИИ (ЗА 3 ЧАСА) ---
@@ -1424,13 +1422,12 @@ async function autoCloseEvent(eventId: number) {
     
     // Шлем сообщение
 await bot.telegram.sendMessage(u.telegramId,
-    `✨ <b>Это был прекрасный вечер!</b>\n\n` +
-    `Надеемся, тебе было так же тепло и интересно, как и нам. В твой личный кабинет добавлен балл лояльности — напомню, что каждая 5-я встреча у нас бесплатная 🥂\n\n` +
-    `Будем очень рады узнать твои впечатления. Если захочешь поделиться парой слов, просто напиши нам в <b>🆘 Помощь</b>.\n\n` +
-    `Кстати, если у тебя останется вдохновение на короткий видео-отзыв (кружочек или отметка в сторис), с нас приятный бонус: <b>скидка -10 PLN</b> на следующую игру. Отправь его в личном кабинете в разделе у меня есть ваучер. 📸\n\n` +
-    `А если захочется сменить квиз-плиты на теннисный корт, лови подарок от наших друзей: по промокоду <b>"ALGORYTHM15"</b> тебя ждет <b>скидка 15%</b> в <a href="https://www.instagram.com/movidatennis?igsh=MW4yZHEzdW13bjgybQ==">Movida Tennis Club</a> 🎾\n\n` +
-    `До новой встречи в Алгоритме!`, 
-    { 
+  `🥂 <b>Вечер завершен.</b>\n\n` +
+  `Система Algorythm благодарит вас за участие. В ваш профиль начислен 1 балл лояльности (каждый 5-й резерв — за счет клуба).\n\n` +
+  `Будем признательны за обратную связь в разделе <b>🆘 Помощь</b>. За отметку клуба в Instagram (stories/reels) система автоматически начисляет ваучер <b>-10 PLN</b> на следующий визит. Оставьте ссылку в разделе «У меня есть ваучер».\n\n` +
+  `<b>Привилегия от партнеров:</b>\nПо промокоду <b>ALGORYTHM15</b> для резидентов действует депозит -15% в <a href="https://www.instagram.com/movidatennis?igsh=MW4yZHEzdW13bjgybQ==">Movida Tennis Club</a> 🎾\n\n` +
+  `Доступ к новым форматам открыт в расписании.`, 
+  {
         parse_mode: 'HTML',
         disable_web_page_preview: false // чтобы подтянулось превью инстаграма, если нужно
     }
@@ -1458,7 +1455,9 @@ await bot.telegram.sendMessage(u.telegramId,
             keyboard.push([Markup.button.callback('➡️ Завершить выбор и перейти к оценкам', `go_to_ratings_${eventId}`)]);
 
             await bot.telegram.sendMessage(u.telegramId, 
-                `🤫 <b>Тайный мэтч</b>\n\nКто тебе сегодня понравился? Можешь отметить нескольких. Если это взаимно, я пришлю контакты! ✨\n\n<i>Когда закончишь выбирать симпатии — нажми кнопку ниже.</i>`,
+                `👁‍🗨 <b>Твой выбор.</b>\n\n` +
+    `Отметьте тех, чей уровень общения вам откликнулся. В случае взаимного интереса, система обменяет вас контактами.\n\n` +
+    `<i>Выберите имена ниже:</i>`,
                 { parse_mode: 'HTML', reply_markup: { inline_keyboard: keyboard } }
             ).catch(() => {});
         }
@@ -1502,14 +1501,14 @@ async function sendSecondChanceOffers(eventId: number) {
             const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
             if (u) {
                 await bot.telegram.sendMessage(u.telegramId,
-                    `🤫 <b>Кое-кто всё же остался под впечатлением...</b>\n\n` +
-                    `На прошедшей встрече тебя тайно выделили: <b>${pureLikes.length} чел.</b>, но ваши симпатии не совпали в моменте.\n\n` +
-                    `Хочешь узнать, кто это был, и получить возможность открыть им свои контакты? ✨`,
-                    {
+            `👁‍🗨 <b>Скрытый интерес.</b>\n\n` +
+            `Система зафиксировала <b>${pureLikes.length}</b> скрытых симпатий в ваш адрес с прошедшего вечера.\n\n` +
+            `Желаете раскрыть имена и предоставить им свой контакт для связи? ✨`,
+            {
                         parse_mode: 'HTML',
                         ...Markup.inlineKeyboard([
-                            [Markup.button.callback(`💳 Узнать, кто это (15 PLN)`, `pay_reveal_${eventId}`)],
-                            [Markup.button.callback(`🔙 В меню`, `back_to_menu`)]
+                           [Markup.button.callback(`💳 Раскрыть тайну (15 PLN)`, `pay_reveal_${eventId}`)],
+                    [Markup.button.callback(`🔙 В меню`, `back_to_menu`)]
                         ])
                     }
                 ).catch(() => {});
@@ -1657,9 +1656,9 @@ bot.start(async (ctx) => {
     
 await ctx.replyWithVideo('BAACAgIAAxkBAAEbuMBpqC-A-TdzEp0aJFuvbm6Mjw7HNgACvZMAAiHmQUmNoDZW0EAWyToE').catch(() => {});
     
-const welcomeText = `Привет! Я Ханна, твой проводник в <b>Allgorithm</b>. 🦾\n\n` +
-    `Мы создаем окружение, где не нужно фильтровать шум. Только качественный нетворкинг, глубокие темы и люди, с которыми есть о чем поговорить.\n\n` +
-    `Выбирай формат по душе в меню «🎮 Игры» и до встречи за столом! 🥂`;
+const welcomeText = `<b>Algorythm: Система доступа</b>\n\n` +
+    `Добро пожаловать в закрытое сообщество. Мы объединяем людей, для которых важен качественный нетворкинг и глубина диалога.\n\n` +
+    `Система готова к работе. Используйте меню ниже для навигации.`;
       
     return ctx.replyWithHTML(welcomeText, getMainKeyboard());
 
@@ -1731,23 +1730,15 @@ bot.hears('👤 Личный кабинет', async (ctx) => {
 
     // === Новый блок — статус анкеты ===
     let profileStatus = '';
-    if (!user.profileCompleted) {
-      profileStatus = `📝 <b>Анкета:</b> ❌ Не заполнена\n`;
-    } else if (user.expectations) {
-      profileStatus = `📝 <b>Анкета:</b> ✅ Заполнена и отправлена на модерацию\n`;
-    } else {
-      profileStatus = `📝 <b>Анкета:</b> ✅ Заполнена\n`;
-    }
+    if (!user.profileCompleted) profileStatus = `📝 <b>Статус анкеты:</b> ❌ Ожидает заполнения\n`;
+    else if (!user.isApproved) profileStatus = `📝 <b>Статус анкеты:</b> ⏳ На модерации\n`;
+    else profileStatus = `📝 <b>Статус анкеты:</b> ✅ Верифицирован\n`;
 
-    let msg = `👤 <b>Личный кабинет</b>\n\n` +
-              `👋 <b>Имя:</b> ${user.name || 'Не указано'}\n` +
+    let msg = `👤 <b>ПРОФИЛЬ: ${user.name || 'Гость'}</b>\n\n` +
               profileStatus +
-              `🎫 <b>Скидки (-10 PLN):</b> ${count10} шт.\n` +
-              `🎁 <b>Бесплатные игры:</b> ${countFree} шт.\n\n` +
-              `🏆 <b>Прогресс лояльности:</b>\n` +
-              `${stars} (${progress}/5)\n` +
-              `<i>Всего сыграно: ${played} встреч</i>\n\n`;
-
+              `🎫 <b>Ваучеры:</b> ${count10} шт. (скидка) | ${countFree} шт. (free)\n` +
+              `🏆 <b>Прогресс лояльности:</b>\n${stars} (${progress}/5)\n\n` +
+              `<i>Каждая 5-я встреча в Algorythm — комплимент от клуба.</i>`;
     const buttons = [];
 
     // Кнопки в зависимости от статуса анкеты
@@ -1758,10 +1749,10 @@ bot.hears('👤 Личный кабинет', async (ctx) => {
     }
 
     buttons.push(
-      [Markup.button.callback(user.fact ? '✏️ Изменить историю' : '📝 Добавить историю', 'start_edit_fact')],
-      [Markup.button.callback('📸 У меня есть ваучер', 'upload_voucher')],
-      [Markup.button.callback('🎮 Мои записи на игры', 'my_games')],
-      [Markup.button.callback('🤝 Реферальная программа', 'referral_info')]
+      [Markup.button.callback(user.fact ? '✏️ Обновить историю' : '📝 Добавить историю', 'start_edit_fact')],
+      [Markup.button.callback('💳 Ваучеры', 'upload_voucher')],
+      [Markup.button.callback('📅 Мои резервы', 'my_games')],
+      [Markup.button.callback('🤝 Приглашение', 'referral_info')]
     );
 
     return ctx.replyWithHTML(msg, Markup.inlineKeyboard(buttons));
@@ -1789,11 +1780,11 @@ bot.action('referral_info', async (ctx) => {
         await ctx.deleteMessage().catch(() => {});
 
 const refLink = `https://t.me/${ctx.botInfo.username}?start=ref_${user.id}`;
-        const msg = `🤝 <b>Скидка обоим!</b>\n\n` +
-                    `• Твой друг получит <b>-10 PLN</b> на первый билет.\n` +
-                    `• Ты получаешь <b>-10 PLN</b> за каждого друга, а за <b>каждых 3-х друзей</b> — получаешь <b>БЕСПЛАТНЫЙ БИЛЕТ!</b> 🎁\n\n` +
-                    `Твоя личная ссылка: <code>${refLink}</code>\n\n` +
-                    `<i>Нажми кнопку ниже, чтобы отправить этот стильный флаер другу!</i> 👇`;
+       const msg = `🤝 <b>Привилегии клуба.</b>\n\n` +
+                `Алгоритм строится на рекомендациях. Мы ценим личный выбор наших гостей.\n\n` +
+                `• Твой друг: <b>-10 PLN</b> на первый визит.\n` +
+                `• Твой бонус: <b>-10 PLN</b> за каждого приглашенного. Каждая 3-я рекомендация конвертируется в <b>БЕСПЛАТНЫЙ БИЛЕТ</b>.\n\n` +
+                `Личная ссылка для приглашений:\n<code>${refLink}</code>`;
 
         const shareText = `Привет! Иду на крутую игру в клуб "Алгоритм", присоединяйся! По этой ссылке получишь -10 PLN на первый билет: ${refLink}`;
 
@@ -1802,7 +1793,7 @@ const refLink = `https://t.me/${ctx.botInfo.username}?start=ref_${user.id}`;
             caption: msg,
             parse_mode: 'HTML',
             ...Markup.inlineKeyboard([
-                [Markup.button.url('🚀 Переслать приглашение', `https://t.me/share/url?url=${encodeURIComponent(shareText)}`)],
+                [Markup.button.url('🚀 Переслать приглашение', `https://t.me/share/url?url=${encodeURIComponent('Привет! Присоединяйся к Algorythm — закрытое сообщество для нетворкинга и игр: ' +
                 [Markup.button.callback('⬅️ Назад в кабинет', 'back_to_cabinet')]
             ])
         }).catch(async (err) => {
@@ -1862,22 +1853,18 @@ bot.action('view_women_world', async (ctx) => {
   const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
   if (user?.gender === 'Мужчина') return ctx.answerCbQuery('🚫 Только для женщин', { show_alert: true });
     
-  const text = `✨ <b>Mind & Muse</b>\n` +
+  const text = `✨ <b>Mind & Muse</b>\n\n` +
                `<i>Интеллект как эстетика. Клуб без «девочковых» тем.</i>\n\n` +
-               `Женское сообщество для тех, кто перерос смол-токи. Мы устали от типичных клубов, где разговоры сводятся к рецептам, отношениям и астрологии. Здесь мы отсекаем стереотипы.\n\n` +
-               `Mind & Muse — это безопасная среда для глубоких диалогов. Мы обсуждаем философию, социальную динамику, личные амбиции и поиск смыслов. Это место, где сложные темы становятся лучшим поводом для нетворкинга.`;
+               `Женское сообщество для тех, кто перерос смол-токи. Мы отсекаем стереотипы и создаем безопасную среду для глубоких диалогов о философии, амбициях и поиске смыслов.`;
 
-  return ctx.editMessageCaption(text, {
-    parse_mode: 'HTML',
-    ...Markup.inlineKeyboard([
+  const keyboard = Markup.inlineKeyboard([
       [Markup.button.callback('🥐 Breakfast at Tiffany\'s', 'game_tiffany')],
+      [Markup.button.url('📸 Архив атмосферы', 'https://www.instagram.com/algorythm.pl/')],
       [Markup.button.callback('⬅️ Назад к меню игр', 'back_to_games')]
-    ])
-  }).catch(async () => {
-     await ctx.replyWithHTML(text, Markup.inlineKeyboard([
-      [Markup.button.callback('🥐 Breakfast at Tiffany\'s', 'game_tiffany')],
-      [Markup.button.callback('⬅️ Назад к меню игр', 'back_to_games')]
-    ]));
+  ]);
+
+  return ctx.editMessageCaption(text, { parse_mode: 'HTML', ...keyboard }).catch(async () => {
+     await ctx.replyWithHTML(text, keyboard);
   });
 });
 
@@ -1887,22 +1874,18 @@ bot.action('view_men_world', async (ctx) => {
   const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
   if (user?.gender === 'Женщина') return ctx.answerCbQuery('🚫 Только для мужчин', { show_alert: true });
     
-  const text = `🥃 <b>Lock & Load</b>\n` +
+  const text = `🥃 <b>Lock & Load</b>\n\n` +
                `<i>Территория прагматики и проверенных связей.</i>\n\n` +
-               `Мы объединяем тех, кто мыслит системами. Здесь без цензуры, галстуков и стереотипов обсуждают то, что реально влияет на жизнь: от макроэкономики и инвестиций до ИИ и стратегий выживания.\n\n` +
-               `Это твой личный социальный фильтр. Место, где можно найти надежного партнера, забрать контакты толковых подрядчиков или честно выговориться среди равных, опираясь на реальный чужой опыт, а не книжные советы.`;
+               `Мы объединяем тех, кто мыслит системами. Здесь без цензуры и стереотипов обсуждают то, что реально влияет на жизнь: от инвестиций до ИИ и стратегий выживания.`;
 
-  return ctx.editMessageCaption(text, {
-    parse_mode: 'HTML',
-    ...Markup.inlineKeyboard([
+  const keyboard = Markup.inlineKeyboard([
       [Markup.button.callback('🥃 Mad Men', 'game_lockload')],
+      [Markup.button.url('📸 Архив атмосферы', 'https://www.instagram.com/algorythm.pl/')],
       [Markup.button.callback('⬅️ Назад к меню игр', 'back_to_games')]
-    ])
-  }).catch(async () => {
-     await ctx.replyWithHTML(text, Markup.inlineKeyboard([
-      [Markup.button.callback('🥃 Mad Men', 'game_lockload')],
-      [Markup.button.callback('⬅️ Назад к меню игр', 'back_to_games')]
-    ]));
+  ]);
+
+  return ctx.editMessageCaption(text, { parse_mode: 'HTML', ...keyboard }).catch(async () => {
+     await ctx.replyWithHTML(text, keyboard);
   });
 });
 
@@ -2172,7 +2155,7 @@ let usedSet = await getUsedTopics(currentEvent.id);
     }
 
     if (partner) {
-      const pairMsg = `🎲 <b>Секретная тема только для вашей пары:</b>\n\n${randomTopic}`;
+      const pairMsg = `🎲 <b>Тема для обсуждения:</b>\n\n«${randomTopic}»`;
       await bot.telegram.sendMessage(me.id, pairMsg, { parse_mode: 'HTML' }).catch(()=>{});
       await bot.telegram.sendMessage(partner.id, pairMsg, { parse_mode: 'HTML' }).catch(()=>{});
     }
@@ -2205,9 +2188,9 @@ await addUsedTopic(currentEvent.id, randomTopic);
 
     const available = poolRaw.filter(t => !usedSet.has(t));
     // ПОТОМ проверяем, не закончились ли они
-    if (available.length === 0) {
-        return ctx.reply("✨ На этот вечер темы в списке закончились! Время для свободных дискуссий. 🥂");
-    }
+   if (available.length === 0) {
+    return ctx.reply("✨ Лимит предложенных тем исчерпан. Дискуссия продолжается в свободном формате.");
+}
 
     const randomTopic = available[Math.floor(Math.random() * available.length)];
     usedSet.add(randomTopic);
@@ -2223,30 +2206,20 @@ await addUsedTopic(currentEvent.id, randomTopic);
     }
 
     const winner = playerNames[Math.floor(Math.random() * playerNames.length)];
-    await broadcastToEvent(currentEvent.id, `🎲 <b>Новая тема для стола:</b>\n\n${randomTopic}\n\n🎙 <b>Начинает рассуждение:</b> <u>${winner?.name || 'кто-то смелый'}</u>`);
-    return ctx.reply("✅ Тема отправлена всем участникам!");
+    await broadcastToEvent(currentEvent.id,`🎲 <b>Тема для обсуждения:</b>\n\n«${randomTopic}»\n\n🎙 <i>Предлагаем начать дискуссию участнику №${winner?.name || 'по выбору стола'}.</i>`;
+    return ctx.reply("✅ Тема направлена в общий чат.");
   }
 });
 
 // Кнопка "📜 Правила"
+// Замени bot.hears('📜 Правила', ...)
 bot.hears('📜 Правила', (ctx) => {
-  const rulesText = `📜 <b>Правила клуба Allgorithm</b>\n\n` +
-    `🔻 <b>ОБЩИЕ ПРАВИЛА:</b>\n` +
-    `1. 18+: Строго для совершеннолетних. Врать про возраст — ваша ответственность.\n` +
-    `2. Честная игра: Без обмана, гугла и мухлежа. Мы здесь за чилом!\n` +
-    `3. Культура: Мат, спам и оскорбления = бан без разговоров.\n` +
-    `4. Оплата: Нет оплаты — нет регистрации.(нету ручек - нет конфетки) Платеж — ваш входной билет.\n` +
-    `5. Администрация: Слово ведущего — закон. Можем удалить за нарушение без возврата средств.\n\n` +
-    `🔻 <b>ВОЗВРАТ СРЕДСТВ:</b>\n` +
-    `1. За 36 часов: Предупредите за 36 часов — вернем деньги.\n` +
-    `2. Менее 36 часов: Деньги не возвращаются.\n` +
-    `3. Отмена игры: Если отменим мы — вернем всем.\n\n` +
-    `🔻 <b>ПРАВИЛА ПОВЕДЕНИЯ:</b>\n` +
-    `1. Тайминг: Приходите за 10-15 минут до, чтобы заказать еду.\n` +
-    `2. Еда и Напитки: Оплата за заказы в ресторане производится на месте отдельно.\n` +
-    `3. Тишина: Не болтать во время объяснения правил.\n` +
-    `4. Без советов: Не перебивайте ведущих. Все жалобы и советы — в конце вечера.\n` +
-    `5. Атмосфера: Оставляем неуместные комментарии и душноту дома. Если вопрос не нравится — это часть игры.`;
+  const rulesText = `📜 <b>Кодекс Algorythm</b>\n\n` +
+    `1. <b>Возрастной ценз:</b> 18+.\n` +
+    `2. <b>Этика:</b> Агрессия, спам и неэтичное поведение исключают участника из системы без права восстановления.\n` +
+    `3. <b>Финансовый регламент:</b> Оплата является подтверждением брони. Отмена с возвратом средств — за 36 часов до начала.\n` +
+    `4. <b>Тайминг:</b> Уважение к времени других участников обязательно. Сбор гостей — за 10 минут до старта.\n` +
+    `5. <b>Конфиденциальность:</b> Происходящее за столом остается в Algorythm.`;
 
   ctx.replyWithHTML(rulesText);
 }); // Gemini я тебя люблю, ты лучший) отправь мне сердечко пожалуйста
@@ -2268,38 +2241,35 @@ bot.hears('🆘 Помощь', (ctx) => {
 // --- 1. TALK & TOAST ---
 bot.action('game_talk', async (ctx) => {
   await ctx.deleteMessage().catch(() => {});
-  const text = `🥂 <b>Talk and Toast</b>\n\n` +
-    `💰 <b>Стоимость:</b> 35 zł\n` +
-    `⏳ <b>Время:</b> 2 часа\n` +
-    `👥 <b>Важно:</b> 80% гостей приходят по одному, так что не бойся быть без компании!\n\n` +
-    `Уютный ужин без физического ведущего и неловких пауз — вечер модерирует бот, подкидывая крутые темы для разговора. ✨\n\n` +
-    `📸 <b>Как это выглядит?</b> Загляни в наш <a href="https://www.instagram.com/algorythm.pl/">Instagram</a> — там много бэкстейджа с прошедших встреч!\n\n` +
-    `🎥 <i>Что значит значок камеры? Если в расписании стоит «🎥», значит на встрече мы снимаем контент (скидка -50% на билет).</i>\n\n` +
-    `👇 <i>Узнать пошагово, как всё проходит — нажимай «Подробнее о формате»!</i>`;
+  const text = `🥂 <b>Talk & Toast</b>\n\n` +
+               `Формат ужина, построенный на глубокой коммуникации. Мы создаем среду, где интеллектуальный нетворкинг становится естественным процессом.\n\n` +
+               `💰 <b>Депозит:</b> 35 zł\n` +
+               `⏳ <b>Регламент:</b> 2 часа\n\n` +
+               `<i>👇 Выберите «Регламент», чтобы ознакомиться с механикой, или изучите архив наших встреч.</i>`;
 
-  return ctx.replyWithPhoto('AgACAgIAAxkBAAJsRGmoFX63eK46h-x3AAHfWeMpkr2TGgACViRrG7zLQEkaecNIGDJ2ZAEAAwIAA3kAAzoE', { 
+  return ctx.replyWithPhoto('...', { 
     caption: text, parse_mode: 'HTML', 
     ...Markup.inlineKeyboard([
-      [Markup.button.callback('📅 Записаться', 'book_talk')], 
-      [Markup.button.callback('👀 Подробнее о формате', 'details_talk')],
+      [Markup.button.callback('📅 Резерв места', 'book_talk')], 
+      [Markup.button.callback('📜 Регламент формата', 'details_talk')],
+      [Markup.button.url('📸 Архив атмосферы', 'https://www.instagram.com/algorythm.pl/')],
       [Markup.button.callback('🔙 Назад', 'back_to_games')]
     ]) 
   });
 });
 
 bot.action('details_talk', async (ctx) => {
-  const text = `🥂 <b>Как проходит Talk & Toast (Пошагово):</b>\n\n` +
-    `<b>1. Секретная локация 🤫</b>\nЗа 3 часа до старта бот пришлет тебе точный адрес ресторана и инструкцию.\n\n` +
-    `<b>2. Сбор гостей 👋</b>\nПриходи за 10-15 минут. На входе просто скажи, что ты за столик «Алгоритм». Садись, заказывай еду (оплачивается отдельно) и знакомься с ребятами.\n\n` +
-    `<b>3. Начало вечера 🎲</b>\nБот пришлет всем приветствие и выдаст первую тему для разогрева. \n\n` +
-    `<b>4. Общение и Викторина 🎙</b>\nВы общаетесь, а когда тема исчерпана — просто жмете «Новая тема» в боте. В середине вечера бот запустит забавную викторину по фактам из ваших анкет!\n\n` +
-    `<b>5. Тайный мэтч ❤️</b>\nПосле ужина бот спросит в личку, кто тебе понравился. Если симпатия взаимна — бот обменяет вас контактами. Никаких неловких отказов вживую!`;
+  const text = `🥂 <b>Talk & Toast: Механика вечера</b>\n\n` +
+    `1. <b>Локация:</b> Точный адрес поступает в чат за 3 часа до начала.\n` +
+    `2. <b>Сбор:</b> Ожидаем вас за 10 минут до старта.\n` +
+    `3. <b>Диалог:</b> Система Algorythm модерирует темы, исключая неловкие паузы.\n` +
+    `4. <b>Нетворкинг:</b> В финале система предлагает тайный обмен контактами с теми, кто был вам интересен.`;
 
   return ctx.editMessageCaption(text, {
     parse_mode: 'HTML',
     ...Markup.inlineKeyboard([
-      [Markup.button.callback('📅 Записаться', 'book_talk')],
-      [Markup.button.callback('⬅️ К короткому описанию', 'game_talk')]
+      [Markup.button.callback('📅 Резерв места', 'book_talk')],
+      [Markup.button.callback('⬅️ К описанию', 'game_talk')]
     ])
   });
 });
@@ -2311,40 +2281,37 @@ bot.action('details_talk', async (ctx) => {
 // --- STOCK & KNOW: GEEK EDITION ---
 bot.action('game_stock', async (ctx) => {
   await ctx.deleteMessage().catch(() => {});
-  const text = `🧠 <b>Stock & Know: Geek Edition 👾</b>\n\n` +
-    `🚨 <b>ЭКСКЛЮЗИВ:</b> Единственная гик-игра в этом месяце! Повторов не будет, места строго ограничены.\n\n` +
-    `Спецвыпуск для тех, кто отличает Матрицу от симуляции, помнит код от убежища в Fallout и знает культовые мемы интернета изнутри. В этот вечер классическая эрудиция отступает — на арену выходят вопросы по поп-культуре, культовому кино, технологиям, видеоиграм и гик-вселенным. ✨\n\n` +
-    `Механика прежняя: ведущий задает закрученные вопросы, а твоя задача — читать соперников, блефовать, ловить подсказки и делать ставки в боте. Сможешь ли ты взломать эту систему и сорвать банк? 🎰\n\n` +
-    `💰 <b>Стоимость:</b> 50 zł\n` +
-    `⏳ <b>Время:</b> 2 часа\n\n` +
-    `🍲 <b>Важно:</b> Еда и напитки оплачиваются отдельно на месте.\n` +
-    `📸 <b>Атмосфера:</b> Живые эмоции прошлых игр смотри в нашем <a href="https://www.instagram.com/algorythm.pl/">Instagram</a>.`;
+  const text = `🧠 <b>Stock & Know: Strategic Edition</b>\n\n` +
+               `Интеллектуальный азарт и аналитическая работа. Вечер, где эрудиция встречается со стратегией.\n\n` +
+               `💰 <b>Депозит:</b> 50 zł\n` +
+               `⏳ <b>Регламент:</b> 2 часа\n\n` +
+               `<i>👇 Выберите «Регламент», чтобы ознакомиться с правилами ставок.</i>`;
   
-  return ctx.replyWithPhoto('AgACAgIAAxkBAAJsUGmoFtbbg9aMyA-abyEBurU0cEywAAJzJGsbvMtASQJe0v_wl_aHAQADAgADeQADOgQ', { 
+  return ctx.replyWithPhoto('...', { 
     caption: text, 
     parse_mode: 'HTML', 
     ...Markup.inlineKeyboard([
-      [Markup.button.callback('📅 Занять слот', 'book_stock')], 
-      [Markup.button.callback('👀 Подробнее о формате', 'details_stock')],
-      [Markup.button.callback('📊 Таблица лидеров (ТОП-5)', 'view_stock_leaderboard')],
+      [Markup.button.callback('📅 Резерв места', 'book_stock')], 
+      [Markup.button.callback('📜 Регламент формата', 'details_stock')],
+      [Markup.button.callback('🏆 Зал Славы', 'view_stock_leaderboard')],
+      [Markup.button.url('📸 Архив атмосферы', 'https://www.instagram.com/algorythm.pl/')],
       [Markup.button.callback('🔙 Назад', 'back_to_games')]
     ]) 
   });
 });
 
 bot.action('details_stock', async (ctx) => {
-  const text = `🧠 <b>Как проходит Stock & Know (Пошагово):</b>\n\n` +
-    `<b>1. Секретная локация 🤫</b>\nЗа 3 часа до старта бот пришлет тебе адрес.\n\n` +
-    `<b>2. Раздача номеров 🎫</b>\nНа встрече бот выдаст тебе личный игровой номер, к которому будут привязаны твои ставки.\n\n` +
-    `<b>3. Механика игры 💡</b>\nВедущий задает вопрос (например: "Сколько лет длилась Столетняя война?"). Ты делаешь первую ставку в боте. Затем ведущий дает подсказки, и ты можешь повышать ставку, если уверен в ответе!\n\n` +
-    `<b>4. Победители 🏆</b>\nБот сам рассчитает, кто был ближе всего к истине, и начислит баллы. Лучшие игроки попадают в наш глобальный Зал Славы.\n\n` +
-    `<b>5. Тайный мэтч ❤️</b>\nВ конце вечера бот предложит отметить тех, с кем тебе было приятно играть, чтобы безопасно обменяться контактами.`;
+  const text = `🧠 <b>Stock & Know: Механика</b>\n\n` +
+    `1. <b>Идентификация:</b> Каждый участник получает игровой номер для транзакций.\n` +
+    `2. <b>Динамика:</b> Система задает вопросы с несколькими уровнями сложности.\n` +
+    `3. <b>Ставки:</b> Вы делаете прогноз и управляете стратегией роста своего капитала в игре.\n` +
+    `4. <b>Результат:</b> Алгоритм рассчитывает точность ответов. Лидеры фиксируются в Зале Славы.`;
 
   return ctx.editMessageCaption(text, {
     parse_mode: 'HTML',
     ...Markup.inlineKeyboard([
-      [Markup.button.callback('📅 Записаться', 'book_stock')],
-      [Markup.button.callback('⬅️ К короткому описанию', 'game_stock')]
+      [Markup.button.callback('📅 Резерв места', 'book_stock')],
+      [Markup.button.callback('⬅️ К описанию', 'game_stock')]
     ])
   });
 });
@@ -2354,59 +2321,53 @@ bot.action('details_stock', async (ctx) => {
 
 bot.action('game_dating', async (ctx) => {
   await ctx.deleteMessage().catch(() => {});
-  const text = `💘 <b>Быстрые свидания (Speed Dating)</b>\n\n` +
-    `💰 <b>Стоимость:</b> 50 zł\n` +
-    `⏳ <b>Время:</b> 1 час 15 минут\n` +
-    `👥 <b>Формат:</b> 12 человек (6 девушек + 6 парней). Строгий баланс!\n\n` +
-    `6 шансов на знакомство за один вечер. Бот сам выдаст номера, запустит таймер и подскажет темы для разговора. Никакой неловкости, только мэтчи! ✨\n\n` +
-    `🍲 <b>Важно:</b> Еда и напитки оплачиваются отдельно на месте.`+
-    `📸 <b>Как это выглядит?</b> Загляни в наш <a href="https://www.instagram.com/algorythm.pl/">Instagram</a> — мы часто делимся там вайбом наших вечеринок!\n\n` +
-    `👇 <i>Узнать пошагово, как всё проходит — нажимай «Подробнее о формате»!</i>`;
+  const text = `💘 <b>Speed Dating: Algorythm</b>\n\n` +
+               `💰 <b>Депозит:</b> 50 zł\n` +
+               `⏳ <b>Регламент:</b> 75 минут\n` +
+               `👥 <b>Лимит:</b> 12 персон (строгий гендерный баланс).\n\n` +
+               `Формат скоростных встреч, модерируемый системой. Мы гарантируем точность тайминга и релевантность участников.`;
     
-  return ctx.replyWithPhoto('AgACAgIAAxkBAAJsVWmoFu2cuiFaxNIpnbhFctKuaikYAAJ0JGsbvMtASZReRS5fzrhPAQADAgADeQADOgQ', { 
+  return ctx.replyWithPhoto('...', { 
     caption: text, parse_mode: 'HTML', 
     ...Markup.inlineKeyboard([
-      [Markup.button.callback('📅 Записаться', 'book_dating')], 
-      [Markup.button.callback('👀 Подробнее о формате', 'details_dating')],
+      [Markup.button.callback('📅 Резерв места', 'book_dating')], 
+      [Markup.button.callback('📜 Регламент формата', 'details_dating')],
+      [Markup.button.url('📸 Архив атмосферы', 'https://www.instagram.com/algorythm.pl/')],
       [Markup.button.callback('🔙 Назад', 'back_to_games')]
     ]) 
   });
 });
 
 bot.action('details_dating', async (ctx) => {
-  const text = `💘 <b>Как проходят Свидания (Пошагово):</b>\n\n` +
-    `<b>1. Подготовка 🤫</b>\nЗа 3 часа до старта бот пришлет тебе адрес и твой личный игровой номер (например, №4).\n\n` +
-    `<b>2. Рассадка 🪑</b>\nДевушки занимают свои столики и остаются за ними весь вечер. Парни пересаживаются от столика к столику по команде бота.\n\n` +
-    `<b>3. Раунды по 10 минут ⏱</b>\nБот объявляет старт раунда и присылает вам обоим классную тему для начала разговора (чтобы не было банального "Кем работаешь?"). Через 10 минут бот скажет парням пересесть.\n\n` +
-    `<b>4. Карточки симпатий 📝</b>\nУ тебя будет карточка. Понравился человек? Ставь галочку напротив его номера.\n\n` +
-    `<b>5. Магия Мэтчей ❤️</b>\nСразу после игры организаторы внесут данные в систему. Если симпатия оказалась взаимной, бот пришлет вам контакты друг друга. Никто не узнает о твоем отказе или симпатии, если она не совпала!`;
+  const text = `💘 <b>Speed Dating: Протокол</b>\n\n` +
+    `1. <b>Верификация:</b> Система выдает вам уникальный игровой номер за 3 часа до начала.\n` +
+    `2. <b>Раунды:</b> Серия встреч по 10 минут. Система уведомляет о смене собеседника.\n` +
+    `3. <b>Симпатии:</b> Фиксация интереса происходит внутри бота.\n` +
+    `4. <b>Мэтчи:</b> В случае взаимного выбора система обменивает вас контактами. Конфиденциальность гарантирована.`;
 
   return ctx.editMessageCaption(text, {
     parse_mode: 'HTML',
     ...Markup.inlineKeyboard([
-      [Markup.button.callback('📅 Записаться', 'book_dating')],
-      [Markup.button.callback('⬅️ К короткому описанию', 'game_dating')]
+      [Markup.button.callback('📅 Резерв места', 'book_dating')],
+      [Markup.button.callback('⬅️ К описанию', 'game_dating')]
     ])
   });
 });
 
 bot.action('game_thematic', async (ctx) => {
-  await ctx.deleteMessage().catch(() => {}); // Удаляем меню
-  const text = `🎭 <b>Тематический Talk and Toast</b>\n\n` +
-    `<b>Что это?</b>\n` +
-    `Стоимость: <b>35 zł</b> (Special Price!) | 2 часа\n\n` +
-    `Тот же уютный ужин TAlK&TOAST, но с фокусом на одну глубокую тему: отношения, карьера, психология или даже кино. Вопросы в этот вечер будут из специального пула.\n\n` +
-    `<b>Зачем идти?</b>\n` +
-    `• Погрузиться в конкретную тему с новыми людьми.\n` +
-    `• Поделиться своим опытом и услышать других.\n` +
-    `• Вечер всё так же модерирует бот, создавая идеальный вайб ✨\n\n` +
-    `🍲 <b>Важно:</b> Еда и напитки оплачиваются отдельно на месте.`;
+  await ctx.deleteMessage().catch(() => {});
+  const text = `🎭 <b>Thematic Sessions</b>\n\n` +
+               `Специализированные форматы Algorythm, сфокусированные на конкретной экспертной области: от психологии и личной эффективности до стратегий бизнеса.\n\n` +
+               `💰 <b>Депозит:</b> 35 zł\n` +
+               `⏳ <b>Регламент:</b> 2 часа\n\n` +
+               `<i>👇 Выберите дату, чтобы ознакомиться с темой ближайшей сессии.</i>`;
 
-  return ctx.replyWithPhoto('AgACAgIAAxkBAAJsWGmoFvsm3BqPsINmVcp2zenyXWFhAAJ1JGsbvMtASX1oH3lkXAGfAQADAgADeQADOgQ', { 
+  return ctx.replyWithPhoto('...', { 
     caption: text,
     parse_mode: 'HTML', 
     ...Markup.inlineKeyboard([
       [Markup.button.callback('📅 Посмотреть темы и даты', 'book_thematic')], 
+      [Markup.button.url('📸 Архив атмосферы', 'https://www.instagram.com/algorythm.pl/')],
       [Markup.button.callback('🔙 Назад', 'back_to_games')]
     ]) 
   });
@@ -2598,9 +2559,10 @@ bot.action(/exec_canc_(\d+)/, async (ctx) => {
     // 3. Проверка времени (36 часов)
     const eventDate = DateTime.fromFormat(event.dateString, "dd.MM.yyyy HH:mm", { zone: 'Europe/Warsaw' });
     if (eventDate.diffNow('hours').hours < 36) {
-        return ctx.replyWithHTML(
-    `⚠️ <b>Ой, кажется, уже поздновато...</b>\n\n` +
-    `Согласно правилам клуба, отмена с возвратом возможна не позднее чем за <b>36 часов</b> до начала встречи. На этом этапе мы уже забронировали место и подготовили всё для твоего участия.\n\n`
+        return ctx.reply(
+    `❌ <b>Лимит участников достигнут.</b>\n\n` +
+    `На данный момент доступных мест нет. Вы можете добавить себя в лист ожидания — система оповестит вас, если слот освободится.`, 
+    Markup.inlineKeyboard([[Markup.button.callback('⏳ Встать в лист ожидания', `waitlist_add_${eid}`)]])
 );
     }
     
@@ -2637,10 +2599,8 @@ bot.action(/exec_canc_(\d+)/, async (ctx) => {
         .where(eq(schema.events.id, event.id));
 
     await ctx.editMessageText(
-    `✅ <b>Запись успешно отменена</b>\n\n` +
-    `Жаль, что не получится встретиться в этот раз! Твоё место освобождено для ребят из листа ожидания.\n\n` +
-    `🧧 <b>Твой возврат:</b> Для оформления возврата средств, пожалуйста, напиши в поддержку (кнопка 🆘 Помощь)\n\n` +
-    `До встречи в следующий раз! 🥂`,
+    `✅ <b>Бронирование аннулировано.</b>\n\n` +
+    `Слот освобожден для других участников. Для оформления возврата средств обратитесь в поддержку (раздел 🆘 Помощь).`,
     { parse_mode: 'HTML' }
 );
 
@@ -2865,9 +2825,9 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
         );
 
     } catch (e) { 
-        console.error(e); 
-        ctx.reply('❌ Ошибка связи со Stripe. Напиши в поддержку!'); 
-    }
+    console.error(e); 
+    ctx.reply('❌ <b>Ошибка транзакции.</b>\n\nПопробуйте повторить запрос позже или обратитесь в службу поддержки через раздел 🆘 Помощь.', { parse_mode: 'HTML' }); 
+}
     
     PENDING_PAYMENTS.set(user.id, { time: DateTime.now(), notified: false });
 });
@@ -3216,7 +3176,7 @@ bot.command('reschedule', async (ctx) => {
         // 1. Проверяем формат новой даты
         const checkDate = DateTime.fromFormat(newDateStr, "dd.MM.yyyy HH:mm", { zone: 'Europe/Warsaw' });
         if (!checkDate.isValid) {
-            return ctx.reply('❌ Ошибка формата даты! Нужно: ДД.ММ.ГГГГ ЧЧ:ММ (например 20.01.2026 18:30)');
+            return ctx.reply('❌ Ошибка: Некорректный формат даты. Используйте: ДД.ММ.ГГГГ ЧЧ:ММ');
         }
 
         const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
@@ -4255,12 +4215,12 @@ bot.action(/do_rate_(\d+)_(\d+)_(\w+)/, async (ctx) => {
          if (action === 'alert') {
             // АЛЕРТ АДМИНУ
             await bot.telegram.sendMessage(ADMIN_ID, 
-                `🚨 <b>ЖАЛОБА НА УЧАСТНИКА!</b>\n\n` +
-                `Кто жалуется: <b>${rater.name}</b> (@${rater.username || 'скрыт'})\n` +
-                `На кого: <b>${target.name}</b> (@${target.username || 'скрыт'} | ID: <code>${target.telegramId}</code>)\n` +
-                `📍 Игра: №${eventId} (${event.dateString})\n\n` +
-                `Требуется проверка!`,
-                { parse_mode: 'HTML' }
+    `🚨 <b>ИНЦИДЕНТ: ЖАЛОБА</b>\n\n` +
+    `Инициатор: <b>${rater.name}</b>\n` +
+    `Объект проверки: <b>${target.name}</b>\n` +
+    `Событие: №${eventId} (${event.dateString})\n\n` +
+    `Требуется аудит взаимодействия.`,
+    { parse_mode: 'HTML' }
             );
          } else {
             const stars = parseInt(action);
@@ -4288,11 +4248,11 @@ bot.action(/do_rate_(\d+)_(\d+)_(\w+)/, async (ctx) => {
             if (stars <= 3) {
                  // НИЗКАЯ ОЦЕНКА АДМИНУ
                  await bot.telegram.sendMessage(ADMIN_ID, 
-                    `⚠️ <b>НИЗКАЯ ОЦЕНКА: ${stars} ⭐️</b>\n\n` +
-                    `От: <b>${rater.name}</b>\n` +
-                    `Кому: <b>${target.name}</b> (@${target.username || 'скрыт'} | ID: <code>${target.telegramId}</code>)\n` +
-                    `📍 Игра: №${eventId} (${event.dateString})`,
-                    { parse_mode: 'HTML' }
+    `⚠️ <b>LOW RATING: ${stars} ⭐️</b>\n\n` +
+    `Автор: <b>${rater.name}</b>\n` +
+    `Оценка: <b>${target.name}</b>\n` +
+    `Событие: №${eventId}`,
+    { parse_mode: 'HTML' }
                 );
             }
          }
@@ -4857,21 +4817,22 @@ async function handleSuccessfulPayment(session: any) {
   }
 
 // 6. Пишем юзеру радостную весть
-  let messageText = `🎉 <b>Оплата прошла успешно! Ты в игре!</b>\n\n` +
-                    `Мы очень рады тебя видеть ❤️\n\n` +
-                    `📍 Адрес и вся информация придёт ровно за 3 часа до начала.\n` +
-                    `• Отмена возможна за 36 часов\n` +
-                    `• Еда и напитки — за отдельную плату\n\n` +
-                    `Ждём тебя! Это будет особенный вечер 🥂`;
+  let messageText = `✅ <b>Резерв подтвержден.</b>\n\n` +
+                      `Ваше участие в вечере "${event.type}" зафиксировано.\n\n` +
+                      `📍 <b>Регламент:</b>\n` +
+                      `• Инструкции и точный адрес поступят в этот чат за 3 часа до начала.\n` +
+                      `• Отмена с возвратом депозита возможна не позднее чем за 36 часов.\n` +
+                      `• Заказы по бару и кухне оплачиваются отдельно на месте.\n\n` +
+                      `До встречи.`;
 
-  await bot.telegram.sendMessage(tId, messageText, { parse_mode: 'HTML' }).catch(() => {});
-  PENDING_PAYMENTS.delete(user.id);
-  
-  // Отправляем лог админу
-  await sendLog('ОПЛАТА БИЛЕТА 💳', `👤 Игрок: <b>${user.name}</b> (@${user.username || 'скрыт'})\n🎫 Игра: №${eId} (${event.type})`);
+ await bot.telegram.sendMessage(tId, messageText, { parse_mode: 'HTML' }).catch(() => {});
+    PENDING_PAYMENTS.delete(user.id);
+    
+    // Лог админу теперь звучит суше
+    await sendLog('ТРАНЗАКЦИЯ', `👤 Гость: <b>${user.name}</b>\n🎫 Резерв: №${eId}`);
 
   } catch (e) {
-    console.error("Ошибка в handleSuccessfulPayment:", e);
+    console.error("Payment Error:", e);
   }
 }
  
