@@ -1793,9 +1793,9 @@ const refLink = `https://t.me/${ctx.botInfo.username}?start=ref_${user.id}`;
             caption: msg,
             parse_mode: 'HTML',
             ...Markup.inlineKeyboard([
-                [Markup.button.url('🚀 Переслать приглашение', `https://t.me/share/url?url=${encodeURIComponent('Привет! Присоединяйся к Algorythm — закрытое сообщество для нетворкинга и игр: ' +
-                [Markup.button.callback('⬅️ Назад в кабинет', 'back_to_cabinet')]
-            ])
+            [Markup.button.url('🚀 Переслать приглашение', `https://t.me/share/url?url=${encodeURIComponent('Привет! Присоединяйся к Algorythm — закрытое сообщество для нетворкинга и игр: ' + refLink)}`)],
+            [Markup.button.callback('⬅️ Назад в кабинет', 'back_to_cabinet')]
+        ])
         }).catch(async (err) => {
             console.error('Ошибка отправки фото рефералки:', err);
             // Если фото не прошло, отправляем просто текст с кнопками
