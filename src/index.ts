@@ -2561,38 +2561,33 @@ bot.action(/exec_canc_(\d+)/, async (ctx) => {
     // 3. Проверка времени (36 часов)
     const eventDate = DateTime.fromFormat(event.dateString, "dd.MM.yyyy HH:mm", { zone: 'Europe/Warsaw' });
     if (eventDate.diffNow('hours').hours < 36) {
-        return ctx.reply(
-    `❌ <b>Лимит участников достигнут.</b>\n\n` +
-    `На данный момент доступных мест нет. Вы можете добавить себя в лист ожидания — система оповестит вас, если слот освободится.`, 
-    Markup.inlineKeyboard([[Markup.button.callback('⏳ Встать в лист ожидания', `waitlist_add_${eid}`)]])
-);
+        return ctx.replyWithHTML(
+            `⚠️ <b>Ой, кажется, уже поздновато...</b>\n\n` +
+            `Согласно правилам клуба, отмена с возвратом возможна не позднее чем за <b>36 часов</b> до начала встречи.`
+        );
     }
     
     // 4. БЕЗОПАСНЫЙ ВОЗВРАТ ВАУЧЕРА
-    // Ищем ваучер, который был помечен как 'used' ИМЕННО для этой игры (eventId)
-    // Поле usedInEventId должно быть добавлено в таблицу vouchers
     const usedVoucher = await db.query.vouchers.findFirst({ 
         where: and(
             eq(schema.vouchers.userId, booking.userId), 
             eq(schema.vouchers.status, 'used'),
-            eq(schema.vouchers.usedInEventId, booking.eventId) // Находим именно тот, что тратили тут
+            eq(schema.vouchers.usedInEventId, booking.eventId)
         ) 
     });
 
     if (usedVoucher) {
-        // Возвращаем статус в зависимости от того, была это скидка или фри-билет
         await db.update(schema.vouchers)
             .set({ 
                 status: usedVoucher.photoFileId ? 'approved_free' : 'approved_10',
-                usedInEventId: null // Очищаем связь с игрой
+                usedInEventId: null 
             })
             .where(eq(schema.vouchers.id, usedVoucher.id));
     }
     
-    // 5. Удаляем запись из базы
-	// Логируем отмену
+    // 5. Удаляем запись
     const u = await db.query.users.findFirst({ where: eq(schema.users.id, booking.userId) });
-    await sendLog('ОТМЕНА ЗАПИСИ ❌', `👤 Игрок: <b>${u?.name}</b> (@${u?.username || 'скрыт'})\n🎫 Игра: №${event.id} (${event.type})\n⏳ До старта: ${eventDate.diffNow('hours').hours.toFixed(1)} ч.\n⚠️ Требуется оформить возврат в Stripe!`);
+    await sendLog('ОТМЕНА ЗАПИСИ ❌', `👤 Игрок: <b>${u?.name}</b> (@${u?.username || 'скрыт'})\n🎫 Игра: №${event.id} (${event.type})\n⚠️ Место освобождено.`);
     await db.delete(schema.bookings).where(eq(schema.bookings.id, bookingId));
 
     // 6. Уменьшаем количество игроков
@@ -2601,12 +2596,12 @@ bot.action(/exec_canc_(\d+)/, async (ctx) => {
         .where(eq(schema.events.id, event.id));
 
     await ctx.editMessageText(
-    `✅ <b>Бронирование аннулировано.</b>\n\n` +
-    `Слот освобожден для других участников. Для оформления возврата средств обратитесь в поддержку (раздел 🆘 Помощь).`,
-    { parse_mode: 'HTML' }
-);
+        `✅ <b>Бронирование аннулировано.</b>\n\n` +
+        `Слот освобожден для других участников. Для оформления возврата средств обратитесь в поддержку (раздел 🆘 Помощь).`,
+        { parse_mode: 'HTML' }
+    );
 
-    // 7. МАГИЯ ОЧЕРЕДИ: Сразу зовем следующего человека из Waitlist
+    // 7. МАГИЯ ОЧЕРЕДИ
     await notifyNextInWaitlist(event.id, event.type, event.dateString);
 });
 
