@@ -2205,8 +2205,9 @@ await addUsedTopic(currentEvent.id, randomTopic);
       if (u?.name) playerNames.push({ id: u.id, name: u.name });
     }
 
-    const winner = playerNames[Math.floor(Math.random() * playerNames.length)];
-    await broadcastToEvent(currentEvent.id,`🎲 <b>Тема для обсуждения:</b>\n\n«${randomTopic}»\n\n🎙 <i>Предлагаем начать дискуссию участнику №${winner?.name || 'по выбору стола'}.</i>`;
+const winner = playerNames[Math.floor(Math.random() * playerNames.length)];
+    // Исправлено: убрана лишняя ")" перед ";"
+    await broadcastToEvent(currentEvent.id, `🎲 <b>Тема для обсуждения:</b>\n\n«${randomTopic}»\n\n🎙 <i>Предлагаем начать дискуссию участнику №${winner?.name || 'по выбору стола'}.</i>`);
     return ctx.reply("✅ Тема направлена в общий чат.");
   }
 });
