@@ -2358,13 +2358,12 @@ bot.action('details_dating', async (ctx) => {
 bot.action('game_thematic', async (ctx) => {
   await ctx.deleteMessage().catch(() => {});
   const text = `🎭 <b>Thematic Sessions</b>\n\n` +
-               `Специализированные форматы Algorythm, сфокусированные на конкретной экспертной области: от психологии и личной эффективности до стратегий бизнеса.\n\n` +
-               `💰 <b>Депозит:</b> 75 zł\n` +
-               `⏳ <b>Регламент:</b> 2 часа\n\n` +
-               `<i>👇 Выберите дату, чтобы ознакомиться с темой ближайшей сессии.</i>`;
+    `Специализированные форматы Algorythm, сфокусированные на конкретной экспертной области: от психологии и личной эффективности до стратегий бизнеса.\n\n` +
+    `💰 <b>Депозит:</b> 75 zł\n` +
+    `⏳ <b>Регламент:</b> 2 часа\n\n` +
+    `<i>👇 Выберите дату, чтобы ознакомиться с темой ближайшей сессии.</i>`;
 
-  return ctx.replyWithPhoto('AgACAgIAAxkBAAEBWORqN-vx3lzTu457Mrxy4zHybHJUzwACBRxrG2IxqEluegM-WgF66AEAAwIAA3kAAzwE
-', { 
+  return ctx.replyWithPhoto('AgACAgIAAxkBAAEBWORqN-vx3lzTu457Mrxy4zHybHJUzwACBRxrG2IxqEluegM-WgF66AEAAwIAA3kAAzwE', { 
     caption: text,
     parse_mode: 'HTML', 
     ...Markup.inlineKeyboard([
