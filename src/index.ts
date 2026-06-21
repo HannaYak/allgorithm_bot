@@ -1931,7 +1931,7 @@ bot.action('game_tiffany', async (ctx) => {
                `⏳ <b>Время:</b> 2 часа\n\n` +
                `👇 <i>Узнать пошагово, как всё проходит — нажимай «Подробнее о формате»!</i>`;
 
-  return ctx.replyWithPhoto('AgACAgIAAxkBAAEBGfVqB1qtg2JrlkEDRxgzI3k6MYjM3wACLRdrG-uQQUhAtMr_b8vGdwEAAwIAA3kAAzsE', { 
+  return ctx.replyWithPhoto('AgACAgIAAxkBAAEBWOBqN-vUqL8xfsElDXQj_AOyu862PgACQxxrG2IxqEm4_Ane0-vYswEAAwIAA3kAAzwE', { 
     caption: text, 
     parse_mode: 'HTML', 
     ...Markup.inlineKeyboard([
@@ -1954,7 +1954,7 @@ bot.action('game_lockload', async (ctx) => {
                `⏳ <b>Формат:</b> Talk & Toast (Strategic)\n\n` +
                `👇 <i>Узнать пошагово, как всё проходит — нажимай «Подробнее о формате»!</i>`;
 
-  return ctx.replyWithPhoto('AgACAgIAAxkBAAEBGfdqB1yjP-CnLuOhnzSUkw54ZvYnAwACNRdrG-uQQUj8d0eo3mThUAEAAwIAA3kAAzsE', { 
+  return ctx.replyWithPhoto('AgACAgIAAxkBAAEBWORqN-vx3lzTu457Mrxy4zHybHJUzwACBRxrG2IxqEluegM-WgF66AEAAwIAA3kAAzwE', { 
     caption: text, 
     parse_mode: 'HTML', 
     ...Markup.inlineKeyboard([
@@ -2248,7 +2248,7 @@ bot.action('game_talk', async (ctx) => {
                `⏳ <b>Регламент:</b> 2 часа\n\n` +
                `<i>👇 Выберите «Регламент», чтобы ознакомиться с механикой, или изучите архив наших встреч.</i>`;
 
-  return ctx.replyWithPhoto('...', { 
+  return ctx.replyWithPhoto('AgACAgIAAxkBAAEBWOJqN-vg70FjhRdPOvMMEk8H2wtlqwACRhxrG2IxqEnoRQ6ubfa8KwEAAwIAA3gAAzwE', { 
     caption: text, parse_mode: 'HTML', 
     ...Markup.inlineKeyboard([
       [Markup.button.callback('📅 Резерв места', 'book_talk')], 
@@ -2288,7 +2288,7 @@ bot.action('game_stock', async (ctx) => {
                `⏳ <b>Регламент:</b> 2 часа\n\n` +
                `<i>👇 Выберите «Регламент», чтобы ознакомиться с правилами ставок.</i>`;
   
-  return ctx.replyWithPhoto('...', { 
+  return ctx.replyWithPhoto('AgACAgIAAxkBAAEBWOhqN-wrSCqbGUFnhqVvC2qIddqd8gACAhxrG2IxqEk41eEq3DlmmwEAAwIAA3kAAzwE', { 
     caption: text, 
     parse_mode: 'HTML', 
     ...Markup.inlineKeyboard([
@@ -2328,7 +2328,7 @@ bot.action('game_dating', async (ctx) => {
                `👥 <b>Лимит:</b> 12 персон (строгий гендерный баланс).\n\n` +
                `Формат скоростных встреч, модерируемый системой. Мы гарантируем точность тайминга и релевантность участников.`;
     
-  return ctx.replyWithPhoto('...', { 
+  return ctx.replyWithPhoto('AgACAgIAAxkBAAEBWOpqN-xisocJq2poAq13s02a9vW-UAACfBtrG3JBwEnLLttfBDNkQQEAAwIAA3kAAzwE', { 
     caption: text, parse_mode: 'HTML', 
     ...Markup.inlineKeyboard([
       [Markup.button.callback('📅 Резерв места', 'book_dating')], 
@@ -2359,11 +2359,12 @@ bot.action('game_thematic', async (ctx) => {
   await ctx.deleteMessage().catch(() => {});
   const text = `🎭 <b>Thematic Sessions</b>\n\n` +
                `Специализированные форматы Algorythm, сфокусированные на конкретной экспертной области: от психологии и личной эффективности до стратегий бизнеса.\n\n` +
-               `💰 <b>Депозит:</b> 35 zł\n` +
+               `💰 <b>Депозит:</b> 75 zł\n` +
                `⏳ <b>Регламент:</b> 2 часа\n\n` +
                `<i>👇 Выберите дату, чтобы ознакомиться с темой ближайшей сессии.</i>`;
 
-  return ctx.replyWithPhoto('...', { 
+  return ctx.replyWithPhoto('AgACAgIAAxkBAAEBWORqN-vx3lzTu457Mrxy4zHybHJUzwACBRxrG2IxqEluegM-WgF66AEAAwIAA3kAAzwE
+', { 
     caption: text,
     parse_mode: 'HTML', 
     ...Markup.inlineKeyboard([
