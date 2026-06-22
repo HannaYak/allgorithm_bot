@@ -2130,12 +2130,10 @@ bot.hears('🎲 Новая тема', async (ctx) => {
 
   if (!currentEvent) return ctx.reply("❌ Кнопка доступна только во время активной игры.");
 
-let usedSet = await getUsedTopics(currentEvent.id);
+  let usedSet = await getUsedTopics(currentEvent.id);
 
   // --- ЛОГИКА ДЛЯ СВИДАНИЙ ---
-// --- ЛОГИКА ДЛЯ СВИДАНИЙ ---
   if (currentEvent.type.startsWith('speed_dating')) {
-    // 🔥 ТЕПЕРЬ БЕРЕМ ИЗ БАЗЫ ДАННЫХ
     const sdState = await getSpeedDatingState(currentEvent.id);
     const ps = Object.values(sdState.participants) as any[];
     const me = ps.find(p => p.id === ctx.from.id);
@@ -2145,18 +2143,20 @@ let usedSet = await getUsedTopics(currentEvent.id);
     const available = CONVERSATION_TOPICS.filter(t => !usedSet.has(t));
     const pool = available.length > 0 ? available : CONVERSATION_TOPICS; 
     const randomTopic = pool[Math.floor(Math.random() * pool.length)];
+    
     usedSet.add(randomTopic); 
+    await addUsedTopic(currentEvent.id, randomTopic);
 
     const round = sdState.currentRound;
-    const women = ps.filter(p => p.gender.toLowerCase().includes('жен')).sort((a,b) => a.num - b.num);
-    const men = ps.filter(p => p.gender.toLowerCase().includes('муж')).sort((a,b) => a.num - b.num);
+    const women = ps.filter((p: any) => p.gender.toLowerCase().includes('жен')).sort((a: any, b: any) => a.num - b.num);
+    const men = ps.filter((p: any) => p.gender.toLowerCase().includes('муж')).sort((a: any, b: any) => a.num - b.num);
     
     let partner;
     if (me.gender === 'Женщина') {
-      const i = women.findIndex(w => w.id === me.id);
+      const i = women.findIndex((w: any) => w.id === me.id);
       partner = men[(i + round - 1) % men.length];
     } else {
-      const j = men.findIndex(m => m.id === me.id);
+      const j = men.findIndex((m: any) => m.id === me.id);
       const womanIndex = ((j - (round - 1)) % women.length + women.length) % women.length;
       partner = women[womanIndex];
     }
@@ -2169,7 +2169,7 @@ let usedSet = await getUsedTopics(currentEvent.id);
     return ctx.reply("✅ Тема отправлена паре!");
   } 
 
- // --- ЛОГИКА ДЛЯ ТИФФАНИ, LOCKLOAD И ОБЫЧНЫХ ---
+  // --- ЛОГИКА ДЛЯ ТИФФАНИ, LOCKLOAD И ОБЫЧНЫХ ---
   else {
     let poolRaw: string[] = [];
     
@@ -2186,26 +2186,19 @@ let usedSet = await getUsedTopics(currentEvent.id);
             }
         }
         poolRaw = levels[activeLevelIndex].questions;
-        
     } else {
         poolRaw = CONVERSATION_TOPICS;
     }
    
-const available = poolRaw.filter(t => !usedSet.has(t));
-    
-    // 2. Проверяем, остались ли темы
+    const available = poolRaw.filter(t => !usedSet.has(t));
     if (available.length === 0) {
         return ctx.reply("✨ Лимит предложенных тем исчерпан. Дискуссия продолжается в свободном формате.");
     }
 
-    // 3. Выбираем случайную тему
     const randomTopic = available[Math.floor(Math.random() * available.length)];
-    
-    // 4. Добавляем в Set и в базу
     usedSet.add(randomTopic);
     await addUsedTopic(currentEvent.id, randomTopic); 
 
-    // 5. Дальше идет получение списка участников...
     const allParticipants = await db.query.bookings.findMany({
         where: and(eq(schema.bookings.eventId, currentEvent.id), eq(schema.bookings.paid, true))
     });
@@ -2216,9 +2209,8 @@ const available = poolRaw.filter(t => !usedSet.has(t));
       if (u?.name) playerNames.push({ id: u.id, name: u.name });
     }
 
-const winner = playerNames[Math.floor(Math.random() * playerNames.length)];
-    // Исправлено: убрана лишняя ")" перед ";"
-    await broadcastToEvent(currentEvent.id, `🎲 <b>Тема для обсуждения:</b>\n\n«${randomTopic}»\n\n🎙 <i>Предлагаем начать дискуссию участнику №${winner?.name || 'по выбору стола'}.</i>`);
+    const winner = playerNames[Math.floor(Math.random() * playerNames.length)];
+    await broadcastToEvent(currentEvent.id, `🎲 <b>Тема для обсуждения:</b>\n\n«${randomTopic}»\n\n🎙 <i>Предлагаем начать дискуссию участнику: ${winner?.name || 'по выбору стола'}.</i>`);
     return ctx.reply("✅ Тема направлена в общий чат.");
   }
 });
