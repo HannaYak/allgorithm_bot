@@ -8,6 +8,7 @@
     "db:push": "drizzle-kit push:pg"
   },
   "dependencies": {
+    "date-fns": "^4.1.0",
     "telegraf": "^4.16.3",
     "drizzle-orm": "^0.30.10",
     "postgres": "^3.4.4",
