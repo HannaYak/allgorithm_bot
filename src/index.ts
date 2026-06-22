@@ -4571,21 +4571,7 @@ bot.action('view_stock_leaderboard', async (ctx) => {
 
 // Штука для получения file_id фото (только для админа)
 // Команда-помощник для получения file_id любого изображения
-bot.on('photo', async (ctx, next) => {
-    // Проверяем, что сообщение прислал именно ты (Админ)
-    if (ctx.from.id === ADMIN_ID) {
-        // Берем самое последнее фото в массиве (оно обычно в самом высоком разрешении)
-        const photo = ctx.message.photo[ctx.message.photo.length - 1];
-        
-        return ctx.replyWithHTML(
-            `🆔 <b>File ID данного изображения:</b>\n\n` +
-            `<code>${photo.file_id}</code>\n\n` +
-            `<i>Скопируйте код выше для использования в методах sendPhoto.</i>`
-        );
-    }
-    // Если это не админ, просто продолжаем обработку
-    return next();
-});
+
 
 // ВРЕМЕННАЯ КОМАНДА ДЛЯ ЗАГРУЗКИ ПРОШЛОЙ ИГРЫ
 bot.command('backfill_114', async (ctx) => {
