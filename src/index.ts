@@ -1134,6 +1134,12 @@ function getMainKeyboard(showTopicButton = false) {
 setInterval(async () => {
   try {
     const now = DateTime.now().setZone('Europe/Warsaw');
+    
+    // 1. Очистка старых стейтов и БЭКАП в 4:00 утра
+    if (now.hour === 4 && now.minute === 0) {
+      await cleanupOldAutoStates();
+      await createBackup(); // Теперь это внутри try, всё отлично
+    }
     const activeEvents = await db.query.events.findMany();
 
     for (const event of activeEvents) {
