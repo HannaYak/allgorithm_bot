@@ -842,7 +842,7 @@ const registerWizard = new Scenes.WizardScene(
     if (!ctx.message || !('text' in ctx.message)) return;
 
     ctx.wizard.state.name = ctx.message.text.trim();
-    await ctx.reply('<b>2. Твой возраст?</b> (Укажи число)');
+    await ctx.replyWithHTML('<b>2. Твой возраст?</b> (Укажи число)'); 
     return ctx.wizard.next();
   },
 
@@ -859,7 +859,7 @@ const registerWizard = new Scenes.WizardScene(
     ctx.wizard.state.age = age.toString();
 
     // Выводим клавиатуру выбора пола
-    await ctx.reply(
+    await ctx.replyWithHTML(
       '<b>3. Твой пол:</b>',
       Markup.keyboard([['Мужчина', 'Женщина']]).oneTime().resize()
     );
