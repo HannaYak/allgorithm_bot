@@ -9,6 +9,7 @@ import Stripe from 'stripe';
 import { DateTime } from 'luxon';
 import * as SD from './speedDating';
 import { users, events, bookings, vouchers, secretLikes, ratings } from '../drizzle/schema';
+import { createBackup } from './backup';
 
 let IS_BROADCASTING = false; 
 const PENDING_PAYMENTS = new Map<number, { time: DateTime, notified: boolean }>();// Этот "замок" не даст запустить две рассылки одновременно
@@ -4933,8 +4934,23 @@ app.post('/stripe-webhook', express.raw({ type: 'application/json' }), async (re
   res.json({ received: true });
 });
 
+import { createBackup } from './backup'; // Импортируй функцию
+
+// Маршрут для бэкапа
+app.get('/cron/backup', async (req, res) => {
+    // Простая защита, чтобы никто левый не запустил бэкап
+    const secret = req.headers['x-cron-secret'];
+    if (secret !== process.env.CRON_SECRET) {
+        return res.status(403).send('Unauthorized');
+    }
+    
+    await createBackup();
+    res.send('Backup process triggered');
+});
+
 app.use(express.json());
 app.use(bot.webhookCallback('/telegraf-webhook'));
+
 
 const PORT = process.env.PORT || 3000;
 const WEBHOOK_URL = process.env.TELEGRAM_WEBHOOK_URL;
