@@ -2191,19 +2191,23 @@ let usedSet = await getUsedTopics(currentEvent.id);
         poolRaw = CONVERSATION_TOPICS;
     }
    
-await addUsedTopic(currentEvent.id, randomTopic);
+const available = poolRaw.filter(t => !usedSet.has(t));
+    
+    // 2. Проверяем, остались ли темы
+    if (available.length === 0) {
+        return ctx.reply("✨ Лимит предложенных тем исчерпан. Дискуссия продолжается в свободном формате.");
+    }
 
-    const available = poolRaw.filter(t => !usedSet.has(t));
-    // ПОТОМ проверяем, не закончились ли они
-   if (available.length === 0) {
-    return ctx.reply("✨ Лимит предложенных тем исчерпан. Дискуссия продолжается в свободном формате.");
-}
-
+    // 3. Выбираем случайную тему
     const randomTopic = available[Math.floor(Math.random() * available.length)];
+    
+    // 4. Добавляем в Set и в базу
     usedSet.add(randomTopic);
+    await addUsedTopic(currentEvent.id, randomTopic); 
 
+    // 5. Дальше идет получение списка участников...
     const allParticipants = await db.query.bookings.findMany({
-      where: and(eq(schema.bookings.eventId, currentEvent.id), eq(schema.bookings.paid, true))
+        where: and(eq(schema.bookings.eventId, currentEvent.id), eq(schema.bookings.paid, true))
     });
 
     const playerNames = [];
