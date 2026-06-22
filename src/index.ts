@@ -2885,19 +2885,21 @@ bot.action(/confirm_pay_(\d+)/, async (ctx) => {
 
         // Проверяем, не записан ли он уже (чтобы не было дублей)
         const existing = await db.query.bookings.findFirst({ 
-            where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.eventId, eid)) 
-        });
-        if (existing?.paid) return ctx.editMessageText('✅ Ты уже в списке участников! Инструкция придет за 3 часа.');
+    where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.eventId, eid)) 
+});
 
-        // Жесткая проверка лимита перед записью
-        if (realBookingsCount.length >= event.maxPlayers) {
-             return ctx.reply("🚨 Ой! Кажется, пока шла оплата, последний слот заняли. Напиши в поддержку (SOS), мы вернем деньги!");
-        }
+if (existing?.paid) return ctx.editMessageText('✅ Ты уже в списке участников!');
 
-        // Записываем и обновляем счетчик по факту (real count + 1)
-        PENDING_PAYMENTS.delete(user.id);
-		// Отправляем лог админу
-        await sendLog('ОПЛАТА БИЛЕТА 💳 (Ручная кнопка)', `👤 Игрок: <b>${user.name}</b> (@${user.username || 'скрыт'})\n🎫 Игра: №${eid} (${event.type})`);
+// Записываем через транзакцию
+await db.transaction(async (tx) => {
+    await tx.insert(schema.bookings).values({ userId: user.id, eventId: eid, paid: true });
+    await tx.update(schema.events)
+        .set({ currentPlayers: sql`${schema.events.currentPlayers} + 1` })
+        .where(eq(schema.events.id, eid));
+});
+
+PENDING_PAYMENTS.delete(user.id);
+await sendLog('ОПЛАТА 💳', `👤 Игрок: <b>${user.name}</b>\n🎫 Игра: №${eid}`);
         await db.insert(schema.bookings).values({ userId: user.id, eventId: eid, paid: true });
         await db.update(schema.events).set({ currentPlayers: realBookingsCount.length + 1 }).where(eq(schema.events.id, eid));
         
@@ -4709,112 +4711,114 @@ bot.action(/check_conf_id_(\d+)/, async (ctx) => {
 
 
 
-// --- АВТОМАТИЧЕСКАЯ ЗАПИСЬ ПОСЛЕ ОПЛАТЫ (WEBHOOK) ---
-// --- АВТОМАТИЧЕСКАЯ ЗАПИСЬ ПОСЛЕ ОПЛАТЫ (WEBHOOK) ---
 async function handleSuccessfulPayment(session: any) {
-  try {
-    const metadata = session.metadata || {};
-    const { telegramId, eventId, type, voucherId } = metadata;
+    try {
+        const metadata = session.metadata || {};
+        const { telegramId, eventId, type, voucherId } = metadata;
 
-    const tId = parseInt(telegramId);
-    const eId = parseInt(eventId);
+        const tId = parseInt(telegramId);
+        const eId = parseInt(eventId);
 
-    if (isNaN(tId) || isNaN(eId)) {
-      console.error("❌ КРИТИЧЕСКАЯ ОШИБКА: telegramId или eventId не число!", metadata);
-      return;
-    }
+        if (isNaN(tId) || isNaN(eId)) {
+            console.error("❌ КРИТИЧЕСКАЯ ОШИБКА: ID не число!", metadata);
+            return;
+        }
 
-    // Дальше будем использовать tId и eId
-  
-  // 1. ЕСЛИ ЭТО ОПЛАТА "ВТОРОГО ШАНСА"
-  if (type === 'reveal') {
-      await bot.telegram.sendMessage(tId, 
-          `🎉 <b>Оплата принята!</b>\n\nТвои тайные симпатии раскрыты. Давай посмотрим, кто это был...`, 
-          { 
-              parse_mode: 'HTML',
-              ...Markup.inlineKeyboard([[Markup.button.callback('🔍 Показать список', `reveal_list_${eId}`)]])
-          }
-      );
-      return; // Выходим, чтобы не записывать на игру повторно
-  }
+        // 1. Reveal (второй шанс)
+        if (type === 'reveal') {
+            await bot.telegram.sendMessage(tId, 
+                `🎉 <b>Оплата принята!</b>\n\nТвои тайные симпатии раскрыты...`,
+                {
+                    parse_mode: 'HTML',
+                    ...Markup.inlineKeyboard([[Markup.button.callback('🔍 Показать список', `reveal_list_${eId}`)]])
+                }
+            );
+            return;
+        }
 
-      const user = await db.query.users.findFirst({ 
-      where: eq(schema.users.telegramId, tId) 
-    });
-    if (!user) return;
+        const user = await db.query.users.findFirst({ 
+            where: eq(schema.users.telegramId, tId) 
+        });
+        const event = await db.query.events.findFirst({ 
+            where: eq(schema.events.id, eId) 
+        });
 
-    const event = await db.query.events.findFirst({ 
-      where: eq(schema.events.id, eId) 
-    });
+        if (!user || !event) return;
 
-    const realBookingsCount = await db.select().from(schema.bookings)
-      .where(and(eq(schema.bookings.eventId, eId), eq(schema.bookings.paid, true)));
+        // Проверка на переполнение
+        const realBookingsCount = await db.select().from(schema.bookings)
+            .where(and(eq(schema.bookings.eventId, eId), eq(schema.bookings.paid, true)));
 
-    if (!event || realBookingsCount.length >= event.maxPlayers) {
-      await bot.telegram.sendMessage(tId, 
-        "🚨 Ой! Пока шла оплата, последний слот заняли. Напиши в поддержку, мы вернём деньги."
-      );
-      await bot.telegram.sendMessage(ADMIN_ID, `⚠️ OVERBOOKING! Юзер ${user.name} оплатил №${eId}, но лимит исчерпан.`);
-      return;
-    }
+        if (realBookingsCount.length >= event.maxPlayers) {
+            await bot.telegram.sendMessage(tId, "🚨 К сожалению, пока шла оплата, все места были заняты. Мы вернём деньги.");
+            await bot.telegram.sendMessage(ADMIN_ID, `⚠️ OVERBOOKING! Юзер ${user.name} оплатил №${eId}`);
+            return;
+        }
 
-    const existing = await db.query.bookings.findFirst({
-      where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.eventId, eId))
-    });
-  if (existing?.paid) return; 
+        await db.transaction(async (tx) => {
+            const existing = await tx.query.bookings.findFirst({
+                where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.eventId, eId))
+            });
 
-  // 3. ЗАПИСЫВАЕМ И ОБНОВЛЯЕМ СЧЕТЧИК
-    await db.insert(schema.bookings).values({ 
-      userId: user.id, 
-      eventId: eId, 
-      paid: true 
-    });
+            if (existing?.paid) return;
 
-    await db.update(schema.events)
-      .set({ currentPlayers: realBookingsCount.length + 1 })
-      .where(eq(schema.events.id, eId));
+            if (existing) {
+                await tx.update(schema.bookings).set({ paid: true }).where(eq(schema.bookings.id, existing.id));
+            } else {
+                await tx.insert(schema.bookings).values({ 
+                    userId: user.id, 
+                    eventId: eId, 
+                    paid: true 
+                });
+            }
 
-  // 4. Гасим ваучер
-    if (voucherId) {
-      await db.update(schema.vouchers)
-        .set({ status: 'used', usedInEventId: eId })
-        .where(eq(schema.vouchers.id, parseInt(voucherId)));
-    }
+            await tx.update(schema.events)
+                .set({ currentPlayers: realBookingsCount.length + 1 })
+                .where(eq(schema.events.id, eId));
 
+            if (voucherId) {
+                await tx.update(schema.vouchers)
+                    .set({ status: 'used', usedInEventId: eId })
+                    .where(eq(schema.vouchers.id, parseInt(voucherId)));
+            }
+        });
 
-// 5. Бонус рефералу (3 друга = Бесплатно)
-  // 5. Бонус рефералу (3 друга = Бесплатно)
-  if (user.invitedBy) {
-    const inviter = await db.query.users.findFirst({ where: eq(schema.users.id, user.invitedBy) });
-    if (inviter) {
-      const newCount = (inviter.referralCount || 0) + 1;
-      
-      if (newCount % 3 === 0) {
-        // Каждая 3-я подруга = БЕСПЛАТНЫЙ БИЛЕТ
-        await db.insert(schema.vouchers).values({ userId: inviter.id, status: 'approved_free' });
-        await bot.telegram.sendMessage(inviter.telegramId, 
-            `🎁 <b>Поздравляем!</b>\n\nУже 3 твоих друга посетили наши встречи! В качестве благодарности мы начислили тебе <b>БЕСПЛАТНЫЙ БИЛЕТ</b> на любую следующую игру! 🥂`, 
-            { parse_mode: 'HTML' }
-        ).catch(() => {});
-      } else {
-        // 1-я и 2-я подруга = скидка -10 PLN
-        const left = 3 - (newCount % 3);
-        await db.insert(schema.vouchers).values({ userId: inviter.id, status: 'approved_10' });
-        let friendWord = left === 1 ? 'друга' : 'друзей';
-        await bot.telegram.sendMessage(inviter.telegramId, 
-            `🎉 Твой друг оплатил игру!\n\nТебе начислена скидка <b>-10 PLN</b>. Пригласи еще ${left} ${friendWord} и получишь <b>БЕСПЛАТНЫЙ БИЛЕТ</b>! 🎁`, 
-            { parse_mode: 'HTML' }
-        ).catch(() => {});
-      }
+        // Реферальная логика
+        if (user.invitedBy) {
+            const inviter = await db.query.users.findFirst({ 
+                where: eq(schema.users.id, user.invitedBy) 
+            });
 
-      // Обновляем счетчик приглашающего и обнуляем invitedBy у новичка
-      await db.update(schema.users).set({ referralCount: newCount }).where(eq(schema.users.id, inviter.id));
-      await db.update(schema.users).set({ invitedBy: null }).where(eq(schema.users.id, user.id));
-    }
-  }
+            if (inviter) {
+                const newCount = (inviter.referralCount || 0) + 1;
 
-// 6. Пишем юзеру радостную весть
-  let messageText = `✅ <b>Резерв подтвержден.</b>\n\n` +
+                if (newCount % 3 === 0) {
+                    await db.insert(schema.vouchers).values({ userId: inviter.id, status: 'approved_free' });
+                    await bot.telegram.sendMessage(inviter.telegramId, 
+                        `🎁 <b>Поздравляем!</b>\n\nУже 3 твоих друга посетили встречи! Начислен <b>БЕСПЛАТНЫЙ БИЛЕТ</b>.`, 
+                        { parse_mode: 'HTML' }
+                    );
+                } else {
+                    const left = 3 - (newCount % 3);
+                    await db.insert(schema.vouchers).values({ userId: inviter.id, status: 'approved_10' });
+                    await bot.telegram.sendMessage(inviter.telegramId, 
+                        `🎉 Твой друг оплатил! Начислена скидка <b>-10 PLN</b>. Пригласи ещё ${left} и получи бесплатный билет!`, 
+                        { parse_mode: 'HTML' }
+                    );
+                }
+
+                await db.update(schema.users).set({ 
+                    referralCount: newCount 
+                }).where(eq(schema.users.id, inviter.id));
+
+                // ← Важно!
+                await db.update(schema.users).set({ invitedBy: null })
+                    .where(eq(schema.users.id, user.id));
+            }
+        }
+
+        // Финальное сообщение
+        const messageText =`✅ <b>Резерв подтвержден.</b>\n\n` +
                       `Ваше участие в вечере "${event.type}" зафиксировано.\n\n` +
                       `📍 <b>Регламент:</b>\n` +
                       `• Инструкции и точный адрес поступят в этот чат за 3 часа до начала.\n` +
@@ -4822,15 +4826,14 @@ async function handleSuccessfulPayment(session: any) {
                       `• Заказы по бару и кухне оплачиваются отдельно на месте.\n\n` +
                       `До встречи.`;
 
- await bot.telegram.sendMessage(tId, messageText, { parse_mode: 'HTML' }).catch(() => {});
-    PENDING_PAYMENTS.delete(user.id);
-    
-    // Лог админу теперь звучит суше
-    await sendLog('ТРАНЗАКЦИЯ', `👤 Гость: <b>${user.name}</b>\n🎫 Резерв: №${eId}`);
+await bot.telegram.sendMessage(tId, messageText, { parse_mode: 'HTML' });
 
-  } catch (e) {
-    console.error("Payment Error:", e);
-  }
+        PENDING_PAYMENTS.delete(user.id);
+        await sendLog('ТРАНЗАКЦИЯ', `👤 ${user.name} | 🎫 №${eId}`);
+
+    } catch (e) {
+        console.error("Payment Error:", e);
+    }
 }
  
 // <--- ВОТ ЗДЕСЬ ФУНКЦИЯ ЗАКАНЧИВАЕТСЯ
