@@ -4391,6 +4391,35 @@ bot.on('message', async (ctx, next) => {
             }
 		}
         }
+	// --- ОБРАБОТЧИК ФОТО ВАУЧЕРА ---
+if (sess?.waitingForVoucher && ctx.message.photo) {
+    const photo = ctx.message.photo[ctx.message.photo.length - 1]; // Берем фото в лучшем качестве
+    
+    // Создаем запись в БД
+    const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
+    if (user) {
+        const [v] = await db.insert(schema.vouchers).values({
+            userId: user.id,
+            status: 'pending',
+            photoFileId: photo.file_id
+        }).returning();
+
+        await ctx.reply('✅ Фото отправлено! Администратор проверит его в течение нескольких минут.');
+
+        // Уведомление админу
+        await bot.telegram.sendPhoto(ADMIN_ID, photo.file_id, {
+            caption: `🎫 <b>Новый ваучер на проверку!</b>\nОт: ${user.name} (ID: <code>${user.id}</code>)`,
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([
+                [Markup.button.callback('✅ Скидка 10', `v_set_10_${v.id}`)],
+                [Markup.button.callback('🔥 FREE', `v_set_free_${v.id}`)],
+                [Markup.button.callback('❌ Отклонить', `v_set_reject_${v.id}`)]
+            ])
+        });
+    }
+    sess.waitingForVoucher = false;
+    return; // Останавливаем обработку здесь
+}
     return next();
 });
 
