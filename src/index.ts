@@ -3102,31 +3102,49 @@ bot.command('stats_june', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
 
     try {
-        const startOfJune = '01.06.2026 00:00';
-        const endOfJune = '30.06.2026 23:59';
-
-        // 1. Ищем игры, которые прошли в июне
+        // 1. Ищем игры в июне
         const allEvents = await db.query.events.findMany();
         const juneEventIds = allEvents.filter(e => {
             const d = DateTime.fromFormat(e.dateString, "dd.MM.yyyy HH:mm", { zone: 'Europe/Warsaw' });
             return d.month === 6 && d.year === 2026;
         }).map(e => e.id);
 
-        // 2. Берем бронирования ТОЛЬКО для этих игр
+        // 2. Берем бронирования
         const juneBookings = await db.query.bookings.findMany({
-            where: and(
-                inArray(schema.bookings.eventId, juneEventIds),
-                eq(schema.bookings.paid, true)
-            )
+            where: and(inArray(schema.bookings.eventId, juneEventIds), eq(schema.bookings.paid, true))
         });
 
-        // 3. Считаем всё остальное по juneBookings...
-        // (дальше логика как в примере выше, но используем juneBookings)
-        
-        await ctx.replyWithHTML(`🎟 Продано билетов в июне: <b>${juneBookings.length}</b>`);
+        // 3. Считаем выручку (предположим среднюю цену 50, или можно брать по типам ивентов)
+        const revenue = juneBookings.length * 50; 
+
+        // 4. Считаем гендерный баланс (кто именно пришел)
+        let mC = 0, wC = 0;
+        for (const b of juneBookings) {
+            const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+            if (u?.gender === 'Мужчина') mC++;
+            else if (u?.gender === 'Женщина') wC++;
+        }
+
+        // 5. Оценки именно за июньские игры
+        const juneRatings = await db.query.ratings.findMany({
+            where: inArray(schema.ratings.eventId, juneEventIds)
+        });
+        const avgRating = juneRatings.length > 0 
+            ? (juneRatings.reduce((acc, r) => acc + (r.stars || 0), 0) / juneRatings.length).toFixed(2) 
+            : "Нет данных";
+
+        // Формируем красивый отчет
+        let msg = `📊 <b>ОТЧЕТ ЗА ИЮНЬ 2026</b>\n\n`;
+        msg += `🎟 Продано билетов: <b>${juneBookings.length}</b>\n`;
+        msg += `💰 Выручка (оценка): <b>~${revenue} PLN</b>\n`;
+        msg += `⚖️ Гендерный баланс: <b>${mC} М | ${wC} Ж</b>\n`;
+        msg += `⭐ Средняя оценка: <b>${avgRating}</b> (${juneRatings.length} отз.)\n\n`;
+        msg += `<i>Данные собраны по играм: ${juneEventIds.length} шт.</i>`;
+
+        await ctx.replyWithHTML(msg);
     } catch (e) {
         console.error(e);
-        ctx.reply('❌ Ошибка отчета.');
+        ctx.reply('❌ Ошибка при генерации отчета.');
     }
 });
 
