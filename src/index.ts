@@ -3098,6 +3098,31 @@ bot.command('recount', async (ctx) => {
     ctx.reply('✨ Счётчики игроков успешно исправлены! Теперь они показывают только реальных людей.');
 });
 
+bot.command('stats_june', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+
+    try {
+        const bookings = await db.query.bookings.findMany({ where: eq(schema.bookings.paid, true) });
+        const ratings = await db.query.ratings.findMany();
+        
+        // 1. Считаем среднюю оценку
+        const totalStars = ratings.reduce((acc, r) => acc + (r.stars || 0), 0);
+        const avg = ratings.length > 0 ? (totalStars / ratings.length).toFixed(2) : "Нет данных";
+
+        // 2. Считаем отмены (если есть статус rejected)
+        const cancellations = await db.query.bookings.findMany({ where: eq(schema.bookings.confirmation, 'rejected') });
+
+        let report = `📊 <b>ИТОГИ ИЮНЯ (АВТО-ОТЧЕТ)</b>\n\n`;
+        report += `🎟 Продано билетов: <b>${bookings.length}</b>\n`;
+        report += `⭐ Средняя оценка: <b>${avg}</b> (${ratings.length} отзывов)\n`;
+        report += `❌ Отмен: <b>${cancellations.length}</b>\n`;
+
+        await ctx.replyWithHTML(report);
+    } catch (e) {
+        ctx.reply('❌ Ошибка формирования отчета.');
+    }
+});
+
 bot.command('list_ids', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     try {
