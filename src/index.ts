@@ -3102,24 +3102,31 @@ bot.command('stats_june', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
 
     try {
-        const bookings = await db.query.bookings.findMany({ where: eq(schema.bookings.paid, true) });
-        const ratings = await db.query.ratings.findMany();
+        const startOfJune = '01.06.2026 00:00';
+        const endOfJune = '30.06.2026 23:59';
+
+        // 1. Ищем игры, которые прошли в июне
+        const allEvents = await db.query.events.findMany();
+        const juneEventIds = allEvents.filter(e => {
+            const d = DateTime.fromFormat(e.dateString, "dd.MM.yyyy HH:mm", { zone: 'Europe/Warsaw' });
+            return d.month === 6 && d.year === 2026;
+        }).map(e => e.id);
+
+        // 2. Берем бронирования ТОЛЬКО для этих игр
+        const juneBookings = await db.query.bookings.findMany({
+            where: and(
+                inArray(schema.bookings.eventId, juneEventIds),
+                eq(schema.bookings.paid, true)
+            )
+        });
+
+        // 3. Считаем всё остальное по juneBookings...
+        // (дальше логика как в примере выше, но используем juneBookings)
         
-        // 1. Считаем среднюю оценку
-        const totalStars = ratings.reduce((acc, r) => acc + (r.stars || 0), 0);
-        const avg = ratings.length > 0 ? (totalStars / ratings.length).toFixed(2) : "Нет данных";
-
-        // 2. Считаем отмены (если есть статус rejected)
-        const cancellations = await db.query.bookings.findMany({ where: eq(schema.bookings.confirmation, 'rejected') });
-
-        let report = `📊 <b>ИТОГИ ИЮНЯ (АВТО-ОТЧЕТ)</b>\n\n`;
-        report += `🎟 Продано билетов: <b>${bookings.length}</b>\n`;
-        report += `⭐ Средняя оценка: <b>${avg}</b> (${ratings.length} отзывов)\n`;
-        report += `❌ Отмен: <b>${cancellations.length}</b>\n`;
-
-        await ctx.replyWithHTML(report);
+        await ctx.replyWithHTML(`🎟 Продано билетов в июне: <b>${juneBookings.length}</b>`);
     } catch (e) {
-        ctx.reply('❌ Ошибка формирования отчета.');
+        console.error(e);
+        ctx.reply('❌ Ошибка отчета.');
     }
 });
 
