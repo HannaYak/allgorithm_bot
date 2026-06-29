@@ -811,7 +811,9 @@ async function setCurrentSpeedDatingEventId(eventId: number) {
 const TALK_STATE = { currentFact: '', currentUser: '', isActive: false };
 
 // --- 5. БОТ И СЦЕНЫ ---
-const bot = new Telegraf<any>(process.env.TELEGRAM_BOT_TOKEN || '');
+const bot = new Telegraf<any>(process.env.TELEGRAM_BOT_TOKEN || '', {
+    telegram: { webhookReply: true, timeout: 30000 } // Таймаут 30 секунд
+});
 
 // 1. Мастер регистрации
 // 1. Мастер регистрации (расширенный)
