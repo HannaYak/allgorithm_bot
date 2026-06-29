@@ -942,14 +942,15 @@ const registerWizard = new Scenes.WizardScene(
     if (!dbUser) return ctx.scene.leave();
 
     // 2. Обновляем данные пользователя
+    // 2. Обновляем данные пользователя
     await db.update(schema.users).set({
       name: data.name,
       birthDate: data.age,
       gender: data.gender,
       expectations: data.expectations,
       fact: fact,
-      profileCompleted: true, // Анкета заполнена
-      isApproved: false,      // Сбрасываем одобрение (нужна проверка!)
+      profileCompleted: true, 
+      isApproved: dbUser.isApproved, // <--- ИСПРАВЛЕНО: Сохраняем текущий статус (если был ✅, то останется ✅)
       lastActive: new Date()
     }).where(eq(schema.users.id, dbUser.id));
 
