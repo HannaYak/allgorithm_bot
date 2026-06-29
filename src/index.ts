@@ -2490,6 +2490,41 @@ async function bookGame(ctx: any, gameType: string) {
   }
 }
 
+// --- КОМАНДА: НАПИСАТЬ КОНКРЕТНОМУ ПОЛЬЗОВАТЕЛЮ ---
+bot.command('send', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+
+    const parts = ctx.message.text.split(' ');
+    
+    // Проверка формата: /send [TG_ID] [Текст сообщения...]
+    if (parts.length < 3) {
+        return ctx.reply('Используй: /send [TG_ID] [Текст сообщения]');
+    }
+
+    const targetTgId = parseInt(parts[1]);
+    const messageText = parts.slice(2).join(' ');
+
+    if (isNaN(targetTgId)) {
+        return ctx.reply('❌ Ошибка: TG ID должен быть числом.');
+    }
+
+    try {
+        // Отправляем сообщение пользователю от лица системы/организатора
+        await bot.telegram.sendMessage(targetTgId, 
+            `📩 <b>Сообщение от организаторов:</b>\n\n${messageText}`, 
+            { parse_mode: 'HTML' }
+        );
+        
+        // Отчет тебе в админку
+        await ctx.reply(`✅ Сообщение успешно доставлено пользователю <code>${targetTgId}</code>!`, { parse_mode: 'HTML' });
+        
+    } catch (e: any) {
+        console.error("Ошибка в команде /send:", e);
+        // Если человек заблокировал бота или удалил аккаунт, бот не упадет, а скажет тебе об этом
+        ctx.reply(`❌ Ошибка отправки. Возможно, пользователь заблокировал бота или ID указан неверно.\nДетали: ${e.message}`);
+    }
+});
+
 bot.action(/cv_(.+)_(.+)/, async (ctx) => {
   const type = REV_TYPE_MAP[ctx.match[1]]; 
   const selectedTitle = decodeCat(ctx.match[2]);
@@ -3437,10 +3472,42 @@ bot.command('check_user', async (ctx) => {
 
     let report = `👤 <b>Инфо: ${u.name}</b>\n`;
     report += `📈 Игр в профиле (gamesPlayed): <b>${u.gamesPlayed || 0}</b>\n`;
+	report += `📝 Статус анкеты: <b>${u.isApproved ? '✅ Одобрен' : '⏳ На модерации (или сброшен)'}</b>\n`;
     report += `🎟 Всего оплат в базе (bookings): <b>${paidCount}</b>\n`;
     report += `🧩 Итого для бота: <b>${(u.gamesPlayed || 0) + paidCount}</b>`;
 
     ctx.replyWithHTML(report);
+});
+
+// --- КОМАНДА: ПРИНУДИТЕЛЬНОЕ ОДОБРЕНИЕ (ВЕРИФИКАЦИЯ) ---
+bot.command('approve', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+
+    const parts = ctx.message.text.split(' ');
+    if (parts.length < 2) return ctx.reply('Используй: /approve [TG_ID]');
+
+    const targetTgId = parseInt(parts[1]);
+    if (isNaN(targetTgId)) return ctx.reply('❌ Ошибка: TG ID должен быть числом.');
+
+    try {
+        const user = await db.query.users.findFirst({ 
+            where: eq(schema.users.telegramId, targetTgId) 
+        });
+
+        if (!user) return ctx.reply('❌ Юзер с таким ID не найден в базе.');
+
+        // Принудительно ставим "Анкета заполнена" и "Одобрено"
+        await db.update(schema.users).set({
+            isApproved: true,
+            profileCompleted: true
+        }).where(eq(schema.users.id, user.id));
+
+        await ctx.reply(`✅ <b>Успешно!</b>\nПрофиль <b>${user.name || 'без имени'}</b> (TG: <code>${targetTgId}</code>) принудительно верифицирован.`, { parse_mode: 'HTML' });
+
+    } catch (e) {
+        console.error("Ошибка в /approve:", e);
+        ctx.reply('❌ Произошла ошибка при верификации.');
+    }
 });
 
 bot.command('sync_all_stats', async (ctx) => {
