@@ -1485,14 +1485,17 @@ await bot.telegram.sendMessage(u.telegramId,
 
 async function checkAndPromoteToVeteran(userId: number) {
     const user = await db.query.users.findFirst({ where: eq(schema.users.id, userId) });
-    if (user && (user.gamesPlayed || 0) >= 4) {
+    const VETERAN_CHAT_ID = -1004382852361; // Твой ID чата
+
+    // Теперь условие: 9 и более игр
+    if (user && (user.gamesPlayed || 0) >= 9) {
         try {
-            // Генерируем инвайт-ссылку для ветерана
             const invite = await bot.telegram.createChatInviteLink(VETERAN_CHAT_ID, { member_limit: 1 });
             await bot.telegram.sendMessage(user.telegramId, 
-                `🎖 <b>Добро пожаловать в закрытый круг!</b>\n\n` +
-                `Ты посетил(а) 4 встречи — теперь ты в статусе «Ветеран». \n` +
-                `Ссылка в закрытое сообщество: ${invite.invite_link}`
+                `🎖 <b>Добро пожаловать в элитный круг Algorythm!</b>\n\n` +
+                `Ты посетил(а) уже 9 встреч — это уровень истинного ветерана системы. \n` +
+                `Твой уровень доступа повышен. Добро пожаловать в закрытое сообщество:\n\n` +
+                `${invite.invite_link}`
             , { parse_mode: 'HTML' });
         } catch (e) {
             console.error("Не удалось добавить в ветераны:", e);
