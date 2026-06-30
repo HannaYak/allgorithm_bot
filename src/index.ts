@@ -41,8 +41,7 @@ async function broadcastToEvent(eventId: number, message: string) {
 }
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is missing');
-const client = postgres(process.env.DATABASE_URL);
-const db = drizzle(client, { schema });
+
 
 if (!process.env.STRIPE_SECRET_KEY) throw new Error('STRIPE_SECRET_KEY is missing');
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2023-10-16' });
