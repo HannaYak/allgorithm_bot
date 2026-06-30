@@ -1,6 +1,6 @@
 import { Telegraf, Markup, session, Scenes } from 'telegraf';
 import express from 'express';
-import { drizzle } from 'drizzle-orm/postgres-js';
+import { db } from './db.js'; // Импортируем из нового файла
 import postgres from 'postgres';
 import { eq, or, inArray, and, desc, asc, sql, like, lt } from 'drizzle-orm';// Добавь sql
 import * as schema from '../drizzle/schema'; 
