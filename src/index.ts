@@ -8,7 +8,7 @@ import 'dotenv/config';
 import Stripe from 'stripe';
 import { DateTime } from 'luxon';
 import * as SD from './speedDating';
-import { users, events, bookings, vouchers, secretLikes, ratings } from '../drizzle/schema';
+import { users, events, bookings, vouchers, secretLikes, ratings } from '../drizzle/schema.js';
 import { createBackup } from './backup';
 
 let IS_BROADCASTING = false; 
@@ -5222,15 +5222,28 @@ process.on('unhandledRejection', (reason, promise) => {
     console.error('⚠️ Сбой сети (скорее всего Telegram API):', reason);
 });
 
-cleanupOldAutoStates().catch(console.error);
+// Обернем старт сервера в async функцию, чтобы убрать ошибку "Top-level await"
+async function startServer() {
+    try {
+        // Запускаем очистку
+        await cleanupOldAutoStates().catch(console.error);
 
-app.listen(PORT, async () => {
-    console.log(`🚀 Сервер Алгоритма запущен на порту ${PORT}`);
-    if (WEBHOOK_URL) {
-        await bot.telegram.setWebhook(`${WEBHOOK_URL}/telegraf-webhook`);
-        console.log(`📡 Вебхук установлен на: ${WEBHOOK_URL}`);
+        // Запускаем слушатель сервера
+        await new Promise<void>((resolve) => app.listen(PORT, resolve));
+        console.log(`🚀 Сервер Алгоритма запущен на порту ${PORT}`);
+
+        // Устанавливаем вебхук
+        if (WEBHOOK_URL) {
+            await bot.telegram.setWebhook(`${WEBHOOK_URL}/telegraf-webhook`);
+            console.log(`📡 Вебхук установлен на: ${WEBHOOK_URL}`);
+        }
+    } catch (e) {
+        console.error("Критическая ошибка при запуске:", e);
     }
-});
+}
+
+// Запускаем процесс
+startServer();
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
