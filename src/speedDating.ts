@@ -1,7 +1,7 @@
 import { Markup } from 'telegraf';
 import { and, eq, asc } from 'drizzle-orm';
 import * as schema from '../drizzle/schema';
-import { db } from './index'; // Подключаем базу из главного файла (или измени путь на свой, где у тебя экспорт db)
+import { db } from './db.js';
 import { DateTime } from 'luxon';
 
 const ADMIN_ID = parseInt(process.env.ADMIN_ID || '0');
