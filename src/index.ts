@@ -3159,7 +3159,20 @@ bot.command('menu', (ctx) => {
 
 bot.action('admin_add_promo', (ctx) => ctx.scene.enter('ADD_PROMO_SCENE'));
 
-
+bot.command('close_support', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    const parts = ctx.message.text.split(' ');
+    if (parts.length < 2) return ctx.reply('Используй: /close_support [TG_ID]');
+    
+    const targetTgId = parseInt(parts[1]);
+    
+    // В Telegraf сессия привязана к контексту (кто пишет). 
+    // Если сессия лежит в памяти (Map), мы не можем просто так "удалить" её извне.
+    // Поэтому самый надежный способ — отправить сообщение юзеру и сказать боту, что сессия окончена.
+    
+    await bot.telegram.sendMessage(targetTgId, '🏁 Диалог с поддержкой был завершен администратором.');
+    await ctx.reply(`✅ Диалог с пользователем ${targetTgId} завершен.`);
+});
 
 // --- Исправленные команды админа ---
 
@@ -4604,15 +4617,36 @@ bot.on('message', async (ctx, next) => {
 
 bot.action('end_support_session', async (ctx) => {
     (ctx.session as any).waitingForSupport = false;
-    await ctx.editMessageText('🏁 Диалог завершен. Если появятся вопросы — пиши снова через кнопку «Помощь»!');
+    
+    const finishMsg = 
+        `🏁 <b>Диалог завершен.</b>\n\n` +
+        `Благодарим за обращение. Мы всегда на связи — просто нажми «🆘 Помощь» в меню, если возникнут новые вопросы.\n` +
+        `━━━━━━━━━━━━━━━━━━`;
+        
+    await ctx.editMessageText(finishMsg, { parse_mode: 'HTML' });
     await ctx.answerCbQuery();
 });
 
 bot.command('reply', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     const p = ctx.message.text.split(' ');
-    if (p.length < 3) return ctx.reply('Формат: /reply ID текст');
-    bot.telegram.sendMessage(p[1], `👮‍♂️ <b>Ответ админа:</b>\n\n${p.slice(2).join(' ')}`, { parse_mode: 'HTML' }).catch(()=>{});
+    if (p.length < 3) return ctx.reply('Формат: /reply [ID] [Текст]');
+
+    const targetId = p[1];
+    const replyText = p.slice(2).join(' ');
+
+    // Оформляем сообщение как официальный "ОТВЕТ АДМИНИСТРАЦИИ"
+    const finalMsg = 
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `👮‍♂️ <b>ОТВЕТ АДМИНИСТРАЦИИ:</b>\n\n` +
+        `${replyText}\n` +
+        `━━━━━━━━━━━━━━━━━━`;
+    
+    await bot.telegram.sendMessage(targetId, finalMsg, { parse_mode: 'HTML' }).catch(() => {
+        ctx.reply('❌ Не удалось отправить.');
+    });
+    
+    await ctx.reply(`✅ Ответ для ${targetId} отправлен.`);
 });
 
 bot.action(/pay_reveal_(\d+)/, async (ctx) => {
