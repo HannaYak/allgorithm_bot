@@ -15,6 +15,8 @@ let IS_BROADCASTING = false;
 const PENDING_PAYMENTS = new Map<number, { time: DateTime, notified: boolean }>();// Этот "замок" не даст запустить две рассылки одновременно
 // --- 1. НАСТРОЙКИ ---
 
+const VETERAN_CHAT_ID = -1004382852361;
+
 async function broadcastToEvent(eventId: number, message: string) {
   // Делаем один умный JOIN-запрос к базе вместо N+1
   const paidUsers = await db.select({ telegramId: schema.users.telegramId })
@@ -1427,7 +1429,9 @@ async function autoCloseEvent(eventId: number) {
     await db.update(schema.users)
       .set({ gamesPlayed: (u.gamesPlayed || 0) + 1 })
       .where(eq(schema.users.id, u.id));
-    
+	  
+await checkAndPromoteToVeteran(u.id);
+	  
     // Шлем сообщение
 await bot.telegram.sendMessage(u.telegramId,
   `🥂 <b>Вечер завершен.</b>\n\n` +
@@ -1478,6 +1482,23 @@ await bot.telegram.sendMessage(u.telegramId,
     }
   }
 } // <--- Закрывающая скобка функции autoCloseEvent
+
+async function checkAndPromoteToVeteran(userId: number) {
+    const user = await db.query.users.findFirst({ where: eq(schema.users.id, userId) });
+    if (user && (user.gamesPlayed || 0) >= 4) {
+        try {
+            // Генерируем инвайт-ссылку для ветерана
+            const invite = await bot.telegram.createChatInviteLink(VETERAN_CHAT_ID, { member_limit: 1 });
+            await bot.telegram.sendMessage(user.telegramId, 
+                `🎖 <b>Добро пожаловать в закрытый круг!</b>\n\n` +
+                `Ты посетил(а) 4 встречи — теперь ты в статусе «Ветеран». \n` +
+                `Ссылка в закрытое сообщество: ${invite.invite_link}`
+            , { parse_mode: 'HTML' });
+        } catch (e) {
+            console.error("Не удалось добавить в ветераны:", e);
+        }
+    }
+}
 
   // --- 5. ОФФЕР "ВТОРОЙ ШАНС" (Привязан к закрытию игры) -- // <-- ТАЙМЕР: 2 минуты. Позже для 30 минут поменяй на 30 * 60 * 1000
 
@@ -3090,6 +3111,32 @@ bot.action('admin_trigger_status', async (ctx) => {
     ctx.reply('Вызываю отчет... используй /status для получения актуальных данных.');
 });
 
+bot.command('check_approved', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+
+    try {
+        const approvedUsers = await db.select({
+            name: schema.users.name,
+            telegramId: schema.users.telegramId,
+            username: schema.users.username
+        })
+        .from(schema.users)
+        .where(eq(schema.users.isApproved, true));
+
+        if (approvedUsers.length === 0) return ctx.reply('Нет одобренных пользователей.');
+
+        let msg = `✅ <b>Список верифицированных гостей (${approvedUsers.length}):</b>\n\n`;
+        approvedUsers.forEach((u, i) => {
+            msg += `${i + 1}. ${u.name || 'Аноним'} (ID: <code>${u.telegramId}</code>, @${u.username || 'нет'})\n`;
+        });
+
+        await ctx.replyWithHTML(msg);
+    } catch (e) {
+        console.error(e);
+        ctx.reply('❌ Ошибка при чтении базы.');
+    }
+});
+
 // Запуск нормализации из пульта
 bot.action('admin_trigger_normalize', async (ctx) => {
     await ctx.answerCbQuery();
@@ -4364,6 +4411,14 @@ bot.action(/do_rate_(\d+)_(\d+)_(\w+)/, async (ctx) => {
                 });
             }
 
+			 // После сохранения оценки
+if (stars === 5) {
+    await bot.telegram.sendMessage(rater.telegramId, 
+        `✨ <b>Спасибо за фидбек!</b>\nМы рады, что вечер прошел на высоте. Твоя оценка помогает нам поддерживать уровень клуба.`, 
+        { parse_mode: 'HTML' }
+    ).catch(()=>{});
+}
+
             if (stars <= 3) {
                  // НИЗКАЯ ОЦЕНКА АДМИНУ
                  await bot.telegram.sendMessage(ADMIN_ID, 
@@ -4390,6 +4445,34 @@ bot.action('finish_rating_flow', async (ctx) => {
 bot.on('message', async (ctx, next) => {
     const userId = ctx.from?.id;
     const sess = ctx.session as any;
+    
+    // ВАЖНО: Сначала проверяем фото (ваучер), так как это самый специфичный случай
+    if (sess?.waitingForVoucher && ctx.message.photo) {
+        const photo = ctx.message.photo[ctx.message.photo.length - 1]; 
+        const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
+        
+        if (user) {
+            const [v] = await db.insert(schema.vouchers).values({
+                userId: user.id,
+                status: 'pending',
+                photoFileId: photo.file_id
+            }).returning();
+
+            await ctx.reply('✅ Фото отправлено! Администратор проверит его в течение нескольких минут.');
+
+            await bot.telegram.sendPhoto(ADMIN_ID, photo.file_id, {
+                caption: `🎫 <b>Новый ваучер на проверку!</b>\nОт: ${user.name} (ID: <code>${user.id}</code>)`,
+                parse_mode: 'HTML',
+                ...Markup.inlineKeyboard([
+                    [Markup.button.callback('✅ Скидка 10', `v_set_10_${v.id}`)],
+                    [Markup.button.callback('🔥 FREE', `v_set_free_${v.id}`)],
+                    [Markup.button.callback('❌ Отклонить', `v_set_reject_${v.id}`)]
+                ])
+            });
+        }
+        sess.waitingForVoucher = false;
+        return; // Обязательно выходим, если фото обработано
+    }
     const text = (ctx.message as any).text;
 
     if (!userId) return next();
@@ -4438,13 +4521,19 @@ bot.on('message', async (ctx, next) => {
 
     // 2. ПОДДЕРЖКА (SOS)
     if (sess?.waitingForSupport) {
-        const adminHeader = `🆘 <b>ВОПРОС В ПОДДЕРЖКУ</b>\n\nОт: ${ctx.from.first_name} (@${ctx.from.username || 'нет'})\nID: <code>${ctx.from.id}</code>\n\n<code>/reply ${ctx.from.id} </code>`;
-        await bot.telegram.sendMessage(ADMIN_ID, adminHeader, { parse_mode: 'HTML' });
-        await ctx.copyMessage(ADMIN_ID);
-        ctx.reply('✅ Ваше сообщение отправлено! Администратор ответит в ближайшее время.');
-        sess.waitingForSupport = false;
-        return;
-    }
+    const adminHeader = `🆘 <b>Диалог:</b> ${ctx.from.first_name} (@${ctx.from.username || 'нет'})\n` +
+                        `ID: <code>${ctx.from.id}</code>\n\n` +
+                        `<i>Чтобы ответить, используй /reply ${ctx.from.id} [текст]</i>`;
+    
+    await bot.telegram.sendMessage(ADMIN_ID, adminHeader, { parse_mode: 'HTML' });
+    await ctx.copyMessage(ADMIN_ID);
+    
+    // Кнопка для юзера, чтобы "Закрыть диалог"
+    await ctx.reply('✅ Сообщение отправлено. Администратор ответит в ближайшее время.', 
+        Markup.inlineKeyboard([[Markup.button.callback('🏁 Закончить диалог', 'end_support_session')]])
+    );
+    return;
+}
 
     // 3. ОБРАБОТКА ТЕКСТА (РАССЫЛКИ И СТАВКИ)
     if (text) {
@@ -4509,38 +4598,15 @@ bot.on('message', async (ctx, next) => {
             }
 		}
         }
-	// --- ОБРАБОТЧИК ФОТО ВАУЧЕРА ---
-if (sess?.waitingForVoucher && ctx.message.photo) {
-    const photo = ctx.message.photo[ctx.message.photo.length - 1]; // Берем фото в лучшем качестве
-    
-    // Создаем запись в БД
-    const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from.id) });
-    if (user) {
-        const [v] = await db.insert(schema.vouchers).values({
-            userId: user.id,
-            status: 'pending',
-            photoFileId: photo.file_id
-        }).returning();
 
-        await ctx.reply('✅ Фото отправлено! Администратор проверит его в течение нескольких минут.');
-
-        // Уведомление админу
-        await bot.telegram.sendPhoto(ADMIN_ID, photo.file_id, {
-            caption: `🎫 <b>Новый ваучер на проверку!</b>\nОт: ${user.name} (ID: <code>${user.id}</code>)`,
-            parse_mode: 'HTML',
-            ...Markup.inlineKeyboard([
-                [Markup.button.callback('✅ Скидка 10', `v_set_10_${v.id}`)],
-                [Markup.button.callback('🔥 FREE', `v_set_free_${v.id}`)],
-                [Markup.button.callback('❌ Отклонить', `v_set_reject_${v.id}`)]
-            ])
-        });
-    }
-    sess.waitingForVoucher = false;
-    return; // Останавливаем обработку здесь
-}
     return next();
 });
 
+bot.action('end_support_session', async (ctx) => {
+    (ctx.session as any).waitingForSupport = false;
+    await ctx.editMessageText('🏁 Диалог завершен. Если появятся вопросы — пиши снова через кнопку «Помощь»!');
+    await ctx.answerCbQuery();
+});
 
 bot.command('reply', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
