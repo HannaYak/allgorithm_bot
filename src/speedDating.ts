@@ -1,6 +1,6 @@
 import { Markup } from 'telegraf';
 import { and, eq, asc } from 'drizzle-orm';
-import * as schema from '../drizzle/schema';
+import * as schema from '../drizzle/schema.js';
 import { db } from './db.js';
 import { DateTime } from 'luxon';
 
