@@ -3099,22 +3099,7 @@ bot.action('admin_promote_veteran', (ctx) => {
 });
 
 // Добавь это в bot.on('message') (в блок if (text))
-if ((sess as any)?.waitingForVeteranId && text) {
-    const targetTgId = parseInt(text);
-    if (isNaN(targetTgId)) {
-        ctx.reply('❌ Это не похоже на число. Введите корректный TG ID.');
-    } else {
-        const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, targetTgId) });
-        if (user) {
-            await checkAndPromoteToVeteran(user.id);
-            ctx.reply(`✅ Инвайт для ${user.name} отправлен.`);
-        } else {
-            ctx.reply('❌ Пользователь не найден.');
-        }
-    }
-    (sess as any).waitingForVeteranId = false;
-    return;
-}
+
 
 // Кнопка возврата
 bot.action('admin_back_main', async (ctx) => {
