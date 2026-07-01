@@ -4821,7 +4821,6 @@ bot.action(/match_back_(\d+)_(\d+)/, async (ctx) => {
 
     if (!me || !target) return ctx.answerCbQuery("Ошибка данных");
 
-    // 🔥 Сохраняем ответный лайк в базу
     const existingLike = await db.query.secretLikes.findFirst({
         where: and(
             eq(schema.secretLikes.eventId, eid),
@@ -4834,28 +4833,28 @@ bot.action(/match_back_(\d+)_(\d+)/, async (ctx) => {
         await db.insert(schema.secretLikes).values({ eventId: eid, userId: me.id, targetUserId: targetId });
     }
 
-    // --- НАЧАЛО НОВОГО КОДА (ПРОВЕРКА ПОЛА) ---
+    // --- ПРОВЕРКА ПОЛА ДЛЯ БОНУСА ---
     let bonusText = "";
-    if (me.gender !== target.gender) {
+    if (me.gender?.toLowerCase() !== target.gender?.toLowerCase()) {
         bonusText = `\n\n<b>Для продолжения диалога:</b>\nМы сохранили 36 вопросов для сближения, которые не вошли в основную программу T&T. Рекомендуем обсудить их на следующей встрече:\n👉 <a href="ТВОЯ_ССЫЛКА_ИЗ_TELEGRAPH">Открыть вопросы</a>`;
     }
-    // --- КОНЕЦ НОВОГО КОДА ---
 
-    // Сообщение тому, кто нажал кнопку
-    const contactTarget = target.username ? `@${target.username}` : `(У пользователя скрыт никнейм в настройках приватности. Напиши в 🆘 Помощь, и мы свяжем вас!)`;
+    const contactTarget = target.username ? `@${target.username}` : `(У пользователя скрыт никнейм. Напиши в 🆘 Помощь!)`;
+    
     await ctx.replyWithHTML(
         `🚀 <b>Симпатия стала взаимной!</b>\n\nОтличный выбор. Контакт <b>${target.name}</b> для связи: ${contactTarget}\nНе откладывай, напиши первым(ой) прямо сейчас! ✨${bonusText}`, 
         getMainKeyboard()
     );
     
-    // Сообщение тому, кто лайкнул первым
     await bot.telegram.sendMessage(target.telegramId, 
         `🌟 <b>У тебя новый мэтч!</b>\n\nПомнишь, на прошедшей игре тебе понравился(лась) <b>${me.name}</b>? Эта симпатия только что стала взаимной! 🥂\n\nКонтакт для связи: @${me.username || 'через поддержку'}${bonusText}`,
         { parse_mode: 'HTML', disable_web_page_preview: true }
     ).catch(() => {});
   
     await ctx.answerCbQuery("Мэтч создан! ❤️");
-	await sendMatchBonus(me, target, eid);
+    
+    // Вызываем бонус для "зачеркивания" вопросов
+    await sendMatchBonus(me, target, eid);
 });
 
 bot.action(/confirm_reveal_(\d+)/, async (ctx) => {
