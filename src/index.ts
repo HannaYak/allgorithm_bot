@@ -2127,15 +2127,19 @@ bot.action(/secret_like_(\d+)_(\d+)/, async (ctx) => {
   
 if (mutual) {
     const target = await db.query.users.findFirst({ where: eq(schema.users.id, targetId) });
-    const matchMsg = `🎉 <b>У вас ТАЙНЫЙ МЭТЧ!</b>...`;
+    const matchMsg = `🎉 <b>У вас ТАЙНЫЙ МЭТЧ!</b>\n\nВы оба выбрали друг друга. Кажется, это отличный повод выпить кофе! ☕️\n\nКонтакты: @${target?.username || 'скрыто'}`;
     
     await ctx.reply(matchMsg, { parse_mode: 'HTML' });
-    await bot.telegram.sendMessage(target!.telegramId, ...);
+    await bot.telegram.sendMessage(target!.telegramId, 
+        `🎉 <b>У вас ТАЙНЫЙ МЭТЧ!</b>\n\nВы оба выбрали друг друга. Контакты: @${user.username || 'скрыто'} ☕️`, 
+        { parse_mode: 'HTML' }
+    ).catch(() => {});
 
+    // 🔥 ВОТ ТУТ ВЫЗЫВАЕМ БОНУС:
     await sendMatchBonus(user, target, eventId);
-  } // Эта скобка закрывает if (mutual)
+  } // Закрывает if (mutual)
 
-});
+}); // <--- ЭТОЙ СКОБКИ У ТЕБЯ НЕ БЫЛО! Она закрывает bot.action
 		   
 		   
 
