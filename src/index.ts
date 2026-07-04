@@ -4840,7 +4840,7 @@ bot.action(/match_back_(\d+)_(\d+)/, async (ctx) => {
     // --- ПРОВЕРКА ПОЛА ДЛЯ БОНУСА ---
     let bonusText = "";
     if (me.gender?.toLowerCase() !== target.gender?.toLowerCase()) {
-        bonusText = `\n\n<b>Для продолжения диалога:</b>\nМы сохранили 36 вопросов для сближения, которые не вошли в основную программу T&T. Рекомендуем обсудить их на следующей встрече:\n👉 <a href="ТВОЯ_ССЫЛКА_ИЗ_TELEGRAPH">Открыть вопросы</a>`;
+        bonusText = `\n\n<b>Для продолжения диалога:</b>\nМы сохранили 36 вопросов для сближения, которые не вошли в основную программу T&T. Рекомендуем обсудить их на следующей встрече:\n👉 <a href="https://telegra.ph/Human-Algorythm-36-voprosov-dlya-sblizheniya-07-04">Открыть вопросы</a>`;
     }
 
     const contactTarget = target.username ? `@${target.username}` : `(У пользователя скрыт никнейм. Напиши в 🆘 Помощь!)`;
