@@ -2534,8 +2534,16 @@ async function bookGame(ctx: any, gameType: string) {
     else if (gameType === 'lockload') backBtn = 'game_lockload';
 
     // --- ЛОГИКА ДЛЯ LOCK & LOAD И TIFFANY ---
+    // --- ЛОГИКА ДЛЯ LOCK & LOAD И TIFFANY ---
     if (gameType === 'lockload' || gameType === 'tiffany') {
-      const btns = events.map(e => [Markup.button.callback(`📅 ${e.dateString}`, `pay_event_${e.id}`)]);
+      // ИСПРАВЛЕНИЕ: Добавляем в label актуальные цифры
+      const btns = events.map(e => [
+        Markup.button.callback(
+          `📅 ${e.dateString} (${e.currentPlayers}/${e.maxPlayers})`, 
+          `pay_event_${e.id}`
+        )
+      ]);
+      
       return ctx.replyWithHTML('🎯 <b>Выберите удобную дату:</b>', 
         Markup.inlineKeyboard([...btns, [Markup.button.callback('🔙 Назад', backBtn)]])
       );
@@ -4538,7 +4546,8 @@ bot.action('finish_rating_flow', async (ctx) => {
 bot.on('message', async (ctx, next) => {
     const userId = ctx.from?.id;
     const sess = ctx.session as any;
-    
+
+	if (ctx.session?.__scenes?.current) return next();
     // ВАЖНО: Сначала проверяем фото (ваучер), так как это самый специфичный случай
     if (sess?.waitingForVoucher && ctx.message.photo) {
         const photo = ctx.message.photo[ctx.message.photo.length - 1]; 
