@@ -1053,6 +1053,7 @@ const registerWizard = new Scenes.WizardScene(
 
     return ctx.scene.leave();
   }
+	);
 	
 registerWizard.command('cancel', (ctx) => ctx.scene.leave());
 
