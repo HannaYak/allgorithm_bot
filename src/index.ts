@@ -1854,7 +1854,8 @@ bot.hears('👤 Личный кабинет', async (ctx) => {
               `🎫 <b>Ваучеры:</b> ${count10} шт. (скидка) | ${countFree} шт. (free)\n` +
               `🏆 <b>Прогресс лояльности:</b>\n${stars} (${progress}/5)\n\n` +
               `<i>Каждая 5-я встреча в Algorythm — комплимент от клуба.</i>`;
-	  
+
+	  const buttons = [];
     // Кнопки в зависимости от статуса анкеты
     if (!user.profileCompleted) {
       buttons.push([Markup.button.callback('📝 Заполнить анкету', 'start_registration')]);
