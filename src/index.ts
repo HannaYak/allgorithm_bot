@@ -984,6 +984,7 @@ const registerWizard = new Scenes.WizardScene(
   // --- ФИНАЛ: Сохранение ---
 // --- ФИНАЛ: Сохранение ---
   // --- ФИНАЛ: Сохранение ---
+  // --- ФИНАЛ: Сохранение ---
   async (ctx: any, next: any) => {
     if (ctx.callbackQuery) { await ctx.scene.leave(); return next(); }
     if (ctx.message?.text === '/cancel') { await ctx.scene.leave(); return ctx.reply('❌ Регистрация отменена.', getMainKeyboard()); }
@@ -997,15 +998,17 @@ const registerWizard = new Scenes.WizardScene(
     const data = ctx.wizard.state as any;
     const telegramId = ctx.from!.id;
 
-    // 1. Достаем юзера из БД
     const dbUser = await db.query.users.findFirst({
       where: eq(schema.users.telegramId, telegramId)
     });
 
     if (!dbUser) return ctx.scene.leave();
 
-    // 2. Обновляем данные пользователя
-    // 2. Обновляем данные пользователя
+    // Запоминаем статусы ДО обновления
+    const wasCompleted = dbUser.profileCompleted;
+    const wasApproved = dbUser.isApproved;
+
+    // Обновляем данные пользователя
     await db.update(schema.users).set({
       name: data.name,
       birthDate: data.age,
@@ -1013,13 +1016,13 @@ const registerWizard = new Scenes.WizardScene(
       expectations: data.expectations,
       fact: fact,
       profileCompleted: true, 
-      isApproved: dbUser.isApproved, // <--- ИСПРАВЛЕНО: Сохраняем текущий статус (если был ✅, то останется ✅)
+      isApproved: wasApproved, // Сохраняем текущий статус
       lastActive: new Date()
     }).where(eq(schema.users.id, dbUser.id));
 
-    // 3. Логика уведомлений (получал ли он уже скидку за жизнь?)
-    if (!dbUser.gotProfileDiscount) {
-      // Это НОВИЧОК
+    // 🔥 УМНАЯ ЛОГИКА УВЕДОМЛЕНИЙ
+    if (!wasCompleted && !wasApproved) {
+      // 1. АБСОЛЮТНЫЙ НОВИЧОК (шлем админу)
       await ctx.replyWithHTML(
         `✅ <b>Анкета отправлена на модерацию.</b>\n\n` +
         `Твой профиль находится на модерации. Решение принимается в течение 24 часов.\n\n` +
@@ -1034,20 +1037,23 @@ const registerWizard = new Scenes.WizardScene(
         `TG ID: <code>${telegramId}</code>`,
         { parse_mode: 'HTML' }
       );
-    } else {
-      // Это СТАРИЧОК (просто обновил текст анкеты)
+    } else if (wasCompleted && !wasApproved) {
+      // 2. ОБНОВИЛ АНКЕТУ ПОКА ЖДЕТ ОЧЕРЕДИ (не спамим админа)
       await ctx.replyWithHTML(
-        `✅ <b>Профиль обновлен.</b>\n\n` +
-        `Новые данные сохранены в системе.`,
+        `✅ <b>Анкета обновлена.</b>\nОна всё ещё находится на проверке у администратора.`,
         getMainKeyboard()
       );
-      // Если хочешь, чтобы старички при изменении анкеты тоже падали тебе на стол — эту ветку можно убрать, но лучше не спамить себя.
+    } else {
+      // 3. УЖЕ ОДОБРЕННЫЙ СТАРИЧОК
+      await ctx.replyWithHTML(
+        `✅ <b>Профиль обновлен.</b>\nНовые данные сохранены в системе.`,
+        getMainKeyboard()
+      );
     }
 
     return ctx.scene.leave();
   }
-);
-
+	
 registerWizard.command('cancel', (ctx) => ctx.scene.leave());
 
 
@@ -1663,6 +1669,12 @@ bot.action(/approve_profile_(\d+)/, async (ctx) => {
     const user = await db.query.users.findFirst({ where: eq(schema.users.id, userId) });
     if (!user) return ctx.answerCbQuery('❌ Пользователь не найден', { show_alert: true });
 
+    // 🔥 АБСОЛЮТНЫЙ ЗАМОК: Если юзер УЖЕ одобрен, блокируем функцию (защита от нескольких ваучеров)
+    if (user.isApproved) {
+        await ctx.answerCbQuery('⚠️ Эта анкета уже была одобрена ранее!', { show_alert: true });
+        return showModerateMenu(ctx); // Просто обновляем меню
+    }
+
     // 1. Ставим флаг одобрения
     await db.update(schema.users).set({ isApproved: true }).where(eq(schema.users.id, userId));
 
@@ -1673,7 +1685,7 @@ bot.action(/approve_profile_(\d+)/, async (ctx) => {
             status: 'approved_10', 
             photoFileId: 'PROFILE_APPROVED'
         });
-        // Отмечаем, что скидка за регу получена навсегда
+        // Отмечаем, что скидка получена навсегда
         await db.update(schema.users).set({ gotProfileDiscount: true }).where(eq(schema.users.id, userId));
 
         await bot.telegram.sendMessage(user.telegramId,
@@ -1682,9 +1694,6 @@ bot.action(/approve_profile_(\d+)/, async (ctx) => {
             `Теперь можешь переходить в «🎮 Игры» и покупать билет со скидкой! 🥂`,
             { parse_mode: 'HTML' }
         ).catch(() => {});
-    } else {
-        // Если это старичок, который просто обновил текст — радуем тихо
-        await bot.telegram.sendMessage(user.telegramId, "✅ Твоя обновленная анкета успешно прошла модерацию!").catch(() => {});
     }
 
     await ctx.answerCbQuery(`✅ ${user.name} одобрен(а)!`);
@@ -1822,18 +1831,29 @@ bot.hears('👤 Личный кабинет', async (ctx) => {
     const stars = '🟩'.repeat(progress) + '⬜'.repeat(5 - progress);
 
     // === Новый блок — статус анкеты ===
+   // === Статус анкеты ===
     let profileStatus = '';
-    if (!user.profileCompleted) profileStatus = `📝 <b>Статус анкеты:</b> ❌ Ожидает заполнения\n`;
-    else if (!user.isApproved) profileStatus = `📝 <b>Статус анкеты:</b> ⏳ На модерации\n`;
-    else profileStatus = `📝 <b>Статус анкеты:</b> ✅ Верифицирован\n`;
+    if (!user.profileCompleted) profileStatus = `📝 <b>Статус:</b> ❌ Ожидает заполнения\n\n`;
+    else if (!user.isApproved) profileStatus = `📝 <b>Статус:</b> ⏳ На модерации\n\n`;
+    else profileStatus = `📝 <b>Статус:</b> ✅ Верифицирован\n\n`;
 
-    let msg = `👤 <b>ПРОФИЛЬ: ${user.name || 'Гость'}</b>\n\n` +
+    // === Вывод данных профиля ===
+    let profileData = '';
+    if (user.profileCompleted) {
+        profileData = `📋 <b>Моя анкета:</b>\n` +
+                      `• Имя: <b>${user.name}</b>\n` +
+                      `• Возраст: <b>${user.birthDate || 'Не указан'}</b> | Пол: <b>${user.gender || 'Не указан'}</b>\n` +
+                      `• Ожидания:\n<i>${user.expectations || 'Не указаны'}</i>\n\n` +
+                      `• Интересный факт:\n<i>${user.fact || 'Не указан'}</i>\n\n`;
+    }
+
+    let msg = `👤 <b>ПРОФИЛЬ</b>\n\n` +
               profileStatus +
+              profileData +
               `🎫 <b>Ваучеры:</b> ${count10} шт. (скидка) | ${countFree} шт. (free)\n` +
               `🏆 <b>Прогресс лояльности:</b>\n${stars} (${progress}/5)\n\n` +
               `<i>Каждая 5-я встреча в Algorythm — комплимент от клуба.</i>`;
-    const buttons = [];
-
+	  
     // Кнопки в зависимости от статуса анкеты
     if (!user.profileCompleted) {
       buttons.push([Markup.button.callback('📝 Заполнить анкету', 'start_registration')]);
