@@ -29,6 +29,10 @@ export const users = pgTable('users', {
   gamesPlayed: integer('games_played').default(0),
   loyaltyPoints: integer('loyalty_points').default(0),
 
+  // === B2B СЕГМЕНТ ===
+  isCorporate: boolean('is_corporate').default(false), // Обход стандартной воронки оплаты
+  companyName: text('company_name'), // Привязка к компании (опционально)
+  
   createdAt: timestamp('created_at').defaultNow(),
   invitedBy: bigint('invited_by', { mode: 'number' }),
   // (добавь эту строчку к остальным полям пользователя)
@@ -36,11 +40,13 @@ export const users = pgTable('users', {
 });
 
 // Таблица событий (Игр)
+// Таблица событий (Игр)
 export const events = pgTable('events', {
   id: serial('id').primaryKey(),
-  type: text('type').notNull(), // 'talk_toast', 'stock_know', 'speed_dating'
+  type: text('type').notNull(), // 'talk_toast', 'stock_know', 'speed_dating', 'corporate', 'osint_game'
   dateString: text('date_string').notNull(), // "20.12.2025 19:00"
   description: text('description'), // Например "Кухня: Азия"
+  price: integer('price'), // 🔥 НОВОЕ: Динамическая цена для B2B и новых форматов
   maxPlayers: integer('max_players').notNull(),
   currentPlayers: integer('current_players').default(0),
   isActive: boolean('is_active').default(true),
