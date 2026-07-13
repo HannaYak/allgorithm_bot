@@ -39,6 +39,29 @@ export const users = pgTable('users', {
   referralCount: integer('referral_count').default(0),
 });
 
+export const detectiveCases = pgTable('detective_cases', {
+  id: serial('id').primaryKey(),
+  eventId: integer('event_id').notNull(),
+  suspectNumber: integer('suspect_number').notNull(), // 1-9
+  name: varchar('name', { length: 255 }).notNull(),
+  dossier: text('dossier').notNull(), // Специфичные улики ("дыры")
+  clue: text('clue').notNull(),
+  isCulprit: boolean('is_killer').default(false).notNull()
+});
+
+export const detectiveVotes = pgTable('detective_votes', {
+  id: serial('id').primaryKey(),
+  eventId: integer('event_id').notNull(),
+  userId: integer('user_id').notNull(),
+  suspectNumber: integer('suspect_number').notNull()
+});
+
+export const trialStates = pgTable('trial_states', {
+  eventId: integer('event_id').primaryKey(),
+  isTrialOpen: boolean('is_trial_open').default(false).notNull(),
+  isFinished: boolean('is_finished').default(false).notNull()
+});
+
 // Таблица событий (Игр)
 // Таблица событий (Игр)
 export const events = pgTable('events', {
