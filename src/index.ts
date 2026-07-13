@@ -1313,7 +1313,15 @@ const createPollWizard = new Scenes.WizardScene(
 
 // Регистрация всех сцен и подключение сессий
 // Регистрация всех сцен и подключение сессий
-const stage = new Scenes.Stage<any>([registerWizard, addEventWizard, msgEventWizard, addPromoWizard, editFactWizard]);
+const stage = new Scenes.Stage<any>([
+  registerWizard, 
+  addEventWizard, 
+  msgEventWizard, 
+  addPromoWizard, 
+  editFactWizard, 
+  uploadUsersWizard, 
+  createPollWizard
+]);
 bot.use(session()); 
 bot.use(stage.middleware());
 
@@ -3000,26 +3008,42 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
         await bot.telegram.sendMessage(ADMIN_ID, `⚠️ Юзер ${user.name} (@${ctx.from!.username}) нажал «Оплатить» на игру №${eid}.`).catch(()=>{});
 
         // 3. ЛОГИКА ЦЕНЫ (Статичные ID из Stripe)
-        let basePrice = 50; 
-        let priceNotice = '';
-        let stripePriceId = GAME_PRICES[event.type]; // По умолчанию берем ID игры
+       let basePrice = 50; 
+let priceNotice = '';
+let stripePriceId = GAME_PRICES[event.type]; // Берем ID продукта
 
-        if (event.type.startsWith('talk_')) {
-            basePrice = 35;
-        } else if (event.type.startsWith('speed_dating')) {
-            basePrice = 50;
-            
-            const userG = (user.gender || '').toLowerCase();
-            const threshold = Math.max(1, Math.floor((event.maxPlayers || 12) * 0.2)); 
-            
-            // 🔥 ТЕПЕРЬ БОТ ПРЕКРАСНО ВИДИТ mC и wC 🔥
-            if (userG.includes('муж') && (mC - wC) >= threshold) {
-                basePrice += 10; 
-                stripePriceId = GAME_PRICES['speed_dating_surge']; // <--- БЕРЕМ ID НА 60 PLN!
-                priceNotice = `\n\n📈 <i>Применен динамический тариф (+10 PLN), так как мужских мест на эту игру осталось очень мало.</i>`;
-            }
-        }
+if (event.type === 'corporate') {
+    basePrice = 150; // Кастомный B2B тариф (условно 150 PLN с человека за закрытую сессию)
+    stripePriceId = GAME_PRICES['corporate'];
+    priceNotice = `\n\n👔 <i>Применен корпоративный закрытый тариф сессии.</i>`;
+} else if (event.type === 'osint_detective') {
+    basePrice = 70; // Специальный тариф под детективную игру
+    stripePriceId = GAME_PRICES['osint_detective'];
+    priceNotice = `\n\n🕵️‍♂️ <i>Стоимость включает материалы дела, OSINT-досье и участие в Следственном Комитете.</i>`;
+} else if (event.type.startsWith('talk_')) {
+    basePrice = 35;
+} else if (event.type.startsWith('speed_dating')) {
+    basePrice = 50;
+    const userG = (user.gender || '').toLowerCase();
+    const threshold = Math.max(1, Math.floor((event.maxPlayers || 12) * 0.2)); 
+    if (userG.includes('муж') && (mC - wC) >= threshold) {
+        basePrice += 10; 
+        stripePriceId = GAME_PRICES['speed_dating_surge'];
+        priceNotice = `\n\n📈 <i>Применен динамический тариф (+10 PLN), так как мужских мест осталось очень мало.</i>`;
+    }
+}
 
+// Защита от применения ваучеров -10 PLN на корпораты и OSINT-детективы
+if (activeVoucher?.status === 'approved_10') {
+    if (event.type === 'corporate' || event.type === 'osint_detective') {
+        // Молча аннулируем применение купона для B2B/Спец-игр, сохраняя базовую цену
+        discounts = []; 
+    } else if (basePrice >= 35) { 
+        finalPrice = basePrice - 10;
+        discounts = [{ coupon: STRIPE_COUPON_ID }];
+        sessionMetadata.voucherId = activeVoucher.id.toString();
+    }
+}
         // 4. БЕЗОПАСНЫЙ РАСЧЕТ ЛОЯЛЬНОСТИ (5-я игра)
        // 4. БЕЗОПАСНЫЙ РАСЧЕТ ЛОЯЛЬНОСТИ (5-я игра)
        const gamesAlreadyPlayed = user.gamesPlayed || 0;
@@ -3185,28 +3209,30 @@ if (existing?.paid) return ctx.editMessageText('✅ Ты уже в списке 
 
 // Записываем через транзакцию
 await db.transaction(async (tx) => {
-    await tx.insert(schema.bookings).values({ userId: user.id, eventId: eid, paid: true });
-    await tx.update(schema.events)
-        .set({ currentPlayers: sql`${schema.events.currentPlayers} + 1` })
-        .where(eq(schema.events.id, eid));
-});
+            if (existing) {
+                await tx.update(schema.bookings).set({ paid: true }).where(eq(schema.bookings.id, existing.id));
+            } else {
+                await tx.insert(schema.bookings).values({ userId: user.id, eventId: eid, paid: true });
+            }
+            await tx.update(schema.events)
+                .set({ currentPlayers: sql`${schema.events.currentPlayers} + 1` })
+                .where(eq(schema.events.id, eid));
+        });
 
-PENDING_PAYMENTS.delete(user.id);
-await sendLog('ОПЛАТА 💳', `👤 Игрок: <b>${user.name}</b>\n🎫 Игра: №${eid}`);
-        await db.insert(schema.bookings).values({ userId: user.id, eventId: eid, paid: true });
-        await db.update(schema.events).set({ currentPlayers: realBookingsCount.length + 1 }).where(eq(schema.events.id, eid));
-        
-await ctx.editMessageText(
-    `🎉 <b>Оплата подтверждена! Ты в игре!</b>\n\n` +
-    `📍 <b>Что теперь?</b>\n` +
-    `• Твоя запись уже появилась в разделе 👤 <b>Личный кабинет</b>.\n` +
-    `• Ровно за <b>3 часа</b> до старта я пришлю сюда точный адрес и инструкцию, как найти наш столик.\n\n` +
-    `⚠️ <b>Важные правила:</b>\n` +
-    `• <b>Отмена и перенос:</b> Возможны не позднее чем за <b>36 часов</b> до начала. Позже сумма, к сожалению, сгорает.\n` +
-    `• <b>Заказы:</b> Напоминаем, что еда и напитки в ресторане оплачиваются отдельно.\n\n` +
-    `До встречи за столом! 😎`,
-    { parse_mode: 'HTML' }
-);
+        PENDING_PAYMENTS.delete(user.id);
+        await sendLog('ОПЛАТА 💳', `👤 Игрок: <b>${user.name}</b>\n🎫 Игра: №${eid}`);
+                
+        await ctx.editMessageText(
+            `🎉 <b>Оплата подтверждена! Ты в игре!</b>\n\n` +
+            `📍 <b>Что теперь?</b>\n` +
+            `• Твоя запись уже появилась в разделе 👤 <b>Личный кабинет</b>.\n` +
+            `• Ровно за <b>3 часа</b> до старта я пришлю сюда точный адрес и инструкцию, как найти наш столик.\n\n` +
+            `⚠️ <b>Важные правила:</b>\n` +
+            `• <b>Отмена и перенос:</b> Возможны не позднее чем за <b>36 часов</b> до начала. Позже сумма, к сожалению, сгорает.\n` +
+            `• <b>Заказы:</b> Напоминаем, что еда и напитки в ресторане оплачиваются отдельно.\n\n` +
+            `До встречи за столом! 😎`,
+            { parse_mode: 'HTML' }
+        );
 
     } catch (e) { 
         console.error(e);
@@ -3349,6 +3375,168 @@ bot.action('admin_back_main', async (ctx) => {
     }).catch(() => {});
 });
 
+
+bot.command('detective_panel', async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return;
+  const activeDetectiveGames = await db.query.events.findMany({ where: and(eq(schema.events.type, 'osint_detective'), eq(schema.events.isActive, true)) });
+  
+  if (activeDetectiveGames.length === 0) return ctx.reply('Нет активных детективных игр 🕵️‍♂️');
+  
+  const btns = activeDetectiveGames.map(g => [
+    Markup.button.callback(`⚖️ Открыть СУД: ${g.dateString}`, `det_open_trial_${g.id}`),
+    Markup.button.callback(`🏁 Итог Суда`, `det_verdict_menu_${g.id}`)
+  ]);
+
+  return ctx.reply('🕵️‍♂️ <b>Пульт Управления «Следственным Комитетом»:</b>', Markup.inlineKeyboard(btns));
+});
+
+bot.action(/det_open_trial_(\d+)/, async (ctx) => {
+  const eventId = parseInt(ctx.match[1]);
+  await ctx.answerCbQuery();
+
+  // Инициализируем или обновляем состояние суда в базе
+  await db.insert(schema.trialStates).values({ eventId, isTrialOpen: true, isFinished: false })
+    .onConflictDoUpdate({ target: schema.trialStates.eventId, set: { isTrialOpen: true } });
+
+  const msg = `⚖️ <b>РЕЖИМ «СЛЕДСТВЕННЫЙ КОМИТЕТ» ОТКРЫТ</b>\n\n` +
+              `Команды прибыли в штаб. Перед вами полная картина преступления Дело №${eventId}, но она разбита на фрагменты.\n\n` +
+              `⏳ <b>У вас есть 15 минут</b>, чтобы обменяться данными, сопоставить улики («дыры» в досье) и досье подозреваемых. Кто промолчал — тот проиграл.\n\n` +
+              `⚠️ <i>Запрещено пользоваться интернетом для проверки подозреваемых. Используйте только то, что нашел Алгоритм.</i>\n\n` +
+              `🔍 Изучайте досье через меню ниже и голосуйте, когда будете готовы вынести вердикт.`;
+
+  const players = await db.select({ tgId: schema.users.telegramId }).from(schema.bookings)
+    .innerJoin(schema.users, eq(schema.bookings.userId, schema.users.id))
+    .where(and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true)));
+
+  // Рассылаем всем игрокам детективное меню
+  for (const p of players) {
+    if (!p.tgId) continue;
+    await bot.telegram.sendMessage(p.tgId, msg, {
+      parse_mode: 'HTML',
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback('🔎 Просмотреть все 9 Досье', `det_view_all_suspects_${eventId}`)],
+        [Markup.button.callback('🗳 Проголосовать / Вынести Вердикт', `det_vote_menu_${eventId}`)]
+      ])
+    }).catch(() => {});
+  }
+
+  await ctx.reply(`📢 Стадия суда для игры №${eventId} успешно запущена! Все участники получили досье.`);
+});
+
+// Экшен просмотра всех 9 подозреваемых
+bot.action(/det_view_all_suspects_(\d+)/, async (ctx) => {
+  const eventId = parseInt(ctx.match[1]);
+  await ctx.answerCbQuery();
+
+  const suspects = await db.query.detectiveCases.findMany({ where: eq(schema.detectiveCases.eventId, eventId), orderBy: [asc(schema.detectiveCases.suspectNumber)] });
+  
+  if (suspects.length === 0) {
+    return ctx.reply('📂 Досье подозреваемых для этого дела еще не загружены в базу администратором.');
+  }
+
+  let listMsg = `🕵️‍♂️ <b>СПИСОК ПОДОЗРЕВАЕМЫХ // ДЕЛО №${eventId}:</b>\n\n`;
+  suspects.forEach(s => {
+    listMsg += `📌 <b>Подозреваемый №${s.suspectNumber}: ${s.name}</b>\n📄 <b>Досье:</b> <i>${s.dossier}</i>\n🔍 <b>Улика:</b> <u>${s.clue}</u>\n━━━━━━━━━━━━━━━\n`;
+  });
+
+  return ctx.replyWithHTML(listMsg, Markup.inlineKeyboard([[Markup.button.callback('🗳 Перейти к голосованию', `det_vote_menu_${eventId}`)]]));
+});
+
+// Экшен вызова меню голосования
+bot.action(/det_vote_menu_(\d+)/, async (ctx) => {
+  const eventId = parseInt(ctx.match[1]);
+  await ctx.answerCbQuery();
+
+  const trial = await db.query.trialStates.findFirst({ where: eq(schema.trialStates.eventId, eventId) });
+  if (!trial || !trial.isTrialOpen || trial.isFinished) {
+    return ctx.reply('❌ Ошибка: Стадия суда закрыта или еще не начиналась.');
+  }
+
+  const suspects = await db.query.detectiveCases.findMany({ where: eq(schema.detectiveCases.eventId, eventId), orderBy: [asc(schema.detectiveCases.suspectNumber)] });
+  const btns = suspects.map(s => [Markup.button.callback(`⚖️ Обвинить: ${s.name}`, `det_submit_vote_${eventId}_${s.suspectNumber}`)]);
+
+  return ctx.reply('🗳 <b>ВЫНЕСИТЕ СВОЙ ЛИЧНЫЙ ВЕРДИКТ:</b>\n\nВыберите из списка человека, которого вы считаете настоящим убийцей на основе сопоставления улик всех следственных групп:', Markup.inlineKeyboard(btns));
+});
+
+// Экшен фиксации голоса участника
+bot.action(/det_submit_vote_(\d+)_(\d+)/, async (ctx) => {
+  const eventId = parseInt(ctx.match[1]);
+  const suspectNum = parseInt(ctx.match[2]);
+  
+  const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
+  if (!user) return;
+
+  // Проверяем, голосовал ли уже человек
+  const existingVote = await db.query.detectiveVotes.findFirst({
+    where: and(eq(schema.detectiveVotes.eventId, eventId), eq(schema.detectiveVotes.userId, user.id))
+  });
+
+  if (existingVote) {
+    await db.update(schema.detectiveVotes).set({ suspectNumber: suspectNum }).where(eq(schema.detectiveVotes.id, existingVote.id));
+    await ctx.answerCbQuery('Вердикт изменен! ⚖️');
+  } else {
+    await db.insert(schema.detectiveVotes).values({ eventId, userId: user.id, suspectNumber: suspectNum });
+    await ctx.answerCbQuery('Голос принят! 🤫');
+  }
+
+  const suspect = await db.query.detectiveCases.findFirst({ where: and(eq(schema.detectiveCases.eventId, eventId), eq(schema.detectiveCases.suspectNumber, suspectNum)) });
+  await ctx.editMessageText(`🔒 <b>Ваш вердикт зафиксирован.</b>\n\nВы проголосовали за виновность: <b>${suspect?.name}</b>.\n\nОжидайте, пока Судья подведет итоги голосования присяжных заседателей.`);
+  
+  // Уведомление админу в лайв-режиме
+  await bot.telegram.sendMessage(ADMIN_ID, `🗳 <b>Присяжный проголосовал:</b>\nИмя: ${user.name}\nВыбор: Подозреваемый №${suspectNum} (${suspect?.name})`);
+});
+
+// Меню оглашения приговора для Админа
+bot.action(/det_verdict_menu_(\d+)/, async (ctx) => {
+  const eventId = parseInt(ctx.match[1]);
+  await ctx.answerCbQuery();
+
+  const votes = await db.query.detectiveVotes.findMany({ where: eq(schema.detectiveVotes.eventId, eventId) });
+  const suspects = await db.query.detectiveCases.findMany({ where: eq(schema.detectiveCases.eventId, eventId) });
+  const killer = suspects.find(s => s.isCulprit);
+
+  let report = `📊 <b>ТЕКУЩИЙ СТАТУС СУДА (Игра №${eventId}):</b>\n\n`;
+  suspects.forEach(s => {
+    const count = votes.filter(v => v.suspectNumber === s.suspectNumber).length;
+    report += `• ${s.name} (№${s.suspectNumber}) ${s.isCulprit ? '🎯 [Убийца]' : ''}: <b>${count} голосов</b>\n`;
+  });
+
+  return ctx.replyWithHTML(report, Markup.inlineKeyboard([
+    [Markup.button.callback('🏁 ОГЛАСИТЬ ПРИГОВОР И ЗАКРЫТЬ СУД', `det_exec_verdict_${eventId}`)]
+  ]));
+});
+
+// Экшен финального закрытия дела и публикации итогов
+bot.action(/det_exec_verdict_(\d+)/, async (ctx) => {
+  const eventId = parseInt(ctx.match[1]);
+  await ctx.answerCbQuery();
+
+  await db.update(schema.trialStates).set({ isFinished: true, isTrialOpen: false }).where(eq(schema.trialStates.eventId, eventId));
+
+  const suspects = await db.query.detectiveCases.findMany({ where: eq(schema.detectiveCases.eventId, eventId) });
+  const killer = suspects.find(s => s.isCulprit);
+
+  const finalNotice = `⚖️ <b>СУД ПРИСЯЖНЫХ ЗАСЕДАТЕЛЕЙ ЗАВЕРШЕН</b>\n\n` +
+                      `Присяжные вынесли окончательный вердикт по Делу №${eventId}.\n\n` +
+                      `🎯 <b>Настоящий убийца:</b> <u>${killer?.name || 'Личность не установлена'}</u>\n\n` +
+                      `📄 <b>Финальное досье улик:</b>\n<i>${killer?.dossier}</i>\n\n` +
+                      `🔍 Собранные вами специфичные улики следственных групп полностью подтверждают вину обвиняемого. Качественный OSINT-анализ и сопоставление данных разрушили ложное алиби.\n\n` +
+                      `Благодарим за участие в расследовании Алгоритма. Кабинет открыт. 🥂`;
+
+  const players = await db.select({ tgId: schema.users.telegramId }).from(schema.bookings)
+    .innerJoin(schema.users, eq(schema.bookings.userId, schema.users.id))
+    .where(and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true)));
+
+  for (const p of players) {
+    if (!p.tgId) continue;
+    await bot.telegram.sendMessage(p.tgId, finalNotice, { parse_mode: 'HTML' }).catch(() => {});
+  }
+
+  await ctx.reply('🎉 Приговор успешно оглашен! Дело закрыто, участники уведомлены.');
+});
+
+
+
 // Запуск статуса
 // Запуск статуса прямо в пульт
 bot.action('admin_trigger_status', async (ctx) => {
@@ -3398,6 +3586,43 @@ bot.action('admin_global_broadcast', (ctx) => {
 bot.action('admin_add_event', (ctx) => ctx.scene.enter('ADD_EVENT_SCENE'));
 bot.action('admin_msg_event', (ctx) => ctx.scene.enter('MSG_EVENT_SCENE'));
 
+bot.action('poll_confirm_broadcast', async (ctx) => {
+  const state = ctx.scene.state as any;
+  if (!state?.question || !state?.options) return ctx.answerCbQuery('❌ Данные опроса утеряны.');
+  
+  await ctx.answerCbQuery('🚀 Запуск нативного опроса...');
+  await ctx.editMessageText('⏳ Опрос рассылается по всей базе пользователей...');
+
+  try {
+    const allUsers = await db.query.users.findMany();
+    let count = 0;
+
+    for (const u of allUsers) {
+      try {
+        // Отправляем нативный Telegram Poll
+        await bot.telegram.sendPoll(u.telegramId, state.question, state.options, {
+          is_anonymous: false, // Чтобы ответы летели в наш обработчик poll_answer
+          allows_multiple_answers: false
+        });
+        count++;
+      } catch {
+        // Пропускаем заблокировавших бота
+      }
+    }
+    await ctx.reply(`✅ Нативный опрос успешно доставлен ${count} пользователям.`);
+  } catch (e) {
+    console.error(e);
+    await ctx.reply('❌ Произошла ошибка при глобальной рассылке опроса.');
+  } finally {
+    return ctx.scene.leave();
+  }
+});
+
+bot.action('poll_cancel_broadcast', async (ctx) => {
+  await ctx.answerCbQuery('Отменено');
+  await ctx.editMessageText('❌ Рассылка опроса отменена организатором.', Markup.inlineKeyboard([[Markup.button.callback('🔙 В меню', 'admin_events_menu')]]));
+  return ctx.scene.leave();
+});
 
 bot.command('menu', (ctx) => {
   return ctx.reply('Главное меню восстановлено! 🥂', getMainKeyboard());
@@ -4734,8 +4959,26 @@ bot.on('message', async (ctx, next) => {
         return; // Обязательно выходим, если фото обработано
     }
     const text = (ctx.message as any).text;
-
     if (!userId) return next();
+
+    // БЛОК ОБРАБОТКИ ВХОДЯЩЕГО ТЕКСТА
+    if (text) {
+        // 1. Принудительное присвоение статуса Ветерана из админки
+        if (sess?.waitingForVeteranId && userId === ADMIN_ID) {
+            const targetId = parseInt(text.trim());
+            if (isNaN(targetId)) {
+                return ctx.reply('❌ ID должен быть числом. Введите заново:');
+            }
+
+            const targetUser = await db.query.users.findFirst({ where: eq(schema.users.telegramId, targetId) });
+            if (!targetUser) return ctx.reply('❌ Пользователь не найден в базе данных.');
+
+            await db.update(schema.users).set({ gamesPlayed: 9 }).where(eq(schema.users.id, targetUser.id));
+            await checkAndPromoteToVeteran(targetUser.id);
+            
+            sess.waitingForVeteranId = false;
+            return ctx.reply(`✅ Юзеру ${targetUser.name} принудительно начислено 9 игр и отправлена инвайт-ссылка в закрытый чат!`);
+        }
 
     // 1. ПРОВЕРКА ПРОМОКОДА
     if (sess?.waitingForPromo && text) {
