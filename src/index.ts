@@ -5100,9 +5100,11 @@ bot.on('message', async (ctx, next) => {
                 }
             }
 		}
-        }
+    }
+
 
     return next();
+	}
 });
 
 bot.action('end_support_session', async (ctx) => {
