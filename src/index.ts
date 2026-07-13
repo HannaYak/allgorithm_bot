@@ -53,6 +53,8 @@ const GAME_PRICES: Record<string, string> = {
   'speed_dating_surge': 'price_1TitbQHhXyjuCWwf5VCQOymy', // <--- НОВЫЙ ЦЕННИК НА 60 PLN
   'tiffany': 'price_1TWzzTHhXyjuCWwfLgliEFEP',
   'lockload': 'price_1TX08mHhXyjuCWwfvuk0S3j2',
+  'corporate': 'price_1CorporatePlaceholderXyjuCW', // <-- Новый Stripe Price ID для B2B
+  'osint_detective': 'price_1OsintPlaceholderXyjuCW',
   'talk_toast_review': 'price_1SiDMGHhXyjuCWwfzysRSphU',
   'stock_know_review': 'price_1SiDKoHhXyjuCWwfwg24Y7mF',
 };
@@ -64,9 +66,11 @@ const ADMIN_ID = 5456905649;
 const BEAUTY_NAMES: Record<string, string> = {
   'talk_toast': 'Talk & Toast 🥂',
   'stock_know': 'Stock & Know 🧠',
-  'speed_dating_28_38': 'Speed Dating (25-35 лет) 💘',
+  'speed_dating_28_38': 'Speed Dating (28-38 лет) 💘',
   'tiffany': 'Breakfast at Tiffany\'s 🥐✨',
   'lockload': 'Mad Men 🥃',
+  'corporate': 'Corporate Session 👔💼', // <-- Красивое имя для вывода в кабинете
+  'osint_detective': 'OSINT Детектив 🕵️‍♂️🔍',
   'talk_toast_review': 'Talk & Toast 🎥 (со съёмкой)',
   'stock_know_review': 'Stock & Know 🎥 (со съёмкой)'
 };
@@ -78,6 +82,8 @@ const TYPE_MAP: Record<string, string> = {
   'talk_toast': 'tt', 
   'stock_know': 'sk', 
   'speed_dating': 'sd',
+  'corporate': 'corp', // <-- Короткий идентификатор
+  'osint_detective': 'osint',
   'talk_toast_review': 'ttr',
   'stock_know_review': 'skr'
 };
@@ -85,6 +91,8 @@ const REV_TYPE_MAP: Record<string, string> = {
   'tt': 'talk_toast', 
   'sk': 'stock_know', 
   'sd': 'speed_dating',
+  'corp': 'corporate', // <-- Направление обратного декодирования
+  'osint': 'osint_detective',
   'ttr': 'talk_toast_review',
   'skr': 'stock_know_review'
 };
@@ -1176,6 +1184,130 @@ const editFactWizard = new Scenes.WizardScene(
     
 
     return ctx.scene.leave();
+  }
+);
+
+// --- СЦЕНА ЗАГРУЗКИ УЧАСТНИКОВ ДЛЯ КОРПОРАТИВА / ИВЕНТА ---
+const uploadUsersWizard = new Scenes.WizardScene(
+  'UPLOAD_USERS_SCENE',
+  async (ctx) => {
+    const activeEvents = await db.query.events.findMany({ where: eq(schema.events.isActive, true) });
+    if (activeEvents.length === 0) {
+      await ctx.reply('Активных событий для загрузки списков нет.');
+      return ctx.scene.leave();
+    }
+    const btns = activeEvents.map(e => [Markup.button.callback(`${e.dateString} | ${getGameName(e.type)}`, `up_select_ev_${e.id}`)]);
+    await ctx.reply('Выберите событие (например, нужный корпоратив) для импорта участников:', Markup.inlineKeyboard(btns));
+    return ctx.wizard.next();
+  },
+  async (ctx) => {
+    if (ctx.callbackQuery && 'data' in ctx.callbackQuery) {
+      const data = ctx.callbackQuery.data;
+      if (data.startsWith('up_select_ev_')) {
+        const eid = parseInt(data.replace('up_select_ev_', ''));
+        (ctx.wizard.state as any).selectedEventId = eid;
+        await ctx.answerCbQuery();
+        await ctx.editMessageText('✅ Событие выбрано.\n\nТеперь отправьте список Telegram ID пользователей через запятую (например: 1234567, 89101112):');
+        return ctx.wizard.next();
+      }
+    }
+    return ctx.reply('Пожалуйста, выберите игру кнопкой.');
+  },
+  async (ctx) => {
+    if (!ctx.message || !('text' in ctx.message)) return ctx.reply('Отправьте текстовый список ID.');
+    const eventId = (ctx.wizard.state as any).selectedEventId;
+    const rawIds = ctx.message.text.replace(/\s/g, '').split(',');
+    
+    let successCount = 0;
+    let failCount = 0;
+
+    const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
+    if (!event) {
+      await ctx.reply('❌ Ошибка: Событие не найдено.');
+      return ctx.scene.leave();
+    }
+
+    for (const rawId of rawIds) {
+      const tgId = parseInt(rawId);
+      if (isNaN(tgId)) {
+        failCount++;
+        continue;
+      }
+
+      // Ищем или создаем пользователя в базе, чтобы привязать бронь
+      let user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, tgId) });
+      if (!user) {
+        const [newUser] = await db.insert(schema.users).values({
+          telegramId: tgId,
+          profileCompleted: true, // Для корпоративов сразу открываем доступ
+          isApproved: true,
+          name: `Сотрудник ${tgId}`
+        }).returning();
+        user = newUser;
+      }
+
+      // Проверяем дубликат записи
+      const existing = await db.query.bookings.findFirst({
+        where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.eventId, eventId))
+      });
+
+      if (!existing) {
+        await db.insert(schema.bookings).values({ userId: user.id, eventId: eventId, paid: true });
+        successCount++;
+      } else if (!existing.paid) {
+        await db.update(schema.bookings).set({ paid: true }).where(eq(schema.bookings.id, existing.id));
+        successCount++;
+      }
+    }
+
+    // Корректируем счетчик игроков на основе реальных строк
+    const realCount = await db.select().from(schema.bookings).where(and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true)));
+    await db.update(schema.events).set({ currentPlayers: realCount.length }).where(eq(schema.events.id, eventId));
+
+    await ctx.reply(`📊 <b>Импорт завершен:</b>\n\n✅ Успешно добавлено/оплачено: <b>${successCount}</b> чел.\n❌ Ошибки формата: <b>${failCount}</b>\n👥 Всего участников в событии: <b>${realCount.length}/${event.maxPlayers}</b>`, { parse_mode: 'HTML' });
+    return ctx.scene.leave();
+  }
+);
+
+// --- СЦЕНА СОЗДАНИЯ НАТИВНЫХ ОПРОСОВ ИЗ АДМИНКИ ---
+const createPollWizard = new Scenes.WizardScene(
+  'CREATE_POLL_SCENE',
+  async (ctx) => {
+    await ctx.reply('Введите вопрос для нативного опроса:');
+    return ctx.wizard.next();
+  },
+  async (ctx) => {
+    if (!ctx.message || !('text' in ctx.message)) return ctx.reply('Введите текст вопроса.');
+    (ctx.wizard.state as any).question = ctx.message.text.trim();
+    await ctx.reply('Введите варианты ответов через косую черту (например: Да / Нет / Пока присматриваюсь):');
+    return ctx.wizard.next();
+  },
+  async (ctx) => {
+    if (!ctx.message || !('text' in ctx.message)) return ctx.reply('Введите варианты ответов.');
+    const options = ctx.message.text.split('/').map(opt => opt.trim()).filter(opt => opt.length > 0);
+    
+    if (options.length < 2) {
+      return ctx.reply('❌ Опрос должен содержать как минимум 2 варианта ответа. Введите заново:');
+    }
+    
+    const state = ctx.wizard.state as any;
+    state.options = options;
+
+    await ctx.replyWithHTML(
+      `📊 <b>Предпросмотр опроса перед глобальной рассылкой:</b>\n\n` +
+      `❓ Вопрос: <i>${state.question}</i>\n` +
+      `🔹 Варианты:\n${options.map((o, i) => `${i+1}. ${o}`).join('\n')}\n\n` +
+      `Отправить этот опрос ВСЕМ пользователям бота?`,
+      Markup.inlineKeyboard([
+        [Markup.button.callback('🚀 Да, запустить рассылку', 'poll_confirm_broadcast')],
+        [Markup.button.callback('❌ Отмена', 'poll_cancel_broadcast')]
+      ])
+    );
+    return ctx.wizard.next();
+  },
+  async (ctx) => {
+    // Ждем экшена от инлайн кнопок, сцена завершится в обработчиках bot.action
+    return;
   }
 );
 
@@ -3153,6 +3285,8 @@ bot.action('admin_events_menu', async (ctx) => {
         ...Markup.inlineKeyboard([
             [Markup.button.callback('➕ Добавить игру', 'admin_add_event')],
             [Markup.button.callback('🎟 Создать промокод', 'admin_add_promo')],
+			[Markup.button.callback('📊 Опросы аудитории (Polls)', 'admin_poll_menu')], // <-- Новый пункт меню
+            [Markup.button.callback('👥 Загрузить участников (XLS/Текст)', 'admin_upload_users')],
 			[Markup.button.callback('🎖 Выдать статус Ветерана', 'admin_promote_veteran')],
             [Markup.button.callback('📢 Рассылка по игре', 'admin_msg_event')],
             [Markup.button.callback('💘 ПУЛЬТ Speed Dating', 'admin_fd_panel')],
@@ -3198,6 +3332,8 @@ bot.action('admin_promote_veteran', (ctx) => {
 
 // Добавь это в bot.on('message') (в блок if (text))
 
+bot.action('admin_upload_users', (ctx) => ctx.scene.enter('UPLOAD_USERS_SCENE'));
+bot.action('admin_poll_menu', (ctx) => ctx.scene.enter('CREATE_POLL_SCENE'));
 
 // Кнопка возврата
 bot.action('admin_back_main', async (ctx) => {
