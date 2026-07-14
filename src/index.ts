@@ -3197,18 +3197,15 @@ bot.action(/confirm_pay_(\d+)/, async (ctx) => {
 
         if (!user || !event) return ctx.reply('❌ Ошибка: данные не найдены.');
 
-        // --- ВОТ ТУТ ГЛАВНОЕ ИСПРАВЛЕНИЕ: СЧИТАЕМ РЕАЛЬНЫЕ ЗАПИСИ ---
-        const realBookingsCount = await db.select().from(schema.bookings).where(and(eq(schema.bookings.eventId, eid), eq(schema.bookings.paid, true)));
-
-        // Проверяем, не записан ли он уже (чтобы не было дублей)
+        // Проверяем, не записан ли он уже
         const existing = await db.query.bookings.findFirst({ 
-    where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.eventId, eid)) 
-});
+            where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.eventId, eid)) 
+        });
 
-if (existing?.paid) return ctx.editMessageText('✅ Ты уже в списке участников!');
+        if (existing?.paid) return ctx.editMessageText('✅ Ты уже в списке участников!');
 
-// Записываем через транзакцию
-await db.transaction(async (tx) => {
+        // Записываем через транзакцию
+        await db.transaction(async (tx) => {
             if (existing) {
                 await tx.update(schema.bookings).set({ paid: true }).where(eq(schema.bookings.id, existing.id));
             } else {
@@ -3239,7 +3236,7 @@ await db.transaction(async (tx) => {
         ctx.reply('Ошибка проверки платежа.'); 
     }
 });
-// --- 10. ВАУЧЕРЫ ---
+
 
 // --- 10. ВАУЧЕРЫ (ИСПРАВЛЕННЫЕ) ---
 
