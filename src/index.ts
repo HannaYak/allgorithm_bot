@@ -3096,9 +3096,7 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
         }
 
         // Логика скидки -10 PLN
-        let finalPrice = basePrice;
-        let discounts = [];
-        const sessionMetadata: any = { telegramId: ctx.from!.id.toString(), eventId: eid.toString() };
+        
 
         if (activeVoucher?.status === 'approved_10') {
             if (basePrice >= 35) { 
