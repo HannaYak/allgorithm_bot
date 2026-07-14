@@ -2752,6 +2752,27 @@ const finalButtons = events.map(e => {
   }
 }
 
+bot.command('fix_old', async (ctx) => {
+    // Защита: работает только для тебя
+    if (ctx.from.id.toString() !== process.env.ADMIN_ID) return;
+
+    try {
+        await ctx.reply('⏳ Открываю замки для старичков...');
+
+        // Бот сам выполняет прямой SQL-запрос в твою базу
+        await db.execute(sql`
+            UPDATE users 
+            SET is_approved = true 
+            WHERE games_played > 0 OR id IN (SELECT DISTINCT user_id FROM bookings);
+        `);
+
+        await ctx.reply('✅ Готово! Все "старички" с историей игр разблокированы и могут свободно покупать билеты.');
+    } catch (e) {
+        console.error("Ошибка fix_old:", e);
+        ctx.reply('❌ Ошибка при обновлении базы. Посмотри логи.');
+    }
+});
+
 // --- КОМАНДА: НАПИСАТЬ КОНКРЕТНОМУ ПОЛЬЗОВАТЕЛЮ ---
 bot.command('send', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
