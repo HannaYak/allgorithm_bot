@@ -2947,6 +2947,10 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
 
     if (!event) return;
 
+	const activeVoucher = await db.query.vouchers.findFirst({ 
+            where: and(eq(schema.vouchers.userId, user.id), or(eq(schema.vouchers.status, 'approved_10'), eq(schema.vouchers.status, 'approved_free'))) 
+        });
+
     // === НОВАЯ ПРОВЕРКА АНКЕТЫ (обязательная) ===
     if (!user?.profileCompleted) {
         return ctx.scene.enter('REGISTER_SCENE', { returnToEvent: eid });
@@ -3082,9 +3086,6 @@ if (activeVoucher?.status === 'approved_10') {
             }
         }
 // 5. ПРОВЕРКА ВАУЧЕРОВ (FREE и -10 PLN)
-        const activeVoucher = await db.query.vouchers.findFirst({ 
-            where: and(eq(schema.vouchers.userId, user.id), or(eq(schema.vouchers.status, 'approved_10'), eq(schema.vouchers.status, 'approved_free'))) 
-        });
 
         if (activeVoucher?.status === 'approved_free') {
             const doubleCheck = await db.query.bookings.findFirst({
