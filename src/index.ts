@@ -2945,12 +2945,18 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
     const event = await db.query.events.findFirst({ where: eq(schema.events.id, eid) });
     const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
 
-    if (!event) return;
+    if (!event || !user) return;
 
-	const activeVoucher = await db.query.vouchers.findFirst({ 
-            where: and(eq(schema.vouchers.userId, user.id), or(eq(schema.vouchers.status, 'approved_10'), eq(schema.vouchers.status, 'approved_free'))) 
-        });
-
+    // 1. СНАЧАЛА СОЗДАЕМ "КОРОБОЧКИ" (объявляем переменные)
+    let activeVoucher = await db.query.vouchers.findFirst({ 
+        where: and(eq(schema.vouchers.userId, user.id), or(eq(schema.vouchers.status, 'approved_10'), eq(schema.vouchers.status, 'approved_free'))) 
+    });
+    
+    let basePrice = 50; 
+    let finalPrice = basePrice;
+    let discounts: any[] = [];
+    let priceNotice = '';
+    const sessionMetadata: any = { telegramId: ctx.from!.id.toString(), eventId: eid.toString() };
     // === НОВАЯ ПРОВЕРКА АНКЕТЫ (обязательная) ===
     if (!user?.profileCompleted) {
         return ctx.scene.enter('REGISTER_SCENE', { returnToEvent: eid });
@@ -2980,74 +2986,63 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
     }
 
    try {
-        // 🔥 ВЫНОСИМ ПЕРЕМЕННЫЕ СЮДА, ЧТОБЫ ИХ ВИДЕЛ ВЕСЬ КОД 🔥
         let mC = 0, wC = 0; 
-
-        // 3. ГЕНДЕРНЫЙ КОНТРОЛЬ (для свиданий)
+        
+        // 1. Сначала считаем гендерный баланс (твоя логика)
         if (event.type.startsWith('speed_dating')) {
             const bookings = await db.query.bookings.findMany({ 
                 where: and(eq(schema.bookings.eventId, eid), eq(schema.bookings.paid, true)) 
             });
-
             for (const b of bookings) {
                 const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
                 const g = (u?.gender || '').toLowerCase();
                 if (g.includes('муж')) mC++;
                 else if (g.includes('жен')) wC++;
             }
+        }
 
-            const limit = Math.floor(event.maxPlayers / 2);
+        // 2. СНАЧАЛА определяем ВСЕ цены и метаданные
+        let basePrice = 50; 
+        let priceNotice = '';
+        let stripePriceId = GAME_PRICES[event.type];
+        
+        // Твоя логика цен
+        if (event.type === 'corporate') {
+            basePrice = 150;
+            stripePriceId = GAME_PRICES['corporate'];
+            priceNotice = `\n\n👔 <i>Применен корпоративный тариф.</i>`;
+        } else if (event.type === 'osint_detective') {
+            basePrice = 70;
+            stripePriceId = GAME_PRICES['osint_detective'];
+            priceNotice = `\n\n🕵️‍♂️ <i>Стоимость включает материалы дела.</i>`;
+        } else if (event.type.startsWith('talk_')) {
+            basePrice = 35;
+        } else if (event.type.startsWith('speed_dating')) {
+            basePrice = 50;
             const userG = (user.gender || '').toLowerCase();
-
-            if (userG.includes('муж') && mC >= limit) {
-                return ctx.reply(`❌ Места для мужчин на эту дату закончились.`, 
-                    Markup.inlineKeyboard([[Markup.button.callback('⏳ Встать в лист ожидания', `waitlist_add_${eid}`)]]));
-            }
-            if (userG.includes('жен') && wC >= limit) {
-                return ctx.reply(`❌ Места для девушек на эту дату закончились.`, 
-                    Markup.inlineKeyboard([[Markup.button.callback('⏳ Встать в лист ожидания', `waitlist_add_${eid}`)]]));
+            const threshold = Math.max(1, Math.floor((event.maxPlayers || 12) * 0.2)); 
+            if (userG.includes('муж') && (mC - wC) >= threshold) {
+                basePrice += 10; 
+                stripePriceId = GAME_PRICES['speed_dating_surge'];
+                priceNotice = `\n\n📈 <i>Применен динамический тариф (+10 PLN).</i>`;
             }
         }
 
-        await bot.telegram.sendMessage(ADMIN_ID, `⚠️ Юзер ${user.name} (@${ctx.from!.username}) нажал «Оплатить» на игру №${eid}.`).catch(()=>{});
+        // 3. Теперь объявляем переменные для цены и скидок
+        let finalPrice = basePrice;
+        let discounts: any[] = [];
+        const sessionMetadata: any = { telegramId: ctx.from!.id.toString(), eventId: eid.toString() };
 
-        // 3. ЛОГИКА ЦЕНЫ (Статичные ID из Stripe)
-       let basePrice = 50; 
-let priceNotice = '';
-let stripePriceId = GAME_PRICES[event.type]; // Берем ID продукта
-
-if (event.type === 'corporate') {
-    basePrice = 150; // Кастомный B2B тариф (условно 150 PLN с человека за закрытую сессию)
-    stripePriceId = GAME_PRICES['corporate'];
-    priceNotice = `\n\n👔 <i>Применен корпоративный закрытый тариф сессии.</i>`;
-} else if (event.type === 'osint_detective') {
-    basePrice = 70; // Специальный тариф под детективную игру
-    stripePriceId = GAME_PRICES['osint_detective'];
-    priceNotice = `\n\n🕵️‍♂️ <i>Стоимость включает материалы дела, OSINT-досье и участие в Следственном Комитете.</i>`;
-} else if (event.type.startsWith('talk_')) {
-    basePrice = 35;
-} else if (event.type.startsWith('speed_dating')) {
-    basePrice = 50;
-    const userG = (user.gender || '').toLowerCase();
-    const threshold = Math.max(1, Math.floor((event.maxPlayers || 12) * 0.2)); 
-    if (userG.includes('муж') && (mC - wC) >= threshold) {
-        basePrice += 10; 
-        stripePriceId = GAME_PRICES['speed_dating_surge'];
-        priceNotice = `\n\n📈 <i>Применен динамический тариф (+10 PLN), так как мужских мест осталось очень мало.</i>`;
-    }
-}
-
-// Защита от применения ваучеров -10 PLN на корпораты и OSINT-детективы
-if (activeVoucher?.status === 'approved_10') {
-    if (event.type === 'corporate' || event.type === 'osint_detective') {
-        // Молча аннулируем применение купона для B2B/Спец-игр, сохраняя базовую цену
-        discounts = []; 
-    } else if (basePrice >= 35) { 
-        finalPrice = basePrice - 10;
-        discounts = [{ coupon: STRIPE_COUPON_ID }];
-        sessionMetadata.voucherId = activeVoucher.id.toString();
-    }
-}
+        // 4. Применяем ваучеры, если они есть
+        if (activeVoucher?.status === 'approved_10') {
+            if (basePrice >= 35) { 
+                finalPrice = basePrice - 10;
+                discounts = [{ coupon: STRIPE_COUPON_ID }];
+                sessionMetadata.voucherId = activeVoucher.id.toString();
+            } else {
+                await ctx.answerCbQuery("💡 Скидка на этот формат не действует.", { show_alert: true });
+            }
+        }
         // 4. БЕЗОПАСНЫЙ РАСЧЕТ ЛОЯЛЬНОСТИ (5-я игра)
        // 4. БЕЗОПАСНЫЙ РАСЧЕТ ЛОЯЛЬНОСТИ (5-я игра)
        const gamesAlreadyPlayed = user.gamesPlayed || 0;
