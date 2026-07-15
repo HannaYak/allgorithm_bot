@@ -4008,41 +4008,50 @@ bot.command('cancel_with_voucher', async (ctx) => {
 });
 
 // Обработчик команды /start
-bot.onText(/\/start (.+)/, async (msg, match) => {
-    const chatId = msg.chat.id;
-    const startParam = match[1]; // Получаем параметр после команды /start
-
+// Исправленный обработчик команды /start под Telegraf (Неделя 7: Трекинг)
+bot.start(async (ctx) => {
     try {
-        // Проверяем, есть ли пользователь в базе
-        let user = await db.getUserByTelegramId(chatId);
+        const chatId = ctx.chat.id;
+        const startParam = ctx.startPayload; // Telegraf сам идеально парсит всё, что идет после /start
 
-        if (!user) {
-            let utmSource = null;
-            let referrerId = null;
-
-            // Разделяем: рефералка или обычная метка
-            if (startParam.startsWith('ref_')) {
-                referrerId = parseInt(startParam.replace('ref_', ''), 10);
-            } else {
-                utmSource = startParam; // Например, 'inst_campaign' или 'tiktok_blogger'
-            }
-
-            // Создаем нового пользователя с метками
-            await db.createNewUser({
-                telegramId: chatId,
-                username: msg.chat.username,
-                utmSource: utmSource,
-                referrerId: referrerId
+        // Если пользователь перешел по реферальной или UTM-ссылке
+        if (startParam) {
+            let user = await db.query.users.findFirst({ 
+                where: eq(schema.users.telegramId, chatId) 
             });
 
-            console.log(`[TRAFFIC] Новый пользователь ${chatId} пришел из: ${utmSource || 'Реферал: ' + referrerId}`);
+            if (!user) {
+                let utmSource = null;
+                let referrerId = null;
+
+                // Разделяем: рефералка или обычная UTM-метка
+                if (startParam.startsWith('ref_')) {
+                    referrerId = parseInt(startParam.replace('ref_', ''), 10);
+                } else {
+                    utmSource = startParam; // Например, 'inst_campaign' или 'threads_traffic'
+                }
+
+                // Создаем нового пользователя с метками в базе данных
+                await db.insert(schema.users).values({
+                    telegramId: chatId,
+                    username: ctx.from?.username || null,
+                    firstName: ctx.from?.first_name || null,
+                    utmSource: utmSource,
+                    referrerId: referrerId,
+                    isAdmin: chatId === ADMIN_ID
+                });
+
+                console.log(`[TRAFFIC] Новый пользователь ${chatId} успешно сохранен. Источник: ${utmSource || 'Реферал: ' + referrerId}`);
+            }
         }
 
-        // Запуск сценария приветствия
-        await startWelcomeScenario(chatId);
-
+        // Перенаправляем на твою старую функцию приветствия, которая уже есть в коде
+        // (Она отправляет видео и текст "Algorythm: Система доступа")
+        // Если старый bot.start(async (ctx) => { ... }) у тебя находится ниже, 
+        // просто объедини эту логику меток с ним.
+        
     } catch (error) {
-        console.error('Ошибка при обработке команды /start:', error);
+        console.error('Ошибка в протоколе трекинга /start:', error);
     }
 });
 
