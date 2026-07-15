@@ -1,6 +1,6 @@
 import { pgTable, serial, text, bigint, boolean, timestamp, integer, varchar } from 'drizzle-orm/pg-core';
 
-// Таблица пользователей
+// === ТАБЛИЦА ПОЛЬЗОВАТЕЛЕЙ ===
 export const users = pgTable('users', {
   id: serial('id').primaryKey(),
   telegramId: bigint('telegram_id', { mode: 'number' }).notNull().unique(),
@@ -12,8 +12,8 @@ export const users = pgTable('users', {
   birthDate: text('birth_date'),        // возраст
   gender: text('gender'),
   fact: text('fact'),
-  strangeStory: text('strange_story'),                  // странный факт
-  expectations: text('expectations'),   // ← Новый важный вопрос
+  strangeStory: text('strange_story'),  // странный факт
+  expectations: text('expectations'),   // Новый важный вопрос
   profileCompleted: boolean('profile_completed').default(false),
 
   // Дополнительные поля
@@ -35,10 +35,14 @@ export const users = pgTable('users', {
   
   createdAt: timestamp('created_at').defaultNow(),
   invitedBy: bigint('invited_by', { mode: 'number' }),
-  // (добавь эту строчку к остальным полям пользователя)
   referralCount: integer('referral_count').default(0),
+
+  // === ТРЕКИНГ ТРАФИКА ===
+  utmSource: varchar('utm_source', { length: 255 }), // Откуда пришел (например, inst_campaign)
+  referrerId: bigint('referrer_id', { mode: 'number' }), // Кто пригласил (ID)
 });
 
+// === ТАБЛИЦЫ ДЛЯ ИГРЫ "ОСИНТ / ДЕТЕКТИВ" ===
 export const detectiveCases = pgTable('detective_cases', {
   id: serial('id').primaryKey(),
   eventId: integer('event_id').notNull(),
@@ -62,14 +66,13 @@ export const trialStates = pgTable('trial_states', {
   isFinished: boolean('is_finished').default(false).notNull()
 });
 
-// Таблица событий (Игр)
-// Таблица событий (Игр)
+// === ТАБЛИЦА СОБЫТИЙ (ИГР) ===
 export const events = pgTable('events', {
   id: serial('id').primaryKey(),
   type: text('type').notNull(), // 'talk_toast', 'stock_know', 'speed_dating', 'corporate', 'osint_game'
   dateString: text('date_string').notNull(), // "20.12.2025 19:00"
   description: text('description'), // Например "Кухня: Азия"
-  price: integer('price'), // 🔥 НОВОЕ: Динамическая цена для B2B и новых форматов
+  price: integer('price'), // Динамическая цена
   maxPlayers: integer('max_players').notNull(),
   currentPlayers: integer('current_players').default(0),
   isActive: boolean('is_active').default(true),
@@ -77,30 +80,49 @@ export const events = pgTable('events', {
 
 export const autoStates = pgTable('auto_states', {
   id: serial('id').primaryKey(),
-  key: varchar('key', { length: 255 }).notNull().unique(), // например: "remind_3d_45", "used_topic_45_Тема..."
-  value: text('value'), // для USED_TOPICS будем хранить JSON строку
+  key: varchar('key', { length: 255 }).notNull().unique(), // например: "remind_3d_45"
+  value: text('value'), // JSON строка
   createdAt: timestamp('created_at').defaultNow(),
-  expiresAt: timestamp('expires_at'), // чтобы чистить старое
+  expiresAt: timestamp('expires_at'),
 });
 
-// Таблица записей на игры
-// Найти и заменить таблицу bookings в drizzle/schema.ts
+// === ТАБЛИЦА ЗАПИСЕЙ (БРОНИ) ===
 export const bookings = pgTable('bookings', {
   id: serial('id').primaryKey(),
   userId: integer('user_id').references(() => users.id),
   eventId: integer('event_id').references(() => events.id),
-  paid: boolean('paid').default(false), // Статус оплаты
-  confirmation: text('confirmation').default('pending'), // 🔥 НОВОЕ: 'pending', 'confirmed', 'rejected'
+  paid: boolean('paid').default(false),
+  confirmation: text('confirmation').default('pending'), // 'pending', 'confirmed', 'rejected'
   createdAt: timestamp('created_at').defaultNow(),
 });
 
-// Таблица ваучеров
+// === ТАБЛИЦА ВАУЧЕРОВ (ПОДТВЕРЖДЕНИЙ ОПЛАТ ФОТОГРАФИЕЙ) ===
 export const vouchers = pgTable('vouchers', {
   id: serial('id').primaryKey(),
   userId: integer('user_id').references(() => users.id),
   photoFileId: text('photo_file_id').notNull(),
   status: text('status').default('pending'), // 'pending', 'approved', 'rejected'
   usedInEventId: integer('used_in_event_id').references(() => events.id),
+});
+
+// === ТАБЛИЦА СКИДОЧНЫХ ВАУЧЕРОВ / ПРОМОКОДОВ (НОВАЯ) ===
+export const discountVouchers = pgTable('discount_vouchers', {
+  id: serial('id').primaryKey(),
+  code: varchar('code', { length: 50 }).notNull().unique(),
+  discountPercent: integer('discount_percent').default(0),
+  discountAmountPln: integer('discount_amount_pln').default(0),
+  isActive: boolean('is_active').default(true),
+  maxUses: integer('max_uses').default(1),
+  usedCount: integer('used_count').default(0),
+  expiresAt: timestamp('expires_at'),
+});
+
+// === ТАБЛИЦА ИСПОЛЬЗОВАНИЯ СКИДОЧНЫХ ВАУЧЕРОВ (НОВАЯ) ===
+export const userVouchers = pgTable('user_vouchers', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id), // references users.id (integer)
+  voucherId: integer('voucher_id').references(() => discountVouchers.id),
+  usedAt: timestamp('used_at').defaultNow(),
 });
 
 export const secretLikes = pgTable('secret_likes', {
@@ -111,7 +133,6 @@ export const secretLikes = pgTable('secret_likes', {
   createdAt: timestamp('created_at').defaultNow(),
 });
 
-// В drizzle/schema.ts
 export const promoCodes = pgTable('promo_codes', {
   id: serial('id').primaryKey(),
   code: text('code').notNull().unique(),
@@ -119,7 +140,7 @@ export const promoCodes = pgTable('promo_codes', {
   maxUses: integer('max_uses').default(1),
   currentUses: integer('current_uses').default(0),
   expiresAt: timestamp('expires_at'),
-  eventIds: text('event_ids'), // Теперь тут будет строка типа "12,15,18"
+  eventIds: text('event_ids'), // Строка типа "12,15,18"
   isActive: boolean('is_active').default(true),
 });
 
@@ -130,22 +151,21 @@ export const reveals = pgTable('reveals', {
   createdAt: timestamp('created_at').defaultNow(),
 });
 
-// Таблица баллов для Stock & Know
 export const stockScores = pgTable('stock_scores', {
   id: serial('id').primaryKey(),
   eventId: integer('event_id').references(() => events.id).notNull(),
   userId: integer('user_id').references(() => users.id).notNull(),
   questionIndex: integer('question_index').notNull(),
-  points: integer('points').default(0), // Баллы за точность + победа
-  isWinner: boolean('is_winner').default(false), // Флаг победы в раунде
+  points: integer('points').default(0),
+  isWinner: boolean('is_winner').default(false),
   createdAt: timestamp('created_at').defaultNow(),
 });
 
 export const ratings = pgTable('ratings', {
   id: serial('id').primaryKey(),
   eventId: integer('event_id').notNull(),
-  raterId: integer('rater_id').notNull(),    // Кто ставит оценку
-  targetId: integer('target_id').notNull(),  // Кому ставят оценку
-  stars: integer('stars').notNull(),         // Количество звезд (1-5)
+  raterId: integer('rater_id').notNull(),
+  targetId: integer('target_id').notNull(),
+  stars: integer('stars').notNull(),
   createdAt: timestamp('created_at').defaultNow(),
 });
