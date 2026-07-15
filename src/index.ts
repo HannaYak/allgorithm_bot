@@ -5240,15 +5240,19 @@ bot.on('message', async (ctx, next) => {
 	}
 });
 
-bot.on('callback_query', async (callbackQuery) => {
-    const chatId = callbackQuery.message.chat.id;
-    const data = callbackQuery.data;
+// ИСПРАВЛЕННЫЙ ВАРИАНТ ДЛЯ TELEGRAF:
+bot.on('callback_query', async (ctx) => {
+    const chatId = ctx.callbackQuery?.message?.chat.id;
+    const data = ctx.callbackQuery?.data;
 
-    if (data === 'suggest_idea') {
-        // Запоминаем состояние пользователя в Redis или сессии базы данных
-        await db.setUserState(chatId, 'AWAITING_IDEA');
+    // Сразу гасим часики анимации кнопки
+    await ctx.answerCbQuery().catch(() => {});
+
+    if (data === 'suggest_idea' && chatId) {
+        // Устанавливаем флаг ожидания текста в сессию Telegraf
+        (ctx.session as any).waitingForIdea = true;
         
-        await bot.sendMessage(chatId, "💡 Напиши свою идею, предложение по улучшению или партнерству одним сообщением ниже. Админ обязательно это прочитает:");
+        await ctx.reply("💡 Напиши свою идею, предложение по улучшению или партнерству одним сообщением ниже. Админ обязательно это прочитает:");
     }
 });
 
