@@ -1463,7 +1463,7 @@ setInterval(async () => {
         }
       // 2. РАСКРЫТИЕ АДРЕСА (ЗА 3 ЧАСА)
 if (minutesSinceStart >= -210 && minutesSinceStart <= 0 && !(await isProcessed(`reveal_${event.id}`))) {
-              await markAsProcessed(`reveal_${event.id}`, 8);
+        await markAsProcessed(`reveal_${event.id}`, 8);
         const { address } = parseEventDesc(event.description);
         
         const rules = `📍 <b>Локация раскрыта.</b>\n\n<b>Адрес:</b> ${address}\n\n` +
@@ -1478,6 +1478,10 @@ if (minutesSinceStart >= -210 && minutesSinceStart <= 0 && !(await isProcessed(`
 else if (event.type === 'stock_know') gameSpec = `🧠 <b>Stock & Know:</b> Игровой номер для ставок придет следующим сообщением.`;
 else if (event.type === 'speed_dating') gameSpec = `💘 <b>Свидания:</b> Ваш номер столика поступит следом.`;
         await broadcastToEvent(event.id, `${rules}\n\n${gameSpec}\n\nДо встречи.`);
+
+	const bks = await db.query.bookings.findMany({ 
+            where: and(eq(schema.bookings.eventId, event.id), eq(schema.bookings.paid, true)) 
+        });
 
         // Раздача номеров
        // --- УМНАЯ РАЗДАЧА НОМЕРОВ ПРИ РАСКРЫТИИ (ЗА 3 ЧАСА) ---
