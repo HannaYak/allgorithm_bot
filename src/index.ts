@@ -796,6 +796,56 @@ async function markAsProcessed(key: string, expiresInHours = 24): Promise<void> 
 
 // ====================== ПЕРЕНОС СОСТОЯНИЙ ИГР В БД ======================
 
+async function validateAndApplyVoucher(userTelegramId, voucherCode, originalPrice) {
+    try {
+        // Ищем активный ваучер в базе
+        const voucher = await db.query(
+            'SELECT * FROM vouchers WHERE code = $1 AND is_active = TRUE AND (expires_at IS NULL OR expires_at > NOW())',
+            [voucherCode.toUpperCase()]
+        );
+
+        if (voucher.rows.length === 0) {
+            return { success: false, message: "❌ Промокод не существует или истек." };
+        }
+
+        const v = voucher.rows[0];
+
+        // Проверяем лимит использований
+        if (v.used_count >= v.max_uses) {
+            return { success: false, message: "❌ Этот промокод уже полностью использован." };
+        }
+
+        // Проверяем, не использовал ли его конкретно этот пользователь ранее
+        const alreadyUsed = await db.query(
+            'SELECT * FROM user_vouchers WHERE user_id = $1 AND voucher_id = $2',
+            [userTelegramId, v.id]
+        );
+
+        if (alreadyUsed.rows.length > 0) {
+            return { success: false, message: "❌ Вы уже использовали этот промокод." };
+        }
+
+        // Считаем скидку
+        let finalPrice = originalPrice;
+        if (v.discount_percent > 0) {
+            finalPrice = originalPrice * (1 - v.discount_percent / 100);
+        } else if (v.discount_amount_pln > 0) {
+            finalPrice = Math.max(0, originalPrice - v.discount_amount_pln);
+        }
+
+        return {
+            success: true,
+            voucherId: v.id,
+            finalPrice: Math.round(finalPrice),
+            message: `✅ Промокод применен! Цена со скидкой: ${Math.round(finalPrice)} PLN`
+        };
+
+    } catch (error) {
+        console.error('Ошибка валидации ваучера:', error);
+        return { success: false, message: "⚠️ Ошибка сервера при проверке промокода." };
+    }
+}
+
 // --- СТОК И ЗНАНИЯ (STOCK) ---
 async function getStockState(eventId: number) {
   const record = await db.query.autoStates.findFirst({
@@ -3953,6 +4003,45 @@ bot.command('cancel_with_voucher', async (ctx) => {
     }
 });
 
+// Обработчик команды /start
+bot.onText(/\/start (.+)/, async (msg, match) => {
+    const chatId = msg.chat.id;
+    const startParam = match[1]; // Получаем параметр после команды /start
+
+    try {
+        // Проверяем, есть ли пользователь в базе
+        let user = await db.getUserByTelegramId(chatId);
+
+        if (!user) {
+            let utmSource = null;
+            let referrerId = null;
+
+            // Разделяем: рефералка или обычная метка
+            if (startParam.startsWith('ref_')) {
+                referrerId = parseInt(startParam.replace('ref_', ''), 10);
+            } else {
+                utmSource = startParam; // Например, 'inst_campaign' или 'tiktok_blogger'
+            }
+
+            // Создаем нового пользователя с метками
+            await db.createNewUser({
+                telegramId: chatId,
+                username: msg.chat.username,
+                utmSource: utmSource,
+                referrerId: referrerId
+            });
+
+            console.log(`[TRAFFIC] Новый пользователь ${chatId} пришел из: ${utmSource || 'Реферал: ' + referrerId}`);
+        }
+
+        // Запуск сценария приветствия
+        await startWelcomeScenario(chatId);
+
+    } catch (error) {
+        console.error('Ошибка при обработке команды /start:', error);
+    }
+});
+
 // --- КОМАНДА: ВЫДАТЬ ВАУЧЕР НА -10 PLN ВРУЧНУЮ ---
 bot.command('give_discount', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
@@ -4993,46 +5082,65 @@ bot.on('message', async (ctx, next) => {
         }
 
     // 1. ПРОВЕРКА ПРОМОКОДА
-    if (sess?.waitingForPromo && text) {
-        const codeInput = text.toUpperCase();
-        const eventId = sess.waitingForPromo;
+    // 2. ПРОВЕРКА ПРОМОКОДА
+        if (sess?.waitingForPromo) {
+            const codeInput = text.toUpperCase();
+            const eventId = sess.waitingForPromo;
 
-        const promo = await db.query.promoCodes.findFirst({
-            where: and(eq(schema.promoCodes.code, codeInput), eq(schema.promoCodes.isActive, true))
-        });
+            const promo = await db.query.promoCodes.findFirst({
+                where: and(eq(schema.promoCodes.code, codeInput), eq(schema.promoCodes.isActive, true))
+            });
 
-        if (!promo || promo.currentUses >= promo.maxUses || (promo.expiresAt && promo.expiresAt < new Date())) {
-            return ctx.reply('❌ Код не найден, истек или все билеты уже разобрали.');
-        }
-
-        if (promo.eventIds) {
-            const allowedIds = promo.eventIds.split(',').map(id => parseInt(id));
-            if (!allowedIds.includes(eventId)) {
-                return ctx.reply('❌ Этот код не действует на выбранную игру.');
-            }
-        }
-
-        const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
-        const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
-
-        if (user && event) {
-            const realBookingsCount = await db.select().from(schema.bookings)
-                .where(and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true)));
-
-            if (realBookingsCount.length >= event.maxPlayers) {
-                return ctx.reply('❌ К сожалению, места закончились!');
+            if (!promo || promo.currentUses >= promo.maxUses || (promo.expiresAt && promo.expiresAt < new Date())) {
+                return ctx.reply('❌ Код не найден, истек или все билеты уже разобрали.');
             }
 
-            await db.insert(schema.bookings).values({ userId: user.id, eventId: eventId, paid: true });
-            await db.update(schema.events)
-                .set({ currentPlayers: realBookingsCount.length + 1 })
-                .where(eq(schema.events.id, eventId));
+            if (promo.eventIds) {
+                const allowedIds = promo.eventIds.split(',').map(id => parseInt(id));
+                if (!allowedIds.includes(eventId)) {
+                    return ctx.reply('❌ Этот код не действует на выбранную игру.');
+                }
+            }
 
-            await ctx.reply('🎉 Поздравляем! Билет активирован. Ты в игре! 🥂');
-            sess.waitingForPromo = null;
+            const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
+            const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
+
+            if (user && event) {
+                const realBookingsCount = await db.select().from(schema.bookings)
+                    .where(and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true)));
+
+                if (realBookingsCount.length >= event.maxPlayers) {
+                    return ctx.reply('❌ К сожалению, места закончились!');
+                }
+
+                await db.insert(schema.bookings).values({ userId: user.id, eventId: eventId, paid: true });
+                await db.update(schema.events)
+                    .set({ currentPlayers: realBookingsCount.length + 1 })
+                    .where(eq(schema.events.id, eventId));
+
+                await ctx.reply('🎉 Поздравляем! Билет активирован. Ты в игре! 🥂');
+                sess.waitingForPromo = null;
+            }
+            return; 
         }
-        return; 
-    }
+
+        // 3. ПРЕДЛОЖЕНИЕ ИДЕИ АДМИНУ (НОВИНКА НЕДЕЛИ 7)
+        if (sess?.waitingForIdea) {
+            const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, userId) });
+            const senderName = user?.name || ctx.from.first_name || 'Инкогнито';
+            const userRef = ctx.from.username ? `@${ctx.from.username}` : `ID: ${userId}`;
+
+            const adminPayload = 
+                `💡 <b>Новая идея для Algorythm!</b>\n\n` +
+                `👤 Отправитель: ${senderName} (${userRef})\n` +
+                `📝 Предложение:\n"${text}"`;
+
+            await bot.telegram.sendMessage(ADMIN_ID, adminPayload, { parse_mode: 'HTML' });
+            await ctx.reply('🔥 Твоя идея успешно отправлена команде Algorythm. Спасибо, что помогаешь нам расти!');
+            
+            sess.waitingForIdea = false;
+            return;
+        }
 
     // 2. ПОДДЕРЖКА (SOS)
     if (sess?.waitingForSupport) {
@@ -5117,6 +5225,18 @@ bot.on('message', async (ctx, next) => {
 
     return next();
 	}
+});
+
+bot.on('callback_query', async (callbackQuery) => {
+    const chatId = callbackQuery.message.chat.id;
+    const data = callbackQuery.data;
+
+    if (data === 'suggest_idea') {
+        // Запоминаем состояние пользователя в Redis или сессии базы данных
+        await db.setUserState(chatId, 'AWAITING_IDEA');
+        
+        await bot.sendMessage(chatId, "💡 Напиши свою идею, предложение по улучшению или партнерству одним сообщением ниже. Админ обязательно это прочитает:");
+    }
 });
 
 bot.action('end_support_session', async (ctx) => {
