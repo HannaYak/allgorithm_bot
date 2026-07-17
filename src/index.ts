@@ -3082,13 +3082,17 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
     }
 
    try {
-        let mC = 0, wC = 0;
-    for (const b of bookings) {
-        const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
-        const g = (u?.gender || '').toLowerCase();
-        if (g.includes('муж')) mC++;
-        else if (g.includes('жен')) wC++;
-    }
+       const bookings = await db.select().from(schema.bookings)
+    .where(and(eq(schema.bookings.eventId, eid), eq(schema.bookings.paid, true)));
+
+// Теперь цикл будет работать
+let mC = 0, wC = 0;
+for (const b of bookings) {
+    const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+    const g = (u?.gender || '').toLowerCase();
+    if (g.includes('муж')) mC++;
+    else if (g.includes('жен')) wC++;
+}
 
     if (event.type.startsWith('speed_dating')) {
         const userG = (user.gender || '').toLowerCase();
