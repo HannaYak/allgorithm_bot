@@ -2,7 +2,7 @@ import { Telegraf, Markup, session, Scenes } from 'telegraf';
 import express from 'express';
 import { db } from './db.js'; // Импортируем из нового файла
 import postgres from 'postgres';
-import { eq, or, inArray, and, desc, asc, sql, like, lt } from 'drizzle-orm';// Добавь sql
+import { eq, or, inArray, and, desc, asc, sql, like, lt, between, notInArray } from 'drizzle-orm';// Добавь sql
 import * as schema from '../drizzle/schema'; 
 import 'dotenv/config';
 import Stripe from 'stripe';
@@ -5241,20 +5241,13 @@ bot.on('message', async (ctx, next) => {
 });
 
 // ИСПРАВЛЕННЫЙ ВАРИАНТ ДЛЯ TELEGRAF:
-bot.on('callback_query', async (ctx) => {
-    const chatId = ctx.callbackQuery?.message?.chat.id;
-    const data = ctx.callbackQuery?.data;
-
-    // Сразу гасим часики анимации кнопки
+// ИСПРАВЛЕННЫЙ ВАРИАНТ ДЛЯ КНОПКИ ИДЕЙ:
+bot.action('suggest_idea', async (ctx) => {
     await ctx.answerCbQuery().catch(() => {});
-
-    if (data === 'suggest_idea' && chatId) {
-        // Устанавливаем флаг ожидания текста в сессию Telegraf
-        (ctx.session as any).waitingForIdea = true;
-        
-        await ctx.reply("💡 Напиши свою идею, предложение по улучшению или партнерству одним сообщением ниже. Админ обязательно это прочитает:");
-    }
+    (ctx.session as any).waitingForIdea = true;
+    await ctx.reply("💡 Напиши свою идею, предложение по улучшению или партнерству одним сообщением ниже. Админ обязательно это прочитает:");
 });
+
 
 bot.action('end_support_session', async (ctx) => {
     (ctx.session as any).waitingForSupport = false;
@@ -5288,6 +5281,83 @@ bot.command('reply', async (ctx) => {
     });
     
     await ctx.reply(`✅ Ответ для ${targetId} отправлен.`);
+});
+
+// Скрытая админская команда для дожима
+bot.command('dozhim_175', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return; // Используем твою глобальную переменную админа
+
+    await ctx.reply("⏳ Собираю базу девушек (28-38 лет) для рассылки...");
+
+    try {
+        // 1. Получаем ВСЕХ женщин из базы
+        const allGirls = await db.query.users.findMany({
+            where: eq(schema.users.gender, 'Женщина')
+        });
+
+        // 2. Фильтруем по возрасту через JavaScript 
+        // (так как birthDate у тебя хранится как строка из анкеты)
+        const targetGirls = allGirls.filter(u => {
+            if (!u.birthDate) return false;
+            const age = parseInt(u.birthDate);
+            return age >= 28 && age <= 38;
+        });
+
+        if (targetGirls.length === 0) {
+            return ctx.reply("🤷‍♀️ Не найдено девушек 28-38 лет в базе.");
+        }
+
+        // 3. Исключаем тех, кто УЖЕ купил билет на игру 175
+        const bookings175 = await db.query.bookings.findMany({
+            where: and(
+                eq(schema.bookings.eventId, 175),
+                eq(schema.bookings.paid, true)
+            )
+        });
+        const bookedUserIds = new Set(bookings175.map(b => b.userId));
+
+        // Оставляем только тех, кого нет в списке купивших
+        const finalUsers = targetGirls.filter(u => !bookedUserIds.has(u.id));
+
+        if (finalUsers.length === 0) {
+            return ctx.reply("🤷‍♀️ Все подходящие девушки уже записаны на эту игру!");
+        }
+
+        await ctx.reply(`✅ Найдено девушек для рассылки: ${finalUsers.length}. Начинаю отправку...`);
+
+        // 4. Текст рассылки
+        const promoText = `Привет! Мы заметили, что ты интересовалась нашими быстрыми свиданиями в Варшаве.\n\nСейчас осталось <b>всего 2 свободных места</b> для девушек твоего возраста. Мы очень хотим, чтобы этот вечер прошел идеально, поэтому держим бронь для тебя.\n\nЖми кнопку ниже! ✨`;
+
+        // 5. Безопасная пакетная отправка
+        const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+        let successCount = 0;
+
+        for (const user of finalUsers) {
+            if (user.telegramId) {
+                try {
+                    await ctx.telegram.sendMessage(user.telegramId, promoText, {
+                        parse_mode: 'HTML',
+                        reply_markup: {
+                            inline_keyboard: [
+                                // ИСПРАВЛЕНО НА ТВОЙ РОДНОЙ CALLBACK: pay_event_175
+                                [{ text: "✨ Забронировать место", callback_data: "pay_event_175" }] 
+                            ]
+                        }
+                    });
+                    successCount++;
+                    await delay(100); // пауза 100мс
+                } catch (error) {
+                    console.log(`Не смог отправить сообщение ${user.telegramId}:`, error);
+                }
+            }
+        }
+
+        await ctx.reply(`🎉 Рассылка завершена! Успешно доставлено: ${successCount} из ${finalUsers.length}.`);
+
+    } catch (error) {
+        console.error("Ошибка при выполнении рассылки:", error);
+        await ctx.reply("❌ Произошла ошибка. Посмотри логи на сервере.");
+    }
 });
 
 bot.action(/pay_reveal_(\d+)/, async (ctx) => {
@@ -5821,7 +5891,7 @@ app.post('/stripe-webhook', express.raw({ type: 'application/json' }), async (re
   res.json({ received: true });
 });
 
-import { createBackup } from './backup'; // Импортируй функцию
+
 
 // Маршрут для бэкапа
 app.get('/cron/backup', async (req, res) => {
