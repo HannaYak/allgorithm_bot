@@ -5389,6 +5389,40 @@ bot.command('dozhim_175', async (ctx) => {
     }
 });
 
+bot.command('dozhim_women_1907', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+
+    // Ищем девушек 28-38 лет
+    const allGirls = await db.query.users.findMany({ where: eq(schema.users.gender, 'Женщина') });
+    const targetGirls = allGirls.filter(u => {
+        const age = parseInt(u.birthDate || '0');
+        return age >= 28 && age <= 38;
+    });
+
+    // Исключаем тех, кто уже купил билет на игру 19.07 (подставь нужный ID игры)
+    const eventId = 175; // <-- УКАЖИ ID ИГРЫ НА 19.07
+    const bookings = await db.query.bookings.findMany({ where: and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true)) });
+    const bookedUserIds = new Set(bookings.map(b => b.userId));
+    const finalUsers = targetGirls.filter(u => !bookedUserIds.has(u.id));
+
+    await ctx.reply(`Найдено ${finalUsers.length} девушек. Начинаю рассылку...`);
+
+    for (const user of finalUsers) {
+        try {
+            await bot.telegram.sendMessage(user.telegramId, 
+                `Привет! У нас на 19.07 (Speed Dating) освободилось 2 последних места для девушек. Мужской состав уже собран (отобрали топ-кандидатов).\n\n` +
+                `Это твой шанс попасть в закрытый формат. Бронь держим 15 минут.`, 
+                {
+                    reply_markup: {
+                        inline_keyboard: [[{ text: "✨ Занять место", callback_data: `pay_event_${eventId}` }]]
+                    }
+                }
+            );
+        } catch (e) { console.log("Не отправилось"); }
+    }
+    ctx.reply("Рассылка завершена.");
+});
+
 bot.action(/pay_reveal_(\d+)/, async (ctx) => {
     const eid = parseInt(ctx.match[1]);
     const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
