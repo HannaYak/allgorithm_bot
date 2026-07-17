@@ -5389,36 +5389,30 @@ bot.command('dozhim_175', async (ctx) => {
     }
 });
 
-bot.command('dozhim_women_1907', async (ctx) => {
+bot.command('nudge_all_unfilled_1907', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
 
-    // Ищем девушек 28-38 лет
-    const allGirls = await db.query.users.findMany({ where: eq(schema.users.gender, 'Женщина') });
-    const targetGirls = allGirls.filter(u => {
-        const age = parseInt(u.birthDate || '0');
-        return age >= 28 && age <= 38;
+    // Ищем всех, кто НЕ заполнил анкету
+    const incompleteUsers = await db.query.users.findMany({
+        where: eq(schema.users.profileCompleted, false)
     });
 
-    // Исключаем тех, кто уже купил билет на игру 19.07 (подставь нужный ID игры)
-    const eventId = 175; // <-- УКАЖИ ID ИГРЫ НА 19.07
-    const bookings = await db.query.bookings.findMany({ where: and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true)) });
-    const bookedUserIds = new Set(bookings.map(b => b.userId));
-    const finalUsers = targetGirls.filter(u => !bookedUserIds.has(u.id));
+    if (incompleteUsers.length === 0) return ctx.reply("Нет пользователей с незаполненными анкетами.");
 
-    await ctx.reply(`Найдено ${finalUsers.length} девушек. Начинаю рассылку...`);
+    await ctx.reply(`Найдено ${incompleteUsers.length} человек без анкеты. Начинаю рассылку...`);
 
-    for (const user of finalUsers) {
+    for (const user of incompleteUsers) {
         try {
             await bot.telegram.sendMessage(user.telegramId, 
-                `Привет! У нас на 19.07 (Speed Dating) освободилось 2 последних места для девушек. Мужской состав уже собран (отобрали топ-кандидатов).\n\n` +
-                `Это твой шанс попасть в закрытый формат. Бронь держим 15 минут.`, 
+                `Привет! У нас на воскресенье (19.07) осталось всего 2 места на Speed Dating. Мужской состав уже полностью собран, ждем девушек.\n\n` +
+                `Если ты девушка (28-38 лет) и хочешь попасть в закрытый формат — заполни анкету прямо сейчас. Это займет 1 минуту 👇`, 
                 {
                     reply_markup: {
-                        inline_keyboard: [[{ text: "✨ Занять место", callback_data: `pay_event_${eventId}` }]]
+                        inline_keyboard: [[{ text: "📝 Заполнить анкету", callback_data: "start_registration" }]]
                     }
                 }
             );
-        } catch (e) { console.log("Не отправилось"); }
+        } catch (e) { console.log(`Не отправилось`); }
     }
     ctx.reply("Рассылка завершена.");
 });
