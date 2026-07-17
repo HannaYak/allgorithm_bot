@@ -2713,17 +2713,7 @@ async function bookGame(ctx: any, gameType: string) {
       return ctx.reply('Нажми /start');
     }
 
-    // === БЛОКИРОВКА ТОЛЬКО ДЛЯ ТЕХ, КТО ВООБЩЕ НЕ ЗАПОЛНИЛ АНКЕТУ ===
-    if (!user.profileCompleted) {
-      await ctx.replyWithHTML(
-        `📝 <b>Остался один шаг до билета!</b>\n\n` +
-        `Мы ввели короткую анкету, чтобы собирать только интересных и приятных людей.\n\n` +
-        `🎁 <b>После быстрой модерации ты сразу получишь -10 PLN</b> на первый билет.\n\n` +
-        `Нажми кнопку ниже и заполни за 1 минуту 👇`
-      );
-      return ctx.scene.enter('REGISTER_SCENE');
-    }
-   
+    
     await ctx.deleteMessage().catch(() => {});
   
     const events = await db.query.events.findMany({
@@ -3017,10 +3007,41 @@ bot.command('quiet_address', async (ctx) => {
 // --- 9. ОПЛАТА (с проверкой анкеты) ---
 bot.action(/pay_event_(\d+)/, async (ctx) => {
     const eid = parseInt(ctx.match[1]);
-    const event = await db.query.events.findFirst({ where: eq(schema.events.id, eid) });
     const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
+    const event = await db.query.events.findFirst({ where: eq(schema.events.id, eid) });
 
     if (!event || !user) return;
+
+	// --- ЗАЩИТА ОТ "НЕОДОБРЕННЫХ" И ПЕРЕПОЛНЕНИЯ ---
+    if (!user.profileCompleted || !user.isApproved) {
+    return ctx.reply("❌ Оплата недоступна: ваша анкета на проверке или не заполнена.");
+}
+    
+    // Считаем строго оплаченных
+    const realCount = await db.select().from(schema.bookings)
+        .where(and(eq(schema.bookings.eventId, eid), eq(schema.bookings.paid, true)));
+
+    if (realCount.length >= event.maxPlayers) {
+        return ctx.reply("❌ Мест больше нет.");
+    }
+
+    // --- ЖЕСТКАЯ ПРОВЕРКА АНКЕТЫ ПЕРЕД ЛЮБЫМИ ДЕЙСТВИЯМИ ---
+    // Если анкеты нет — отправляем на регистрацию
+    if (!user.profileCompleted) {
+        await ctx.replyWithHTML(
+            `📝 <b>Чтобы продолжить, нужно пройти верификацию.</b>\n\n` +
+            `Заполни анкету, чтобы мы могли подобрать идеальную компанию для тебя.`
+        );
+        return ctx.scene.enter('REGISTER_SCENE', { returnToEvent: eid });
+    }
+
+    // Если анкета есть, но не одобрена админом
+    if (!user.isApproved) {
+        return ctx.replyWithHTML(
+            `⏳ <b>Твоя анкета еще на проверке у администратора.</b>\n` +
+            `Как только мы её одобрим, ты получишь уведомление и сможешь забронировать билет. Это занимает до 24 часов.`
+        );
+    }
 
     // 1. СНАЧАЛА СОЗДАЕМ "КОРОБОЧКИ" (объявляем переменные)
     let activeVoucher = await db.query.vouchers.findFirst({ 
@@ -3061,21 +3082,19 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
     }
 
    try {
-        let mC = 0, wC = 0; 
-        
-        // 1. Сначала считаем гендерный баланс (твоя логика)
-        if (event.type.startsWith('speed_dating')) {
-            const bookings = await db.query.bookings.findMany({ 
-                where: and(eq(schema.bookings.eventId, eid), eq(schema.bookings.paid, true)) 
-            });
-            for (const b of bookings) {
-                const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
-                const g = (u?.gender || '').toLowerCase();
-                if (g.includes('муж')) mC++;
-                else if (g.includes('жен')) wC++;
-            }
-        }
+        let mC = 0, wC = 0;
+    for (const b of bookings) {
+        const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+        const g = (u?.gender || '').toLowerCase();
+        if (g.includes('муж')) mC++;
+        else if (g.includes('жен')) wC++;
+    }
 
+    if (event.type.startsWith('speed_dating')) {
+        const userG = (user.gender || '').toLowerCase();
+        if (userG.includes('муж') && mC >= 6) return ctx.reply("❌ Места для мужчин (6/6) закончились.");
+        if (userG.includes('жен') && wC >= 6) return ctx.reply("❌ Места для женщин (6/6) закончились.");
+    }
         // 2. СНАЧАЛА определяем ВСЕ цены и метаданные
         let basePrice = 50; 
         let priceNotice = '';
@@ -3284,8 +3303,13 @@ bot.action(/confirm_pay_(\d+)/, async (ctx) => {
                 await tx.insert(schema.bookings).values({ userId: user.id, eventId: eid, paid: true });
             }
             await tx.update(schema.events)
-                .set({ currentPlayers: sql`${schema.events.currentPlayers} + 1` })
-                .where(eq(schema.events.id, eid));
+               const totalPaid = await db.select({ count: sql<number>`count(*)` })
+    .from(schema.bookings)
+    .where(and(eq(schema.bookings.eventId, eId), eq(schema.bookings.paid, true)));
+
+await tx.update(schema.events)
+    .set({ currentPlayers: totalPaid[0].count })
+    .where(eq(schema.events.id, eId));
         });
 
         PENDING_PAYMENTS.delete(user.id);
@@ -5675,6 +5699,20 @@ bot.action(/check_conf_id_(\d+)/, async (ctx) => {
 
 
 async function handleSuccessfulPayment(session: any) {
+    const metadata = session.metadata || {};
+    const tId = parseInt(metadata.telegramId);
+    const eId = parseInt(metadata.eventId);
+
+    // Сначала ищем данные
+    const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, tId) });
+    const event = await db.query.events.findFirst({ where: eq(schema.events.id, eId) });
+
+    // Проверка безопасности: если юзера нет или он не одобрен — выходим
+    if (!user || !user.isApproved) {
+        await bot.telegram.sendMessage(ADMIN_ID, `🚨 ВЗЛОМ: Попытка оплаты от невалидного юзера! TG_ID: ${tId}`);
+        return; 
+    }
+
     try {
         const metadata = session.metadata || {};
         const { telegramId, eventId, type, voucherId } = metadata;
