@@ -3184,9 +3184,9 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
         }
 
         // 6. ОПЛАТА STRIPE (СТАРЫЙ НАДЕЖНЫЙ МЕТОД)
-        const stripeSession = await stripe.checkout.sessions.create({
+       const stripeSession = await stripe.checkout.sessions.create({
             payment_method_types: ['card', 'blik', 'revolut_pay'],
-            line_items: [{ price: stripePriceId, quantity: 1 }], // <--- ВОТ ТУТ РАБОТАЕТ ВЫБРАННЫЙ ЦЕННИК
+            line_items: [{ price: stripePriceId, quantity: 1 }], 
             metadata: sessionMetadata,
             discounts: discounts.length > 0 ? discounts : undefined,
             mode: 'payment',
@@ -3206,10 +3206,13 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
             ])
         );
 
+        // 🔥 ДОБАВЬ ВОТ ЭТУ СТРОКУ СЮДА 🔥
+        await sendLog('ПОПЫТКА ОПЛАТЫ 🟡', `👤 Гость: <b>${user.name}</b> (@${user.username || 'скрыт'})\n🎫 Игра: №${eid} (${event.type})\n💰 К оплате: <b>${finalPrice} PLN</b>\n<i>Перешел к оплате, ждем подтверждения...</i>`);
+
     } catch (e) { 
-    console.error(e); 
-    ctx.reply('❌ <b>Ошибка транзакции.</b>\n\nПопробуйте повторить запрос позже или обратитесь в службу поддержки через раздел 🆘 Помощь.', { parse_mode: 'HTML' }); 
-}
+        console.error(e); 
+        ctx.reply('❌ <b>Ошибка транзакции.</b>\n\nПопробуйте повторить запрос позже или обратитесь в службу поддержки через раздел 🆘 Помощь.', { parse_mode: 'HTML' }); 
+    }
     
     PENDING_PAYMENTS.set(user.id, { time: DateTime.now(), notified: false });
 });
@@ -5284,8 +5287,9 @@ bot.command('reply', async (ctx) => {
 });
 
 // Скрытая админская команда для дожима
+// Скрытая админская команда для дожима
 bot.command('dozhim_175', async (ctx) => {
-    if (ctx.from.id !== ADMIN_ID) return; // Используем твою глобальную переменную админа
+    if (ctx.from.id !== ADMIN_ID) return; 
 
     await ctx.reply("⏳ Собираю базу девушек (28-38 лет) для рассылки...");
 
@@ -5295,8 +5299,7 @@ bot.command('dozhim_175', async (ctx) => {
             where: eq(schema.users.gender, 'Женщина')
         });
 
-        // 2. Фильтруем по возрасту через JavaScript 
-        // (так как birthDate у тебя хранится как строка из анкеты)
+        // 2. Фильтруем по возрасту
         const targetGirls = allGirls.filter(u => {
             if (!u.birthDate) return false;
             const age = parseInt(u.birthDate);
@@ -5307,7 +5310,7 @@ bot.command('dozhim_175', async (ctx) => {
             return ctx.reply("🤷‍♀️ Не найдено девушек 28-38 лет в базе.");
         }
 
-        // 3. Исключаем тех, кто УЖЕ купил билет на игру 175
+        // 3. Исключаем тех, кто УЖЕ купил билет на игру 175 (статус paid: true)
         const bookings175 = await db.query.bookings.findMany({
             where: and(
                 eq(schema.bookings.eventId, 175),
@@ -5325,21 +5328,23 @@ bot.command('dozhim_175', async (ctx) => {
 
         await ctx.reply(`✅ Найдено девушек для рассылки: ${finalUsers.length}. Начинаю отправку...`);
 
-        // 4. Текст рассылки
-        const promoText = `Привет! Мы заметили, что ты интересовалась нашими быстрыми свиданиями в Варшаве.\n\nСейчас осталось <b>всего 2 свободных места</b> для девушек твоего возраста. Мы очень хотим, чтобы этот вечер прошел идеально, поэтому держим бронь для тебя.\n\nЖми кнопку ниже! ✨`;
-
-        // 5. Безопасная пакетная отправка
+        // 4. Безопасная пакетная отправка
         const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
         let successCount = 0;
 
         for (const user of finalUsers) {
             if (user.telegramId) {
                 try {
+                    // Используем имя из базы или просто "Привет!"
+                    const userName = user.name ? `, ${user.name}` : "";
+                    const promoText = `Привет${userName}! В пятницу вечером в Варшаве обычно два пути: либо бесконечный скроллинг ленты, либо вечер, где ты действительно чувствуешь себя собой.\n\n` +
+                                      `На быстрые свидания (28-38 лет) осталось всего 2 места. Мы не берем никого лишнего, чтобы сохранить идеальный вайб.\n\n` +
+                                      `⏳ <b>Бронь держим ровно 15 минут.</b> Если ты с нами — жми кнопку ниже. Если нет — мы передадим место следующей девушке из списка ожидания. ✨`;
+
                     await ctx.telegram.sendMessage(user.telegramId, promoText, {
                         parse_mode: 'HTML',
                         reply_markup: {
                             inline_keyboard: [
-                                // ИСПРАВЛЕНО НА ТВОЙ РОДНОЙ CALLBACK: pay_event_175
                                 [{ text: "✨ Забронировать место", callback_data: "pay_event_175" }] 
                             ]
                         }
