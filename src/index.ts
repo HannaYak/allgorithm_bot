@@ -5330,12 +5330,10 @@ bot.command('dozhim_175', async (ctx) => {
     await ctx.reply("⏳ Собираю базу девушек (28-38 лет) для рассылки...");
 
     try {
-        // 1. Получаем ВСЕХ женщин из базы
         const allGirls = await db.query.users.findMany({
             where: eq(schema.users.gender, 'Женщина')
         });
 
-        // 2. Фильтруем по возрасту
         const targetGirls = allGirls.filter(u => {
             if (!u.birthDate) return false;
             const age = parseInt(u.birthDate);
@@ -5346,7 +5344,6 @@ bot.command('dozhim_175', async (ctx) => {
             return ctx.reply("🤷‍♀️ Не найдено девушек 28-38 лет в базе.");
         }
 
-        // 3. Исключаем тех, кто УЖЕ купил билет на игру 175 (статус paid: true)
         const bookings175 = await db.query.bookings.findMany({
             where: and(
                 eq(schema.bookings.eventId, 175),
@@ -5354,41 +5351,41 @@ bot.command('dozhim_175', async (ctx) => {
             )
         });
         const bookedUserIds = new Set(bookings175.map(b => b.userId));
-
-        // Оставляем только тех, кого нет в списке купивших
         const finalUsers = targetGirls.filter(u => !bookedUserIds.has(u.id));
 
         if (finalUsers.length === 0) {
             return ctx.reply("🤷‍♀️ Все подходящие девушки уже записаны на эту игру!");
         }
 
-        await ctx.reply(`✅ Найдено девушек для рассылки: ${finalUsers.length}. Начинаю отправку...`);
+        await ctx.reply(`✅ Найдено девушек: ${finalUsers.length}. Начинаю рассылку...`);
 
-        // 4. Безопасная пакетная отправка
         const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
         let successCount = 0;
 
         for (const user of finalUsers) {
             if (user.telegramId) {
                 try {
-                    // Используем имя из базы или просто "Привет!"
                     const userName = user.name ? `, ${user.name}` : "";
-                    const promoText = `Привет${userName}! В пятницу вечером в Варшаве обычно два пути: либо бесконечный скроллинг ленты, либо вечер, где ты действительно чувствуешь себя собой.\n\n` +
-                                      `На быстрые свидания (28-38 лет) осталось всего 1 места. Мы не берем никого лишнего, чтобы сохранить идеальный вайб.\n\n` +
-                                      `⏳ <b>Бронь держим ровно 15 минут.</b> Если ты с нами — жми кнопку ниже. Если нет — мы передадим место следующей девушке из списка ожидания. ✨`;
+                    const promoText = `✨ <b>Algorythm: Финальный слот на завтра</b>\n\n` +
+                        `Привет${userName}. Мы закрываем список на Speed Dating (19.07). Осталось всего <b>1 место</b> для девушки, чтобы уравновесить состав.\n\n` +
+                        `Мы решили разыграть этот доступ среди вас.\n\n` +
+                        `🎟 <b>Твой пропуск:</b>\n` +
+                        `1. Нажми кнопку ниже для бронирования.\n` +
+                        `2. При оплате введи промокод: <b>LOVE190</b>\n\n` +
+                        `⚠️ <b>Важно:</b> Система держит бронь ровно 15 минут. Если ты готова — действуй сейчас. Кто успеет первым, тот и забирает слот.`;
 
                     await ctx.telegram.sendMessage(user.telegramId, promoText, {
                         parse_mode: 'HTML',
                         reply_markup: {
                             inline_keyboard: [
-                                [{ text: "✨ Забронировать место", callback_data: "pay_event_175" }] 
+                                [{ text: "✨ Забронировать (LOVE190)", callback_data: "pay_event_175" }] 
                             ]
                         }
                     });
                     successCount++;
-                    await delay(1000); // пауза 100мс
+                    await delay(1000); 
                 } catch (error) {
-                    console.log(`Не смог отправить сообщение ${user.telegramId}:`, error);
+                    console.log(`Не смог отправить сообщение ${user.telegramId}`);
                 }
             }
         }
@@ -5415,18 +5412,20 @@ bot.command('nudge_all_unfilled_1907', async (ctx) => {
 
     for (const user of incompleteUsers) {
         try {
-            await bot.telegram.sendMessage(user.telegramId, 
-                `Привет! У нас на воскресенье (19.07) осталось всего 1 места на Speed Dating. Мужской состав уже полностью собран, ждем девушек.\n\n` +
-                `Если ты девушка (28-38 лет) и хочешь попасть в закрытый формат — заполни анкету прямо сейчас. Это займет 1 минуту 👇`, 
-                {
-                    reply_markup: {
-                        inline_keyboard: [[{ text: "📝 Заполнить анкету", callback_data: "start_registration" }]]
-                    }
+            const promoText = `✨ <b>Algorythm: Финальный шанс на завтра</b>\n\n` +
+                `Привет! На Speed Dating (19.07) осталось последнее место для девушки. Мы закрываем список и разыгрываем этот доступ.\n\n` +
+                `Чтобы претендовать на слот, нужно завершить верификацию. Это займет ровно 1 минуту. После одобрения анкеты ты сможешь использовать промокод <b>LOVE190</b> при оплате.\n\n` +
+                `⏳ <b>Бронь активна 15 минут.</b> Если ты с нами — заполни анкету сейчас. 👇`;
+
+            await bot.telegram.sendMessage(user.telegramId, promoText, {
+                parse_mode: 'HTML',
+                reply_markup: {
+                    inline_keyboard: [[{ text: "📝 Заполнить анкету и занять место", callback_data: "start_registration" }]]
                 }
-            );
-        } catch (e) { console.log(`Не отправилось`); }
+            });
+        } catch (e) { console.log(`Не отправилось пользователю ${user.telegramId}`); }
     }
-    ctx.reply("Рассылка завершена.");
+    ctx.reply("Рассылка по " + incompleteUsers.length + " пользователям завершена.");
 });
 
 bot.action(/pay_reveal_(\d+)/, async (ctx) => {
