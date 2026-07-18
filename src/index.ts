@@ -3081,18 +3081,25 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
         return ctx.reply('❌ К сожалению, вы нарушили правила клуба Allgorithm и доступ к играм для вас ограничен.');
     }
 
-   try {
-       const bookings = await db.select().from(schema.bookings)
-    .where(and(eq(schema.bookings.eventId, eid), eq(schema.bookings.paid, true)));
+  try {
+        const bookings = await db.select().from(schema.bookings)
+            .where(and(eq(schema.bookings.eventId, eid), eq(schema.bookings.paid, true)));
 
-// Теперь цикл будет работать
-let mC = 0, wC = 0;
-for (const b of bookings) {
-    const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
-    const g = (u?.gender || '').toLowerCase();
-    if (g.includes('муж')) mC++;
-    else if (g.includes('жен')) wC++;
-}
+        let mC = 0, wC = 0;
+        
+        // Добавляем проверку: является ли bookings массивом
+        if (Array.isArray(bookings)) {
+            for (const b of bookings) {
+                const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+                const g = (u?.gender || '').toLowerCase();
+                if (g.includes('муж')) mC++;
+                else if (g.includes('жен')) wC++;
+            }
+        } else {
+            console.error("Ошибка: bookings не является массивом!");
+            // Продолжаем работу с mC = 0 и wC = 0, чтобы бот не падал
+        }
+
 
     if (event.type.startsWith('speed_dating')) {
         const userG = (user.gender || '').toLowerCase();
@@ -3313,7 +3320,7 @@ bot.action(/confirm_pay_(\d+)/, async (ctx) => {
 
 await tx.update(schema.events)
     .set({ currentPlayers: totalPaid[0].count })
-    .where(eq(schema.events.id, eId));
+    .where(eq(schema.events.id, eid));
         });
 
         PENDING_PAYMENTS.delete(user.id);
@@ -5366,7 +5373,7 @@ bot.command('dozhim_175', async (ctx) => {
                     // Используем имя из базы или просто "Привет!"
                     const userName = user.name ? `, ${user.name}` : "";
                     const promoText = `Привет${userName}! В пятницу вечером в Варшаве обычно два пути: либо бесконечный скроллинг ленты, либо вечер, где ты действительно чувствуешь себя собой.\n\n` +
-                                      `На быстрые свидания (28-38 лет) осталось всего 2 места. Мы не берем никого лишнего, чтобы сохранить идеальный вайб.\n\n` +
+                                      `На быстрые свидания (28-38 лет) осталось всего 1 места. Мы не берем никого лишнего, чтобы сохранить идеальный вайб.\n\n` +
                                       `⏳ <b>Бронь держим ровно 15 минут.</b> Если ты с нами — жми кнопку ниже. Если нет — мы передадим место следующей девушке из списка ожидания. ✨`;
 
                     await ctx.telegram.sendMessage(user.telegramId, promoText, {
@@ -5378,7 +5385,7 @@ bot.command('dozhim_175', async (ctx) => {
                         }
                     });
                     successCount++;
-                    await delay(100); // пауза 100мс
+                    await delay(1000); // пауза 100мс
                 } catch (error) {
                     console.log(`Не смог отправить сообщение ${user.telegramId}:`, error);
                 }
@@ -5408,7 +5415,7 @@ bot.command('nudge_all_unfilled_1907', async (ctx) => {
     for (const user of incompleteUsers) {
         try {
             await bot.telegram.sendMessage(user.telegramId, 
-                `Привет! У нас на воскресенье (19.07) осталось всего 2 места на Speed Dating. Мужской состав уже полностью собран, ждем девушек.\n\n` +
+                `Привет! У нас на воскресенье (19.07) осталось всего 1 места на Speed Dating. Мужской состав уже полностью собран, ждем девушек.\n\n` +
                 `Если ты девушка (28-38 лет) и хочешь попасть в закрытый формат — заполни анкету прямо сейчас. Это займет 1 минуту 👇`, 
                 {
                     reply_markup: {
