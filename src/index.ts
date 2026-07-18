@@ -5324,79 +5324,7 @@ bot.command('reply', async (ctx) => {
 
 // Скрытая админская команда для дожима
 // Скрытая админская команда для дожима
-bot.command('dozhim_175', async (ctx) => {
-    if (ctx.from.id !== ADMIN_ID) return; 
 
-    await ctx.reply("⏳ Собираю базу девушек (28-38 лет) для рассылки...");
-
-    try {
-        const allGirls = await db.query.users.findMany({
-            where: eq(schema.users.gender, 'Женщина')
-        });
-
-        const targetGirls = allGirls.filter(u => {
-            if (!u.birthDate) return false;
-            const age = parseInt(u.birthDate);
-            return age >= 28 && age <= 38;
-        });
-
-        if (targetGirls.length === 0) {
-            return ctx.reply("🤷‍♀️ Не найдено девушек 28-38 лет в базе.");
-        }
-
-        const bookings175 = await db.query.bookings.findMany({
-            where: and(
-                eq(schema.bookings.eventId, 175),
-                eq(schema.bookings.paid, true)
-            )
-        });
-        const bookedUserIds = new Set(bookings175.map(b => b.userId));
-        const finalUsers = targetGirls.filter(u => !bookedUserIds.has(u.id));
-
-        if (finalUsers.length === 0) {
-            return ctx.reply("🤷‍♀️ Все подходящие девушки уже записаны на эту игру!");
-        }
-
-        await ctx.reply(`✅ Найдено девушек: ${finalUsers.length}. Начинаю рассылку...`);
-
-        const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-        let successCount = 0;
-
-        for (const user of finalUsers) {
-            if (user.telegramId) {
-                try {
-                    const userName = user.name ? `, ${user.name}` : "";
-                    const promoText = `✨ <b>Algorythm: Финальный слот на завтра</b>\n\n` +
-                        `Привет${userName}. Мы закрываем список на Speed Dating (19.07). Осталось всего <b>1 место</b> для девушки, чтобы уравновесить состав.\n\n` +
-                        `Мы решили разыграть этот доступ среди вас.\n\n` +
-                        `🎟 <b>Твой пропуск:</b>\n` +
-                        `1. Нажми кнопку ниже для бронирования.\n` +
-                        `2. При оплате введи промокод: <b>LOVE190</b>\n\n` +
-                        `⚠️ <b>Важно:</b> Система держит бронь ровно 15 минут. Если ты готова — действуй сейчас. Кто успеет первым, тот и забирает слот.`;
-
-                    await ctx.telegram.sendMessage(user.telegramId, promoText, {
-                        parse_mode: 'HTML',
-                        reply_markup: {
-                            inline_keyboard: [
-                                [{ text: "✨ Забронировать (LOVE190)", callback_data: "pay_event_175" }] 
-                            ]
-                        }
-                    });
-                    successCount++;
-                    await delay(1000); 
-                } catch (error) {
-                    console.log(`Не смог отправить сообщение ${user.telegramId}`);
-                }
-            }
-        }
-
-        await ctx.reply(`🎉 Рассылка завершена! Успешно доставлено: ${successCount} из ${finalUsers.length}.`);
-
-    } catch (error) {
-        console.error("Ошибка при выполнении рассылки:", error);
-        await ctx.reply("❌ Произошла ошибка. Посмотри логи на сервере.");
-    }
-});
 
 bot.command('nudge_all_unfilled_1907', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
