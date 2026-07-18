@@ -422,11 +422,12 @@ const addPromoWizard = new Scenes.WizardScene(
     const max = parseInt(ctx.message.text);
     
     await db.insert(schema.promoCodes).values({
-      code: state.code,
-      type: 'free',
-      maxUses: max,
-      eventIds: state.eventIds, // Сохраняем строку с ID
-      expiresAt: DateTime.now().plus({ days: 3 }).toISO()
+  code: state.code,
+  type: 'free',
+  maxUses: max,
+  eventIds: state.eventIds,
+  // Вместо .toISO() используй .toJSDate()
+  expiresAt: DateTime.now().plus({ days: 3 }).toJSDate()
     });
 
     await ctx.reply(`✅ Промокод ${state.code} создан для игр: ${state.eventIds || 'Все'}!`);
