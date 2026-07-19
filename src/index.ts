@@ -4389,6 +4389,20 @@ bot.command('kick', async (ctx) => {
     }
 });
 
+bot.command('repair_votes', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    const eid = await getCurrentSpeedDatingEventId();
+    const sdState = await getSpeedDatingState(eid);
+
+    if (!sdState.votes) {
+        sdState.votes = {};
+        await saveSpeedDatingState(eid, sdState);
+        await ctx.reply('🛠 Структура votes успешно восстановлена в БД! Попробуй выставить симпатии сейчас.');
+    } else {
+        await ctx.reply('С базой votes всё в порядке, структура на месте.');
+    }
+});
+
 // Команда для тестирования: сбросить анкету и ваучеры юзера
 bot.command('reset_profile', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
