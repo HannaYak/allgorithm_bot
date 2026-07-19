@@ -3868,6 +3868,21 @@ bot.command('book', async (ctx) => {
     }
 });
 
+bot.command('fix_ghost', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    const eid = await getCurrentSpeedDatingEventId();
+    const sdState = await getSpeedDatingState(eid);
+
+    // Удаляем битый ID отовсюду
+    delete sdState.participants['7984299769'];
+    delete sdState.participants[7984299769];
+    delete sdState.votes['7984299769'];
+    delete sdState.votes[7984299769];
+
+    await saveSpeedDatingState(eid, sdState);
+    await ctx.reply('🧹 Призрак 7984299769 полностью удален из текущего стейта игры! Номера остальных не тронуты.');
+});
+
 bot.command('add_game_point', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     const parts = ctx.message.text.split(' ');
