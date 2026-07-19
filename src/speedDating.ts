@@ -236,11 +236,6 @@ export async function calculateMatches(ctx: any, bot: any) {
     const matchedPairs: { user1: any, user2: any }[] = [];
     let adminReport = `📊 <b>Мэтчи рассчитаны и отправлены участникам!</b>\n\n`;
 
-    // Подтягиваем Drizzle для прямого вытаскивания юзернеймов
-    const schema = require('../drizzle/schema.js');
-    const { eq } = require('drizzle-orm');
-    const { db } = require('./db.js');
-
     for (const [voterIdStr, likedIds] of Object.entries(sdState.votes)) {
       const voter = sdState.participants[voterIdStr] || sdState.participants[parseInt(voterIdStr)];
       if (!voter || !Array.isArray(likedIds)) continue;
@@ -266,25 +261,25 @@ export async function calculateMatches(ctx: any, bot: any) {
               matchedPairs.push({ user1: voter, user2: target });
               matchCount++;
 
-              // Вытаскиваем юзернеймы напрямую из базы, где они точно есть
+              // Используем глобальные db и schema, которые уже импортированы вверху файла speedDating.ts
               const dbVoter = await db.query.users.findFirst({ where: eq(schema.users.telegramId, voterIdNum) });
               const dbTarget = await db.query.users.findFirst({ where: eq(schema.users.telegramId, targetIdNum) });
 
               const voterUsername = dbVoter?.username || 'скрыт';
               const targetUsername = dbTarget?.username || 'скрыт';
 
-              // ТЕКСТЫ СООБЩЕНИЙ ДЛЯ САМИХ УЧАСТНИКОВ
+              // ТЕКСТЫ ДЛЯ САМИХ УЧАСТНИКОВ
               const voterMsg = `💖 <b>МЭТЧ!</b> Вы понравились <b>№${target.num} ${target.name}</b>!\nЕго/её Telegram: @${targetUsername}`;
               const targetMsg = `💖 <b>МЭТЧ!</b> Вы понравились <b>№${voter.num} ${voter.name}</b>!\nЕго/её Telegram: @${voterUsername}`;
 
-              // 🚀 МОМЕНТАЛЬНАЯ ОТПРАВКА В ЛИЧКУ УЧАСТНИКАМчерез ctx.telegram
+              // Рассылаем участникам в личку
               ctx.telegram.sendMessage(voterIdNum, voterMsg, { parse_mode: 'HTML' })
                 .catch((e: any) => console.error(`Ошибка отправки игроку ${voterIdNum}:`, e.message));
 
               ctx.telegram.sendMessage(targetIdNum, targetMsg, { parse_mode: 'HTML' })
                 .catch((e: any) => console.error(`Ошибка отправки игроку ${targetIdNum}:`, e.message));
 
-              // Дубликат для тебя в панель, чтобы ты видела настоящие юзернеймы
+              // Отчет для тебя
               adminReport += `❤️ <b>Пара №${matchCount}:</b>\n`;
               adminReport += `👤 №${voter.num} ${voter.name} (@${voterUsername}) -> отправлено\n`;
               adminReport += `👤 №${target.num} ${target.name} (@${targetUsername}) -> отправлено\n\n`;
