@@ -4046,6 +4046,87 @@ bot.command('cancel_with_voucher', async (ctx) => {
     }
 });
 
+// --- КОМАНДА: ПЕРЕСБОРКА И ПЕРЕРАЗДАЧА НОМЕРОВ ПРИ ДИСБАЛАНСЕ/КИКЕ ---
+bot.command('regenerate_nums', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+
+    const parts = ctx.message.text.split(' ');
+    if (parts.length < 2) return ctx.reply('❌ Используй: /regenerate_nums [ID_Игры]');
+
+    const eventId = parseInt(parts[1]);
+
+    try {
+        const event = await db.query.events.findFirst({ where: eq(schema.events.id, eventId) });
+        if (!event) return ctx.reply('❌ Игра не найдена.');
+
+        if (!event.type.startsWith('speed_dating')) {
+            return ctx.reply('❌ Эта команда работает только для форматов Speed Dating!');
+        }
+
+        // 1. Достаем только тех, кто РЕАЛЬНО оплатил и остался в базе
+        const bks = await db.query.bookings.findMany({ 
+            where: and(eq(schema.bookings.eventId, eventId), eq(schema.bookings.paid, true)) 
+        });
+
+        if (bks.length === 0) return ctx.reply('❌ Оплаченных участников на эту игру нет.');
+
+        const men: any[] = [];
+        const women: any[] = [];
+
+        // Разделяем по полам
+        for (const b of bks) {
+            const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
+            if (u?.gender === 'Мужчина') men.push(u);
+            else if (u?.gender === 'Женщина') women.push(u);
+        }
+
+        const limit = Math.min(men.length, women.length);
+        
+        // 2. Создаем абсолютно чистый, новый стейт для игры
+        const newSdState = { eventId: eventId, currentRound: 0, participants: {} as Record<string, any> };
+
+        // 3. Пересобираем нумерацию с нуля (1, 2, 3...) без пропусков
+        for (let i = 0; i < limit; i++) {
+            const wNum = (i * 2) + 1; // Женские: 1, 3, 5...
+            const mNum = (i * 2) + 2; // Мужские: 2, 4, 6...
+
+            // Записываем в новый стейт
+            newSdState.participants[women[i].telegramId.toString()] = { id: women[i].telegramId, num: wNum, gender: 'Женщина', name: women[i].name };
+            newSdState.participants[men[i].telegramId.toString()] = { id: men[i].telegramId, num: mNum, gender: 'Мужчина', name: men[i].name };
+
+            // 4. Мгновенно отправляем новые номера участникам
+            const kb = getMainKeyboard(true);
+            const noticeW = `⚠️ <b>Внимание! Организаторы обновили сетку столов.</b>\n\n💘 <b>Твой НОВЫЙ номер на сегодня: ${wNum}</b> (Столик №${i + 1})\n\nПожалуйста, используй этот номер во время свиданий! Ждем тебя! ✨`;
+            const noticeM = `⚠️ <b>Внимание! Организаторы обновили сетку столов.</b>\n\n💘 <b>Твой НОВЫЙ номер на сегодня: ${mNum}</b> (Столик №${i + 1})\n\nПожалуйста, используй этот номер во время свиданий! Ждем тебя! ✨`;
+
+            await bot.telegram.sendMessage(women[i].telegramId, noticeW, { parse_mode: 'HTML', reply_markup: kb.reply_markup }).catch(()=>{});
+            await bot.telegram.sendMessage(men[i].telegramId, noticeM, { parse_mode: 'HTML', reply_markup: kb.reply_markup }).catch(()=>{});
+        }
+
+        // 5. Сохраняем пересобранное состояние в базу данных
+        await saveSpeedDatingState(eventId, newSdState);
+        await setCurrentSpeedDatingEventId(eventId);
+
+        // Обновляем счетчик игроков в таблице ивента
+        await db.update(schema.events).set({ currentPlayers: limit * 2 }).where(eq(schema.events.id, eventId));
+
+        let report = `✅ <b>База успешно пересчитана! Номера отправлены!</b>\n\n`;
+        report += `Сформировано пар: <b>${limit}</b> (Всего: ${limit * 2} чел.)\n`;
+        
+        if (men.length !== women.length) {
+            const extra = Math.abs(men.length - women.length);
+            const extraGender = men.length > women.length ? 'Мужчины' : 'Женщины';
+            report += `⚠️ <b>Дисбаланс:</b> ${extra} чел. (${extraGender}) остались без пары и не вошли в рассылку.`;
+        }
+
+        await ctx.replyWithHTML(report);
+
+    } catch (e) {
+        console.error(e);
+        ctx.reply('❌ Критическая ошибка при регенерации номеров.');
+    }
+});
+
 // Обработчик команды /start
 // Исправленный обработчик команды /start под Telegraf (Неделя 7: Трекинг)
 bot.start(async (ctx) => {
