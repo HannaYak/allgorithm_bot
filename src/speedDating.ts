@@ -171,47 +171,94 @@ export async function toggleParticipantLike(ctx: any) {
     const eid = await getCurrentSpeedDatingEventId();
     const sdState = await getSpeedDatingState(eid);
 
-    // ГЛАВНЫЙ ФИКС ЕЩЕ РАЗ:
-    if (!sdState.votes) {
-        sdState.votes = {};
+    if (!sdState.votes) sdState.votes = {};
+
+    // ОБЪЯВЛЯЕМ u (кто голосует)
+    const u = sdState.participants[voterId.toString()] || sdState.participants[voterId];
+    if (!u) {
+        await ctx.answerCbQuery('❌ Голосующий участник не найден в базе.');
+        return;
     }
 
-    let votesArray = sdState.votes[voterId.toString()] || [];
-    if (votesArray.includes(targetId)) {
-        votesArray = votesArray.filter((id: number) => id !== targetId);
-    } else {
-        votesArray.push(targetId);
+    // Проверяем существование того, за кого голосуют
+    const target = sdState.participants[targetId.toString()] || sdState.participants[targetId];
+    if (!target) {
+        await ctx.answerCbQuery('❌ Участник, за которого вы голосуете, удален.');
+        return;
     }
-    sdState.votes[voterId.toString()] = votesArray;
+
+    // Инициализируем массив лайков для этого пользователя, если его нет
+    const voterKey = u.id.toString();
+    if (!sdState.votes[voterKey]) {
+        sdState.votes[voterKey] = [];
+    }
+
+    const currentVotes = sdState.votes[voterKey];
+    const index = currentVotes.indexOf(target.id);
+
+    if (index > -1) {
+        currentVotes.splice(index, 1); // Убираем лайк
+    } else {
+        currentVotes.push(target.id); // Добавляем лайк
+    }
+
     await saveSpeedDatingState(eid, sdState);
 
-    const targets = Object.values(sdState.participants).filter((p: any) => p.gender !== u.gender) as any[];
-    const currentVotes = sdState.votes[voterId.toString()] || [];
+    // Перерисовываем меню выбора лайков для этого игрока
+    const targets = Object.values(sdState.participants).filter((p: any) => p && p.gender !== u.gender) as any[];
+    const btns = targets.map((t: any) => 
+        Markup.button.callback(`${currentVotes.includes(t.id) ? '✅' : ' '} №${t.num} ${t.name}`, `fd_tog_${voterId}_${t.id}`)
+    );
     
-    const btns = targets.map((t: any) => Markup.button.callback(`${currentVotes.includes(t.id)?'✅':' '} №${t.num} ${t.name}`, `fd_tog_${voterId}_${t.id}`));
     const rows = []; while(btns.length) rows.push(btns.splice(0,2));
 
-    await ctx.editMessageReplyMarkup({ inline_keyboard: [...rows, [Markup.button.callback('💾 Сохранить и вернуться', 'admin_fd_panel')]] });
-    await ctx.answerCbQuery('Выбор обновлен!');
+    await ctx.editMessageText(`Кто понравился №${u.num} ${u.name} (${u.gender})?`, Markup.inlineKeyboard([
+        ...rows, 
+        [Markup.button.callback('💾 Сохранить и вернуться', 'admin_fd_panel')]
+    ]));
+    
+    await ctx.answerCbQuery();
 }
+
+
 
 export async function calculateMatches(ctx: any, bot: any) {
   const eid = await getCurrentSpeedDatingEventId();
   const sdState = await getSpeedDatingState(eid);
 
+  // 1. ЗАЩИТА: если объекта votes вообще нет, создаем пустой, чтобы не было краша
+  if (!sdState || !sdState.votes) {
+    if (sdState) sdState.votes = {};
+    return ctx.reply(`🏁 Найдено мэтчей: 0`, { parse_mode: 'HTML' });
+  }
+
+  // 2. ЗАЩИТА: проверяем, что participants вообще существует в стейте
+  if (!sdState.participants) {
+    sdState.participants = {};
+  }
+
   let matchCount = 0;
   const matchedPairs: { user1: any, user2: any }[] = [];
 
   for (const [voterIdStr, likedIds] of Object.entries(sdState.votes)) {
-    const voter = sdState.participants[voterIdStr];
+    // Ищем голосующего (проверяем по строке и числу на всякий случай)
+    const voter = sdState.participants[voterIdStr] || sdState.participants[parseInt(voterIdStr)];
     if (!voter) continue;
 
-    // likedIds is typed as unknown in Object.entries, so we cast it
+    // Проверяем, что likedIds — это массив, чтобы не упасть на .includes или переборе
+    if (!Array.isArray(likedIds)) continue;
+
     for (const targetId of (likedIds as number[])) {
-      const target = sdState.participants[targetId.toString()];
+      if (!targetId) continue;
+
+      // Ищем цель лайка в участниках
+      const target = sdState.participants[targetId.toString()] || sdState.participants[targetId];
       if (!target) continue;
 
-      const targetLikes = sdState.votes[target.id.toString()] || [];
+      // Получаем лайки цели безопасным способом
+      const targetLikes = sdState.votes[target.id.toString()] || sdState.votes[target.id] || [];
+      if (!Array.isArray(targetLikes)) continue;
+
       if (targetLikes.includes(voter.id)) {
         
         if (!matchedPairs.some(pair => 
