@@ -234,9 +234,9 @@ export async function calculateMatches(ctx: any, bot: any) {
 
     let matchCount = 0;
     const matchedPairs: { user1: any, user2: any }[] = [];
-    let adminReport = `📊 <b>ОТЧЕТ ПО МЭТЧАМ (ИГРА №${eid}):</b>\n\n`;
+    let adminReport = `📊 <b>Мэтчи рассчитаны и отправлены участникам!</b>\n\n`;
 
-    // Подтягиваем Drizzle напрямую в функцию, чтобы не было конфликтов импортов
+    // Подтягиваем Drizzle для прямого вытаскивания юзернеймов
     const schema = require('../drizzle/schema.js');
     const { eq } = require('drizzle-orm');
     const { db } = require('./db.js');
@@ -266,37 +266,38 @@ export async function calculateMatches(ctx: any, bot: any) {
               matchedPairs.push({ user1: voter, user2: target });
               matchCount++;
 
-              // ИДЕМ НАПРЯМУЮ В БАЗУ ЗА СВЕЖИМИ ЮЗЕРНЕЙМАМИ, КОТОРЫЕ СТЕР БОТ
+              // Вытаскиваем юзернеймы напрямую из базы, где они точно есть
               const dbVoter = await db.query.users.findFirst({ where: eq(schema.users.telegramId, voterIdNum) });
               const dbTarget = await db.query.users.findFirst({ where: eq(schema.users.telegramId, targetIdNum) });
 
               const voterUsername = dbVoter?.username || 'скрыт';
               const targetUsername = dbTarget?.username || 'скрыт';
 
-              // Ссылки для твоего удобства
-              const voterLink = `<a href="tg://user?id=${voterIdNum}">${voter.name}</a>`;
-              const targetLink = `<a href="tg://user?id=${targetIdNum}">${target.name}</a>`;
-
-              adminReport += `❤️ <b>Пара №${matchCount}:</b>\n`;
-              adminReport += `👤 №${voter.num} ${voterLink} (@${voterUsername})\n`;
-              adminReport += `👤 №${target.num} ${targetLink} (@${targetUsername})\n\n`;
-
-              // Сообщения участникам со 100% рабочими юзернеймами
+              // ТЕКСТЫ СООБЩЕНИЙ ДЛЯ САМИХ УЧАСТНИКОВ
               const voterMsg = `💖 <b>МЭТЧ!</b> Вы понравились <b>№${target.num} ${target.name}</b>!\nЕго/её Telegram: @${targetUsername}`;
               const targetMsg = `💖 <b>МЭТЧ!</b> Вы понравились <b>№${voter.num} ${voter.name}</b>!\nЕго/её Telegram: @${voterUsername}`;
 
-              ctx.telegram.sendMessage(voterIdNum, voterMsg, { parse_mode: 'HTML' }).catch(() => {});
-              ctx.telegram.sendMessage(targetIdNum, targetMsg, { parse_mode: 'HTML' }).catch(() => {});
+              // 🚀 МОМЕНТАЛЬНАЯ ОТПРАВКА В ЛИЧКУ УЧАСТНИКАМчерез ctx.telegram
+              ctx.telegram.sendMessage(voterIdNum, voterMsg, { parse_mode: 'HTML' })
+                .catch((e: any) => console.error(`Ошибка отправки игроку ${voterIdNum}:`, e.message));
+
+              ctx.telegram.sendMessage(targetIdNum, targetMsg, { parse_mode: 'HTML' })
+                .catch((e: any) => console.error(`Ошибка отправки игроку ${targetIdNum}:`, e.message));
+
+              // Дубликат для тебя в панель, чтобы ты видела настоящие юзернеймы
+              adminReport += `❤️ <b>Пара №${matchCount}:</b>\n`;
+              adminReport += `👤 №${voter.num} ${voter.name} (@${voterUsername}) -> отправлено\n`;
+              adminReport += `👤 №${target.num} ${target.name} (@${targetUsername}) -> отправлено\n\n`;
           }
         }
       }
     }
 
-    adminReport += `🏁 <b>Всего найдено мэтчей: ${matchCount}</b>`;
+    adminReport += `🏁 <b>Всего найдено и разослано мэтчей: ${matchCount}</b>`;
     await ctx.reply(adminReport, { parse_mode: 'HTML' });
 
   } catch (error: any) {
-    console.error("🚨 Ошибка:", error);
+    console.error("🚨 Критическая ошибка при расчете:", error);
     await ctx.reply(`🚨 Ошибка расчета: ${error.message}`);
   }
 }
