@@ -144,16 +144,23 @@ export async function editParticipantLikes(ctx: any) {
     const eid = await getCurrentSpeedDatingEventId();
     const sdState = await getSpeedDatingState(eid);
     
-    const u = sdState.participants[uid.toString()];
-    // ДОБАВЛЕНА ПРОВЕРКА
+    // Ищем участника всеми возможными способами
+    const u = sdState.participants[uid.toString()] || sdState.participants[uid] || Object.values(sdState.participants).find((p: any) => p.id === uid);
+
     if (!u) {
-        return ctx.answerCbQuery('❌ Этот участник был удален из игры!');
+        // Если вообще никак не нашли — гасим ошибку на корню
+        await ctx.answerCbQuery('❌ Этот участник был удален из игры!');
+        return; 
     }
 
     const targets = Object.values(sdState.participants).filter((p: any) => p.gender !== u.gender) as any[];
-    const votes = sdState.votes[u.id.toString()] || [];
+    const votes = sdState.votes[u.id.toString()] || sdState.votes[u.id] || [];
     
-    const btns = targets.map((t: any) => Markup.button.callback(`${votes.includes(t.id)?'✅':' '} №${t.num} ${t.name}`, `fd_tog_${uid}_${t.id}`));
+    // Защищаем и генерацию кнопок целей (вдруг среди целей тоже есть undefined)
+    const btns = targets
+        .filter(t => t && t.id)
+        .map((t: any) => Markup.button.callback(`${votes.includes(t.id)?'✅':' '} №${t.num} ${t.name}`, `fd_tog_${uid}_${t.id}`));
+        
     const rows = []; while(btns.length) rows.push(btns.splice(0,2));
 
     await ctx.editMessageText(`Кто понравился №${u.num} ${u.name} (${u.gender})?`, Markup.inlineKeyboard([
@@ -161,7 +168,6 @@ export async function editParticipantLikes(ctx: any) {
         [Markup.button.callback('💾 Сохранить и вернуться', 'admin_fd_panel')]
     ]));
 }
-
 export async function toggleParticipantLike(ctx: any) {
     const voterId = parseInt(ctx.match[1]); 
     const targetId = parseInt(ctx.match[2]);
