@@ -145,7 +145,10 @@ export async function editParticipantLikes(ctx: any) {
     const sdState = await getSpeedDatingState(eid);
     
     const u = sdState.participants[uid.toString()];
-    if (!u) return ctx.answerCbQuery('Участник не найден!');
+    // ДОБАВЛЕНА ПРОВЕРКА
+    if (!u) {
+        return ctx.answerCbQuery('❌ Этот участник был удален из игры!');
+    }
 
     const targets = Object.values(sdState.participants).filter((p: any) => p.gender !== u.gender) as any[];
     const votes = sdState.votes[u.id.toString()] || [];
@@ -166,6 +169,12 @@ export async function toggleParticipantLike(ctx: any) {
     const eid = await getCurrentSpeedDatingEventId();
     const sdState = await getSpeedDatingState(eid);
 
+    // ПРОВЕРКА: существует ли вообще голосующий?
+    const u = sdState.participants[voterId.toString()];
+    if (!u) {
+        return ctx.answerCbQuery('❌ Участник не найден (был удален)!');
+    }
+
     let votesArray = sdState.votes[voterId.toString()] || [];
     if (votesArray.includes(targetId)) {
         votesArray = votesArray.filter((id: number) => id !== targetId);
@@ -174,9 +183,6 @@ export async function toggleParticipantLike(ctx: any) {
     }
     sdState.votes[voterId.toString()] = votesArray;
     await saveSpeedDatingState(eid, sdState);
-
-    const u = sdState.participants[voterId.toString()];
-    if (!u) return ctx.answerCbQuery('Ошибка: Голосующий участник не найден!');
 
     const targets = Object.values(sdState.participants).filter((p: any) => p.gender !== u.gender) as any[];
     const currentVotes = sdState.votes[voterId.toString()] || [];
