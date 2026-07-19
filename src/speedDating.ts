@@ -223,59 +223,75 @@ export async function toggleParticipantLike(ctx: any) {
 
 
 export async function calculateMatches(ctx: any, bot: any) {
-  const eid = await getCurrentSpeedDatingEventId();
-  const sdState = await getSpeedDatingState(eid);
+  try {
+    const eid = await getCurrentSpeedDatingEventId();
+    const sdState = await getSpeedDatingState(eid);
 
-  // 1. ЗАЩИТА: если объекта votes вообще нет, создаем пустой, чтобы не было краша
-  if (!sdState || !sdState.votes) {
-    if (sdState) sdState.votes = {};
-    return ctx.reply(`🏁 Найдено мэтчей: 0`, { parse_mode: 'HTML' });
-  }
+    if (!sdState || !sdState.votes) {
+      if (sdState) sdState.votes = {};
+      return ctx.reply(`🏁 Найдено мэтчей: 0`, { parse_mode: 'HTML' });
+    }
 
-  // 2. ЗАЩИТА: проверяем, что participants вообще существует в стейте
-  if (!sdState.participants) {
-    sdState.participants = {};
-  }
+    if (!sdState.participants) {
+      sdState.participants = {};
+    }
 
-  let matchCount = 0;
-  const matchedPairs: { user1: any, user2: any }[] = [];
+    let matchCount = 0;
+    const matchedPairs: { user1: any, user2: any }[] = [];
+    let adminReport = `📊 <b>ОТЧЕТ ПО МЭТЧАМ (ИГРА №${eid}):</b>\n\n`;
 
-  for (const [voterIdStr, likedIds] of Object.entries(sdState.votes)) {
-    // Ищем голосующего (проверяем по строке и числу на всякий случай)
-    const voter = sdState.participants[voterIdStr] || sdState.participants[parseInt(voterIdStr)];
-    if (!voter) continue;
+    for (const [voterIdStr, likedIds] of Object.entries(sdState.votes)) {
+      const voter = sdState.participants[voterIdStr] || sdState.participants[parseInt(voterIdStr)];
+      if (!voter || !Array.isArray(likedIds)) continue;
 
-    // Проверяем, что likedIds — это массив, чтобы не упасть на .includes или переборе
-    if (!Array.isArray(likedIds)) continue;
+      for (const targetId of likedIds) {
+        if (!targetId) continue;
 
-    for (const targetId of (likedIds as number[])) {
-      if (!targetId) continue;
+        const target = sdState.participants[targetId.toString()] || sdState.participants[targetId];
+        if (!target) continue;
 
-      // Ищем цель лайка в участниках
-      const target = sdState.participants[targetId.toString()] || sdState.participants[targetId];
-      if (!target) continue;
+        const targetLikes = sdState.votes[target.id.toString()] || sdState.votes[target.id] || [];
+        if (!Array.isArray(targetLikes)) continue;
 
-      // Получаем лайки цели безопасным способом
-      const targetLikes = sdState.votes[target.id.toString()] || sdState.votes[target.id] || [];
-      if (!Array.isArray(targetLikes)) continue;
+        // Принудительно приводим ID к числам для точного сравнения
+        const voterIdNum = Number(voter.id);
+        const targetIdNum = Number(target.id);
+        const convertedTargetLikes = targetLikes.map(id => Number(id));
 
-      if (targetLikes.includes(voter.id)) {
-        
-        if (!matchedPairs.some(pair => 
-            (pair.user1.id === voter.id && pair.user2.id === target.id) ||
-            (pair.user1.id === target.id && pair.user2.id === voter.id)
-        )) {
-            matchedPairs.push({ user1: voter, user2: target });
-            matchCount++;
+        if (convertedTargetLikes.includes(voterIdNum)) {
+          if (!matchedPairs.some(pair => 
+              (pair.user1.id === voterIdNum && pair.user2.id === targetIdNum) ||
+              (pair.user1.id === targetIdNum && pair.user2.id === voterIdNum)
+          )) {
+              matchedPairs.push({ user1: voter, user2: target });
+              matchCount++;
 
-            const voterMsg = `💖 <b>МЭТЧ!</b> Вы понравились <b>№${target.num} ${target.name}</b>!\nЕго/её Telegram: @${target.username || 'не указан'}`;
-            const targetMsg = `💖 <b>МЭТЧ!</b> Вы понравились <b>№${voter.num} ${voter.name}</b>!\nЕго/её Telegram: @${voter.username || 'не указан'}`;
+              // Добавляем информацию в админский отчет
+              adminReport += `❤️ <b>Пара №${matchCount}:</b>\n`;
+              adminReport += `👤 №${voter.num} ${voter.name} (@${voter.username || 'нет'})\n`;
+              adminReport += `👤 №${target.num} ${target.name} (@${target.username || 'нет'})\n\n`;
 
-            bot.telegram.sendMessage(voter.id, voterMsg, { parse_mode: 'HTML' }).catch(()=>{});
-            bot.telegram.sendMessage(target.id, targetMsg, { parse_mode: 'HTML' }).catch(()=>{});
+              const voterMsg = `💖 <b>МЭТЧ!</b> Вы понравились <b>№${target.num} ${target.name}</b>!\nЕго/её Telegram: @${target.username || 'не указан'}`;
+              const targetMsg = `💖 <b>МЭТЧ!</b> Вы понравились <b>№${voter.num} ${voter.name}</b>!\nЕго/её Telegram: @${voter.username || 'не указан'}`;
+
+              // ИСПОЛЬЗУЕМ ctx.telegram вместо bot.telegram — это 100% защита от undefined
+              ctx.telegram.sendMessage(voterIdNum, voterMsg, { parse_mode: 'HTML' })
+                .catch((err: any) => console.error(`[DELIVERY FAIL] Не ушло игроку ${voterIdNum}:`, err.message));
+                
+              ctx.telegram.sendMessage(targetIdNum, targetMsg, { parse_mode: 'HTML' })
+                .catch((err: any) => console.error(`[DELIVERY FAIL] Не ушло игроку ${targetIdNum}:`, err.message));
+          }
         }
       }
     }
+
+    adminReport += `🏁 <b>Всего найдено мэтчей: ${matchCount}</b>`;
+    
+    // Отправляем админу подробный текстовый дубликат!
+    await ctx.reply(adminReport, { parse_mode: 'HTML' });
+
+  } catch (error: any) {
+    console.error("🚨 Критическая ошибка при расчете:", error);
+    await ctx.reply(`🚨 Ошибка выполнения расчета: ${error.message}`);
   }
-  ctx.reply(`🏁 Найдено мэтчей: ${matchCount}`, { parse_mode: 'HTML' });
 }
