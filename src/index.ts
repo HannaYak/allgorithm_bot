@@ -2758,18 +2758,31 @@ async function bookGame(ctx: any, gameType: string) {
 
     // --- ЛОГИКА ДЛЯ ОБЫЧНОГО TNT (Выбор кухни) ---
 // --- ЛОГИКА ДЛЯ ОБЫЧНОГО TNT (Выбор кухни) ---
+    // --- ЛОГИКА ДЛЯ TALK & TOAST (Только даты на кнопках -> Описание кухни внутри) ---
     if (gameType === 'talk_toast') {
-      const uniqueTitles = new Set<string>(); 
-      events.forEach(e => uniqueTitles.add(parseEventDesc(e.description).title));
-      const kitchenBtns = Array.from(uniqueTitles).map(t => [Markup.button.callback(t, `cv_${TYPE_MAP[gameType]}_${encodeCat(t)}`)]);
-      
-      const tastyMenuText = `🥂 <b>Выбери атмосферу и кухню на вечер:</b>\n\n` +
-                            `Для каждой встречи мы подбираем особенные заведения. Что тебе ближе сегодня?\n\n` +
-                            `Горячие грузинские хинкали с бокалом саперави, домашняя итальянская паста с терпким кьянти или, может, изысканная паназия? 🍷🍲\n\n` +
-                            `<i>Выбирай направление ниже, чтобы посмотреть свободные даты:</i>`;
+      const finalButtons = events.map(e => {
+        const isReview = e.type.includes('review');
+        // Оставляем только короткую пометку о скидке, если это обзор
+        const reviewBadge = isReview ? ' 🎥 (-50%)' : '';
+        
+        // Формируем минималистичную кнопку: 📅 15.01.2026 19:00 🎥 (-50%) (3/8)
+        const label = `📅 ${e.dateString}${reviewBadge}`;
 
-      return ctx.replyWithHTML(tastyMenuText, 
-        Markup.inlineKeyboard([...kitchenBtns, [Markup.button.callback('🔙 Назад', backBtn)]])
+        return [
+          Markup.button.callback(
+            `${label} (${e.currentPlayers}/${e.maxPlayers})`, 
+            `tt_date_info_${e.id}`
+          )
+        ];
+      });
+
+      const tastyMenuText = `🥂 <b>Talk & Toast: Выберите удобную дату</b>\n\n` +
+                            `Для каждого ужина мы подбираем уникальное заведение и атмосферу. ` +
+                            `Выберите подходящий слот из списка ниже 👇`;
+
+      return ctx.replyWithHTML(
+        tastyMenuText, 
+        Markup.inlineKeyboard([...finalButtons, [Markup.button.callback('🔙 Назад', backBtn)]])
       );
     }
 
@@ -2853,47 +2866,45 @@ bot.command('send', async (ctx) => {
     }
 });
 
-bot.action(/cv_(.+)_(.+)/, async (ctx) => {
-  const type = REV_TYPE_MAP[ctx.match[1]]; 
-  const selectedTitle = decodeCat(ctx.match[2]);
+// --- ОБРАБОТЧИК КАРТОЧКИ УЖИНА (TALK & TOAST) ---
+bot.action(/tt_date_info_(\d+)/, async (ctx) => {
+  const eid = parseInt(ctx.match[1]);
+  const event = await db.query.events.findFirst({ where: eq(schema.events.id, eid) });
   
-  const events = await db.query.events.findMany({ 
-    where: and(
-      or(eq(schema.events.type, type), eq(schema.events.type, `${type}_review`)),
-      eq(schema.events.isActive, true)
-    ) 
-  });
-  
-  const filtered = events.filter(e => parseEventDesc(e.description).title === selectedTitle);
-  const btns = filtered.map(e => {
-    const isReview = e.type.includes('review');
-    const label = isReview ? `🎥 ${e.dateString} (-50%)` : `📅 ${e.dateString}`;
-    return [Markup.button.callback(`${label} (${e.currentPlayers}/${e.maxPlayers})`, `pay_event_${e.id}`)];
-  });
+  if (!event) return ctx.answerCbQuery('❌ Игра не найдена', { show_alert: true });
 
-  // --- УМНОЕ ВКУСНОЕ ОПИСАНИЕ ПОД КУХНЮ ---
-  let tastyDesc = `Отличный выбор! Ниже список доступных дат для этой кухни. Выбирай удобное время и переходи к бронированию. 👇`;
+  const { title } = parseEventDesc(event.description);
+  const titleLower = title.toLowerCase();
+
+  // Подтягиваем вкусное описание в зависимости от ключевых слов
+  let tastyDesc = `Отличный выбор! Идеальная атмосфера для вечерних разговоров.`;
   
-  const titleLower = selectedTitle.toLowerCase();
   if (titleLower.includes('груз')) {
-      tastyDesc = `🍷 <b>Грузинский вайб:</b> Горячие хачапури по-аджарски, сочные хинкали и бокал насыщенного саперави... Идеальное комбо для душевных разговоров!\n\nВыбирай дату ниже 👇`;
+      tastyDesc = `🍷 <b>Грузинский вайб:</b> Горячие хачапури по-аджарски, сочные хинкали и бокал насыщенного саперави... Идеальное комбо для душевных разговоров!`;
   } else if (titleLower.includes('итал')) {
-      tastyDesc = `🍝 <b>Итальянская классика:</b> Неаполитанская пицца из дровяной печи, домашняя паста и ледяное просекко... Настоящая la dolce vita!\n\nВыбирай дату ниже 👇`;
+      tastyDesc = `🍝 <b>Итальянская классика:</b> Неаполитанская пицца из дровяной печи, домашняя паста и ледяное просекко... Настоящая la dolce vita!`;
   } else if (titleLower.includes('ази') || titleLower.includes('япон') || titleLower.includes('кита')) {
-      tastyDesc = `🥢 <b>Азиатские мотивы:</b> Пряный том-ям, свежие роллы или авторские коктейли... Ярко, сочно и очень атмосферно!\n\nВыбирай дату ниже 👇`;
+      tastyDesc = `🥢 <b>Азиатские мотивы:</b> Пряный том-ям, свежие роллы или авторские коктейли... Ярко, сочно и очень атмосферно!`;
   } else if (titleLower.includes('испан')) {
-      tastyDesc = `🥘 <b>Испанская страсть:</b> Разнообразные тапас, сочная паэлья и кувшин прохладной сангрии... Вечер обещает быть вкусным!\n\nВыбирай дату ниже 👇`;
+      tastyDesc = `🥘 <b>Испанская страсть:</b> Разнообразные тапас, сочная паэлья и кувшин прохладной сангрии... Вечер обещает быть вкусным!`;
   } else if (titleLower.includes('франц')) {
-      tastyDesc = `🥐 <b>Французский шик:</b> Изысканные закуски, свежий багет и элегантное вино... Идеальная атмосфера для красивого вечера!\n\nВыбирай дату ниже 👇`;
+      tastyDesc = `🥐 <b>Французский шик:</b> Изысканные закуски, свежий багет и элегантное вино... Идеальная атмосфера для красивого вечера!`;
   }
-  
+
+  const isReview = event.type.includes('review');
+  const reviewBadge = isReview ? ' 🎥 (-50% ЗА ОБЗОР)' : '';
+
   return ctx.editMessageText(
-    `🍽 <b>Направление: ${selectedTitle}</b>\n\n` +
+    `📅 <b>Дата:</b> ${event.dateString}${reviewBadge}\n` +
+    `🍽 <b>Направление: ${title}</b>\n\n` +
     `${tastyDesc}\n\n` +
     `⚠️ <i>Напоминаем: в стоимость билета входит участие и организация. Заказы по меню ресторана оплачиваются отдельно на месте.</i>`, 
     { 
       parse_mode: 'HTML', 
-      ...Markup.inlineKeyboard([...btns, [Markup.button.callback('🔙 Назад к списку тем', 'book_talk')]]) 
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback(`💳 Перейти к бронированию`, `pay_event_${eid}`)],
+        [Markup.button.callback('🔙 Назад к списку дат', 'book_talk')]
+      ]) 
     }
   );
 });
