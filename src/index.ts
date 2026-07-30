@@ -49,8 +49,8 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2023-10-
 const GAME_PRICES: Record<string, string> = {
   'talk_toast': 'price_1T427MHhXyjuCWwf7CK0DvCA', 
   'stock_know': 'price_1SUTkoHhXyjuCWwfxD89YIpP',
-  'speed_dating_28_38': 'price_1SUTlVHhXyjuCWwfU1IzNMlf', // Стандартные 50 PLN
-  'speed_dating_surge': 'price_1TitbQHhXyjuCWwf5VCQOymy', // <--- НОВЫЙ ЦЕННИК НА 60 PLN
+  'speed_dating_28_38': 'price_1TyxjeHhXyjuCWwfWca4YgP9', // Стандартные 50 PLN
+  'speed_dating_surge': 'price_1TyxlXHhXyjuCWwf48sKoF4T', // <--- НОВЫЙ ЦЕННИК НА 60 PLN
   'tiffany': 'price_1TWzzTHhXyjuCWwfLgliEFEP',
   'lockload': 'price_1TX08mHhXyjuCWwfvuk0S3j2',
   'corporate': 'price_1CorporatePlaceholderXyjuCW', // <-- Новый Stripe Price ID для B2B
@@ -1429,10 +1429,10 @@ setInterval(async () => {
           for (const b of evBookings) {
             const u = await db.query.users.findFirst({ where: eq(schema.users.id, b.userId) });
             if (u?.telegramId) {
-             const msg = `📅 <b>Проверка резерва.</b>\n\n` +
-            `До вашего визита в Algorythm осталось 3 дня. Напоминаем о необходимости подтвердить свое участие.\n\n` +
-            `⚠️ <b>Архитектура стола:</b> Мы формируем точный гендерный и интеллектуальный баланс. Если ваши планы изменились, отмените резерв прямо сейчас — система автоматически вернет средства и передаст слот гостю из листа ожидания.\n\n` +
-            `<i>Пожалуйста, подтвердите статус вашего резерва в течение 24 часов:</i>`;
+             const msg = `📅 <b>До встречи в Algorythm — 3 дня!</b>\n\n` +
+                `Мы подбираем идеальный баланс участников, поэтому нам важно знать заранее: ты с нами?\n` +
+                `Помни, противоположный пол рассчитывает на тебя 😏\n\n` +
+                `⚠️ <i>Подтверди визит в течение 24 часов. Если планы изменились — отмени бронь прямо сейчас: система автоматически вернет деньги и передаст слот гостю из очереди.</i>`;
             await bot.telegram.sendMessage(u.telegramId, msg, {
                 parse_mode: 'HTML',
                 ...Markup.inlineKeyboard([
@@ -2636,10 +2636,10 @@ bot.action('details_stock', async (ctx) => {
 bot.action('game_dating', async (ctx) => {
   await ctx.deleteMessage().catch(() => {});
   const text = `💘 <b>Speed Dating: Algorythm</b>\n\n` +
-               `💰 <b>Депозит:</b> 50 zł\n` +
+               `💰 <b>Депозит:</b> 85 zł (включает Welcome Drink 🍸)\n` +
                `⏳ <b>Регламент:</b> 75 минут\n` +
                `👥 <b>Лимит:</b> 12 персон (строгий гендерный баланс).\n\n` +
-               `Формат скоростных встреч, модерируемый системой. Мы гарантируем точность тайминга и релевантность участников.`;
+               `Формат скоростных встреч, модерируемый системой. Мы гарантируем точность тайминга и релевантность участников. В стоимость билета входит приветственный напиток на ваш выбор — авторский алкогольный или безалкогольный коктейль.`;
     
   return ctx.replyWithPhoto('AgACAgIAAxkBAAEBWOpqN-xisocJq2poAq13s02a9vW-UAACfBtrG3JBwEnLLttfBDNkQQEAAwIAA3kAAzwE', { 
     caption: text, parse_mode: 'HTML', 
@@ -2655,9 +2655,10 @@ bot.action('game_dating', async (ctx) => {
 bot.action('details_dating', async (ctx) => {
   const text = `💘 <b>Speed Dating: Протокол</b>\n\n` +
     `1. <b>Верификация:</b> Система выдает вам уникальный игровой номер за 3 часа до начала.\n` +
-    `2. <b>Раунды:</b> Серия встреч по 10 минут. Система уведомляет о смене собеседника.\n` +
-    `3. <b>Симпатии:</b> Фиксация интереса происходит внутри бота.\n` +
-    `4. <b>Мэтчи:</b> В случае взаимного выбора система обменивает вас контактами. Конфиденциальность гарантирована.`;
+    `2. <b>Welcome Drink:</b> Начните вечер с расслабляющего коктейля (алкогольного или безалкогольного) на баре.\n` +
+    `3. <b>Раунды:</b> Серия встреч по 10 минут. Система уведомляет о смене собеседника.\n` +
+    `4. <b>Симпатии:</b> Фиксация интереса происходит внутри бота.\n` +
+    `5. <b>Мэтчи:</b> В случае взаимного выбора система обменивает вас контактами. Конфиденциальность гарантирована.`;
 
   return ctx.editMessageCaption(text, {
     parse_mode: 'HTML',
