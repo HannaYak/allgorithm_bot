@@ -3136,7 +3136,7 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
         } else if (event.type.startsWith('talk_')) {
             basePrice = 35;
         } else if (event.type.startsWith('speed_dating')) {
-            basePrice = 50;
+            basePrice = 85;
             const userG = (user.gender || '').toLowerCase();
             const threshold = Math.max(1, Math.floor((event.maxPlayers || 12) * 0.2)); 
             if (userG.includes('муж') && (mC - wC) >= threshold) {
