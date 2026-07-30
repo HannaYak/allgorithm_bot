@@ -49,7 +49,7 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2023-10-
 const GAME_PRICES: Record<string, string> = {
   'talk_toast': 'price_1T427MHhXyjuCWwf7CK0DvCA', 
   'stock_know': 'price_1SUTkoHhXyjuCWwfxD89YIpP',
-  'speed_dating_28_38': 'price_1TyxjeHhXyjuCWwfWca4YgP9', // Стандартные 50 PLN
+  'speed_dating_25_35': 'price_1TyxjeHhXyjuCWwfWca4YgP9', // Стандартные 50 PLN
   'speed_dating_surge': 'price_1TyxlXHhXyjuCWwf48sKoF4T', // <--- НОВЫЙ ЦЕННИК НА 60 PLN
   'tiffany': 'price_1TWzzTHhXyjuCWwfLgliEFEP',
   'lockload': 'price_1TX08mHhXyjuCWwfvuk0S3j2',
@@ -66,7 +66,7 @@ const ADMIN_ID = 5456905649;
 const BEAUTY_NAMES: Record<string, string> = {
   'talk_toast': 'Talk & Toast 🥂',
   'stock_know': 'Stock & Know 🧠',
-  'speed_dating_28_38': 'Speed Dating (28-38 лет) 💘',
+  'speed_dating_25_35': 'Speed Dating (25-35 лет) 💘',
   'tiffany': 'Breakfast at Tiffany\'s 🥐✨',
   'lockload': 'Mad Men 🥃',
   'corporate': 'Corporate Session 👔💼', // <-- Красивое имя для вывода в кабинете
@@ -1121,7 +1121,7 @@ registerWizard.command('cancel', (ctx) => ctx.scene.leave());
 const addEventWizard = new Scenes.WizardScene(
   'ADD_EVENT_SCENE',
   async (ctx) => {
-    await ctx.reply('Введите тип игры (talk_toast, stock_know, speed_dating, talk_thematic, speed_dating_28_38):');
+    await ctx.reply('Введите тип игры (talk_toast, stock_know, speed_dating, talk_thematic, speed_dating_25_35):');
     return ctx.wizard.next();
   },
   async (ctx) => {
@@ -2723,7 +2723,7 @@ async function bookGame(ctx: any, gameType: string) {
         eq(schema.events.isActive, true),
         gameType === 'speed_dating' 
           ? or(
-              eq(schema.events.type, 'speed_dating_28_38')
+              eq(schema.events.type, 'speed_dating_25_35')
             )
           : eq(schema.events.type, gameType)
       )
@@ -2791,7 +2791,7 @@ async function bookGame(ctx: any, gameType: string) {
 const finalButtons = events.map(e => {
       // 1. Обновляем label под новый формат
       let ageLabel = "";
-      if (e.type === 'speed_dating_28_38') ageLabel = " (28-38 лет)";
+      if (e.type === 'speed_dating_25_35') ageLabel = " (25-35 лет)";
 
       const isReview = e.type.includes('review');
       const label = isReview ? `🎥 ${e.dateString}${ageLabel} (-50% ЗА ОБЗОР)` : `📅 ${e.dateString}${ageLabel}`;
@@ -2800,7 +2800,7 @@ const finalButtons = events.map(e => {
     });
 
     // 2. Меняем заголовок, так как выбор группы больше не нужен — игра одна
-    const headerText = gameType === 'speed_dating' ? '🔥 <b>Выберите дату встречи (28-38 лет):</b>' : '<b>Выберите удобную дату:</b>';
+    const headerText = gameType === 'speed_dating' ? '🔥 <b>Выберите дату встречи (25-35 лет):</b>' : '<b>Выберите удобную дату:</b>';
     return ctx.replyWithHTML(headerText, 
       Markup.inlineKeyboard([...finalButtons, [Markup.button.callback('🔙 Назад', backBtn)]])
     );
