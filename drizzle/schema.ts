@@ -1,4 +1,4 @@
-import { pgTable, serial, text, bigint, boolean, timestamp, integer, varchar } from 'drizzle-orm/pg-core';
+import { pgTable, serial, text, bigint, boolean, timestamp, integer, varchar, index } from 'drizzle-orm/pg-core';
 
 // === ТАБЛИЦА ПОЛЬЗОВАТЕЛЕЙ ===
 export const users = pgTable('users', {
@@ -93,17 +93,26 @@ export const bookings = pgTable('bookings', {
   userId: integer('user_id').references(() => users.id),
   eventId: integer('event_id').references(() => events.id),
   paid: boolean('paid').default(false),
-  confirmation: text('confirmation').default('pending'), // 'pending', 'confirmed', 'rejected'
+  confirmation: text('confirmation').default('pending'),
   createdAt: timestamp('created_at').defaultNow(),
+}, (table) => {
+  return {
+    // Этот индекс ускорит автопилот в десятки раз
+    eventPaidIdx: index('event_paid_idx').on(table.eventId, table.paid) 
+  };
 });
 
 // === ТАБЛИЦА ВАУЧЕРОВ (ПОДТВЕРЖДЕНИЙ ОПЛАТ ФОТОГРАФИЕЙ) ===
 export const vouchers = pgTable('vouchers', {
   id: serial('id').primaryKey(),
   userId: integer('user_id').references(() => users.id),
-  photoFileId: text('photo_file_id').notNull(),
-  status: text('status').default('pending'), // 'pending', 'approved', 'rejected'
+  photoFileId: text('photo_file_id'), // УБИРАЕМ .notNull(), так как абонемент из Stripe без фото
+  status: text('status').default('pending'), // 'pending', 'approved', 'rejected', 'pass_active', 'pass_exhausted'
   usedInEventId: integer('used_in_event_id').references(() => events.id),
+  
+  // ДОБАВЛЯЕМ ДЛЯ АБОНЕМЕНТОВ
+  maxUses: integer('max_uses').default(1), 
+  currentUses: integer('current_uses').default(0),
 });
 
 // === ТАБЛИЦА СКИДОЧНЫХ ВАУЧЕРОВ / ПРОМОКОДОВ (НОВАЯ) ===
