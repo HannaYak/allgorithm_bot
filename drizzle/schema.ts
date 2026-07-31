@@ -17,7 +17,7 @@ export const users = pgTable('users', {
   profileCompleted: boolean('profile_completed').default(false),
 
   // Дополнительные поля
-  city: varchar('city', { length: 50 }).default('Warsaw'),
+  city: text('city').default('Warsaw'),
   lastActive: timestamp('last_active').defaultNow(),
   isBanned: boolean('is_banned').default(false),
   banReason: text('ban_reason'),
@@ -75,7 +75,7 @@ export const events = pgTable('events', {
   price: integer('price'), // Динамическая цена
   maxPlayers: integer('max_players').notNull(),
   currentPlayers: integer('current_players').default(0),
-  city: varchar('city', { length: 50 }).default('Main'),
+  city: text('city').default('Main'),
   isActive: boolean('is_active').default(true),
 });
 
@@ -109,7 +109,7 @@ export const vouchers = pgTable('vouchers', {
   photoFileId: text('photo_file_id'), // УБИРАЕМ .notNull(), так как абонемент из Stripe без фото
   status: text('status').default('pending'), // 'pending', 'approved', 'rejected', 'pass_active', 'pass_exhausted'
   usedInEventId: integer('used_in_event_id').references(() => events.id),
-  passType: varchar('pass_type', { length: 50 }),
+  passType: varchar('pass_type', { length: 50 }).default('none'),
   // ДОБАВЛЯЕМ ДЛЯ АБОНЕМЕНТОВ
   maxUses: integer('max_uses').default(1), 
   currentUses: integer('current_uses').default(0),

@@ -2043,15 +2043,35 @@ bot.hears('👤 Личный кабинет', async (ctx) => {
                       `• Интересный факт:\n<i>${user.fact || 'Не указан'}</i>\n\n`;
     }
 
+    const activePasses = await db.query.vouchers.findMany({
+        where: and(
+            eq(schema.vouchers.userId, user.id),
+            eq(schema.vouchers.status, 'pass_active'),
+            gt(schema.vouchers.expiresAt, new Date()) // Только те, что еще не сгорели
+        )
+    });
+
+    let passesDisplay = '';
+    if (activePasses.length > 0) {
+        passesDisplay = `🎟 <b>АКТИВНЫЕ АБОНЕМЕНТЫ:</b>\n`;
+        for (const pass of activePasses) {
+            const passName = pass.passType === 'tnt_pass' ? 'Talk & Toast Pass' : 'Dating Pass';
+            const remaining = pass.maxUses - pass.currentUses;
+            const expDate = pass.expiresAt!.toLocaleDateString('ru-RU'); // Выведет красиво, например 15.10.2026
+            passesDisplay += `• <b>${passName}</b>\n  Остаток абонимента: <b>${remaining} игры</b> (сгорит ${expDate})\n`;
+        }
+        passesDisplay += `\n`;
+    }
+
     let msg = `👤 <b>ПРОФИЛЬ</b>\n\n` +
               profileStatus +
               profileData +
+              passesDisplay + // <--- Добавили вывод абонементов
               `🎫 <b>Ваучеры:</b> ${count10} шт. (скидка) | ${countFree} шт. (free)\n` +
               `🏆 <b>Прогресс лояльности:</b>\n${stars} (${progress}/5)\n\n` +
               `<i>Каждая 5-я встреча в Algorythm — комплимент от клуба.</i>`;
 
-	  const buttons = [];
-    // Кнопки в зависимости от статуса анкеты
+    const buttons = [];
     if (!user.profileCompleted) {
       buttons.push([Markup.button.callback('📝 Заполнить анкету', 'start_registration')]);
     } else {
@@ -2060,6 +2080,7 @@ bot.hears('👤 Личный кабинет', async (ctx) => {
 
     buttons.push(
       [Markup.button.callback(user.fact ? '✏️ Обновить историю' : '📝 Добавить историю', 'start_edit_fact')],
+      [Markup.button.callback('🎟 Абонементы клуба', 'buy_pass_menu')], // <--- НОВАЯ КНОПКА ПОКУПКИ АБОНЕМЕНТА
       [Markup.button.callback('💳 Ваучеры', 'upload_voucher')],
       [Markup.button.callback('📅 Мои резервы', 'my_games')],
       [Markup.button.callback('🤝 Приглашение', 'referral_info')]
@@ -3227,8 +3248,32 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
             }
         }
 
+       // --- НОВЫЙ БЛОК: ИЩЕМ АБОНЕМЕНТ ПЕРЕД ОПЛАТОЙ ---
+        let activePass = null;
+        let requiredPassType = null;
+
+        if (event.type.includes('talk_toast')) {
+            requiredPassType = 'tnt_pass';
+        } else if (event.type.includes('speed_dating')) {
+            requiredPassType = 'dating_pass';
+        }
+
+        if (requiredPassType) {
+            const now = new Date();
+            activePass = await db.query.vouchers.findFirst({
+                where: and(
+                    eq(schema.vouchers.userId, user.id),
+                    eq(schema.vouchers.status, 'pass_active'),
+                    eq(schema.vouchers.passType, requiredPassType),
+                    lt(schema.vouchers.currentUses, schema.vouchers.maxUses),
+                    gt(schema.vouchers.expiresAt, now)
+                )
+            });
+        }
+        // ----------------------------------------------
+
         // 6. ОПЛАТА STRIPE (СТАРЫЙ НАДЕЖНЫЙ МЕТОД)
-       const stripeSession = await stripe.checkout.sessions.create({
+        const stripeSession = await stripe.checkout.sessions.create({
             payment_method_types: ['card', 'blik', 'revolut_pay'],
             line_items: [{ price: stripePriceId, quantity: 1 }], 
             metadata: sessionMetadata,
@@ -3240,17 +3285,26 @@ bot.action(/pay_event_(\d+)/, async (ctx) => {
         });
 
         const priceText = `💳 <b>К оплате: ${finalPrice} PLN</b>${priceNotice}`; 
+        
+        // 🔥 ДИНАМИЧЕСКИЕ КНОПКИ (ДОБАВЛЕН АБОНЕМЕНТ)
+        const keyboard = [];
+
+        // Если у юзера есть абонемент — показываем кнопку списания ПЕРВОЙ
+        if (activePass) {
+            const remaining = activePass.maxUses - activePass.currentUses;
+            keyboard.push([Markup.button.callback(`🎟 Списать с абонемента (осталось: ${remaining})`, `use_pass_${eid}_${activePass.id}`)]);
+        }
+
+        // Стандартные кнопки оплаты
+        keyboard.push([Markup.button.url('💳 Оплатить картой / BLIK', stripeSession.url!)]);
+        keyboard.push([Markup.button.callback('🎟 Ввести промокод', `apply_promo_${eid}`)]);
+        keyboard.push([Markup.button.callback('✅ Я оплатил', `confirm_pay_${eid}`)]);
 
         await ctx.replyWithHTML( 
-            `${priceText}\n\nНажимай кнопку ниже, чтобы завершить покупку:`,
-            Markup.inlineKeyboard([
-                [Markup.button.url('💳 Оплатить сейчас', stripeSession.url!)],
-                [Markup.button.callback('🎟 Ввести промокод', `apply_promo_${eid}`)],
-                [Markup.button.callback('✅ Я оплатил', `confirm_pay_${eid}`)]
-            ])
+            `${priceText}\n\nВыберите способ оплаты:`,
+            Markup.inlineKeyboard(keyboard)
         );
 
-        // 🔥 ДОБАВЬ ВОТ ЭТУ СТРОКУ СЮДА 🔥
         await sendLog('ПОПЫТКА ОПЛАТЫ 🟡', `👤 Гость: <b>${user.name}</b> (@${user.username || 'скрыт'})\n🎫 Игра: №${eid} (${event.type})\n💰 К оплате: <b>${finalPrice} PLN</b>\n<i>Перешел к оплате, ждем подтверждения...</i>`);
 
     } catch (e) { 
@@ -3265,6 +3319,82 @@ bot.action(/apply_promo_(\d+)/, async (ctx) => {
   const eid = parseInt(ctx.match[1]);
   (ctx.session as any).waitingForPromo = eid;
   await ctx.reply('Напиши промокод прямо сюда 👇');
+});
+
+// --- ОБРАБОТЧИК ОПЛАТЫ АБОНЕМЕНТОМ ---
+bot.action(/use_pass_(\d+)_(\d+)/, async (ctx) => {
+    const eid = parseInt(ctx.match[1]);
+    const passId = parseInt(ctx.match[2]);
+
+    try {
+        const user = await db.query.users.findFirst({ where: eq(schema.users.telegramId, ctx.from!.id) });
+        const event = await db.query.events.findFirst({ where: eq(schema.events.id, eid) });
+        if (!user || !event) return;
+
+        // 1. Проверяем, жив ли еще абонемент (вдруг он нажал дважды)
+        const pass = await db.query.vouchers.findFirst({
+            where: and(
+                eq(schema.vouchers.id, passId),
+                eq(schema.vouchers.userId, user.id),
+                eq(schema.vouchers.status, 'pass_active')
+            )
+        });
+
+        if (!pass || pass.currentUses >= pass.maxUses || new Date() > pass.expiresAt!) {
+            return ctx.answerCbQuery('❌ Абонемент недействителен, исчерпан или просрочен.', { show_alert: true });
+        }
+
+        // 2. Проверяем, не закончились ли места, пока он думал
+        const realCount = await db.select().from(schema.bookings).where(and(eq(schema.bookings.eventId, eid), eq(schema.bookings.paid, true)));
+        if (realCount.length >= event.maxPlayers) {
+            return ctx.answerCbQuery('❌ К сожалению, места уже закончились!', { show_alert: true });
+        }
+
+        // 3. Проверяем, не записан ли он уже на игру
+        const existing = await db.query.bookings.findFirst({
+            where: and(eq(schema.bookings.userId, user.id), eq(schema.bookings.eventId, eid))
+        });
+        if (existing?.paid) {
+            return ctx.answerCbQuery('✅ Ты уже в списке участников этой игры!', { show_alert: true });
+        }
+
+        // 4. Списываем 1 игру с абонемента
+        const newUsesCount = pass.currentUses + 1;
+        const isFullyUsed = newUsesCount >= pass.maxUses;
+
+        await db.update(schema.vouchers)
+            .set({ 
+                currentUses: newUsesCount,
+                status: isFullyUsed ? 'used' : 'pass_active' 
+            })
+            .where(eq(schema.vouchers.id, pass.id));
+
+        // 5. Записываем юзера на игру
+        if (existing) {
+            await db.update(schema.bookings).set({ paid: true }).where(eq(schema.bookings.id, existing.id));
+        } else {
+            await db.insert(schema.bookings).values({ userId: user.id, eventId: eid, paid: true });
+        }
+
+        await db.update(schema.events).set({ currentPlayers: realCount.length + 1 }).where(eq(schema.events.id, eid));
+
+        // Убираем таймер незавершенной оплаты
+        PENDING_PAYMENTS.delete(user.id);
+
+        // 6. Отчитываемся
+        await ctx.editMessageText(
+            `🎟 <b>Участие оплачено абонементом! Ты в игре!</b>\n\n` +
+            `Списано 1 посещение. Остаток игр на балансе: <b>${pass.maxUses - newUsesCount}</b>\n\n` +
+            `Инструкция и точный адрес придут за 3 часа до начала. 🥂`,
+            { parse_mode: 'HTML' }
+        );
+
+        await sendLog('АБОНЕМЕНТ 🎟', `👤 Игрок: <b>${user.name}</b>\n🎫 Игра: №${eid} (${event.type})\n📉 Остаток абонемента: ${pass.maxUses - newUsesCount}`);
+
+    } catch (e) {
+        console.error("Ошибка при оплате абонементом:", e);
+        ctx.answerCbQuery('❌ Ошибка системы. Попробуйте снова.', { show_alert: true });
+    }
 });
 
 // Внутри bot.on('message') добавь проверку промокода:
@@ -6173,18 +6303,80 @@ setInterval(async () => {
 const app = express();
 
 // СТРОГО ПЕРЕД express.json()
+// СТРОГО ПЕРЕД express.json()
 app.post('/stripe-webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   const sig = req.headers['stripe-signature'];
   let stripeEvent;
+  
   try {
     stripeEvent = stripe.webhooks.constructEvent(req.body, sig!, process.env.STRIPE_WEBHOOK_SECRET!);
   } catch (err: any) { 
     return res.status(400).send(`Webhook Error: ${err.message}`); 
   }
 
+  // 🔥 ИСПРАВЛЕНИЕ 1: проверяем stripeEvent.type
   if (stripeEvent.type === 'checkout.session.completed') {
-    await handleSuccessfulPayment(stripeEvent.data.object);
+    const session = stripeEvent.data.object as any;
+    
+    // ПРОВЕРЯЕМ, ЧТО ЭТО ПОКУПКА АБОНЕМЕНТА
+    if (session.metadata?.type === 'pass_purchase') {
+        const telegramId = Number(session.metadata.telegramId);
+        const passType = session.metadata.passType;
+        
+        try {
+            const user = await db.query.users.findFirst({
+                where: eq(schema.users.telegramId, telegramId)
+            });
+            
+            if (user) {
+                let validityMonths = 3; 
+                let maxUses = 3;
+                let passName = '';
+                
+                if (passType === 'tnt_pass') {
+                    validityMonths = 3;
+                    passName = 'Talk & Toast Pass';
+                } else if (passType === 'dating_pass') {
+                    validityMonths = 6;
+                    passName = 'Dating Pass';
+                }
+                
+                const expiresAt = new Date();
+                expiresAt.setMonth(expiresAt.getMonth() + validityMonths);
+                
+                await db.insert(schema.vouchers).values({
+                    userId: user.id,
+                    status: 'pass_active',
+                    passType: passType,
+                    maxUses: maxUses,
+                    currentUses: 0,
+                    expiresAt: expiresAt,
+                    photoFileId: `stripe_${session.id}` 
+                });
+                
+                const formattedDate = expiresAt.toLocaleDateString('ru-RU');
+                
+                await bot.telegram.sendMessage(telegramId, 
+                    `🎉 <b>Оплата прошла успешно!</b>\n\n` +
+                    `Ваш <b>${passName}</b> на ${maxUses} игры активирован.\n` +
+                    `⏳ Он действует до: <b>${formattedDate}</b>.\n\n` +
+                    `Теперь при выборе подходящей игры в афише бот предложит вам списать участие с баланса абонемента.`,
+                    { parse_mode: 'HTML' }
+                ).catch(() => {});
+            }
+        } catch (error) {
+            console.error("Ошибка при начислении абонемента:", error);
+        }
+        
+        // 🔥 ИСПРАВЛЕНИЕ 2: Останавливаем выполнение, чтобы старая логика обычного билета не запустилась
+        return res.json({ received: true });
+    } 
+    
+    // --- СТАРАЯ ЛОГИКА ДЛЯ ОБЫЧНЫХ БИЛЕТОВ ---
+    // Сюда код дойдет только если это не покупка абонемента
+    await handleSuccessfulPayment(session);
   }
+  
   res.json({ received: true });
 });
 
