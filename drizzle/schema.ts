@@ -109,7 +109,7 @@ export const vouchers = pgTable('vouchers', {
   photoFileId: text('photo_file_id'), // УБИРАЕМ .notNull(), так как абонемент из Stripe без фото
   status: text('status').default('pending'), // 'pending', 'approved', 'rejected', 'pass_active', 'pass_exhausted'
   usedInEventId: integer('used_in_event_id').references(() => events.id),
-  passType: varchar('pass_type', { length: 50 }),
+  passType: varchar('pass_type', { length: 50 }).default('none'),
   // ДОБАВЛЯЕМ ДЛЯ АБОНЕМЕНТОВ
   maxUses: integer('max_uses').default(1), 
   currentUses: integer('current_uses').default(0),
