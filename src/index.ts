@@ -2718,18 +2718,15 @@ async function bookGame(ctx: any, gameType: string) {
     
     await ctx.deleteMessage().catch(() => {});
   
-    const events = await db.query.events.findMany({
+   const events = await db.query.events.findMany({
       where: and(
         eq(schema.events.isActive, true),
-        eq(schema.events.city, user.city || 'Warsaw'), // <--- ЖЕСТКИЙ ФИЛЬТР ПО ГОРОДУ
         gameType === 'speed_dating' 
-          ? or(
-              eq(schema.events.type, 'speed_dating_25_35')
-            )
+          ? or(eq(schema.events.type, 'speed_dating_25_35'))
           : eq(schema.events.type, gameType)
       )
     });
-
+	  
     if (events.length === 0) return ctx.reply(`Расписание формируется! ✨`);
 
     // 🔥 ДОБАВЛЯЕМ УМНУЮ КНОПКУ НАЗАД 🔥
