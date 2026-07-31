@@ -5683,6 +5683,98 @@ bot.action(/match_back_(\d+)_(\d+)/, async (ctx) => {
     await sendMatchBonus(me, target, eid);
 });
 
+// Обработчик для меню абонементов
+bot.action('buy_pass_menu', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    
+    const text = `🎟 <b>АБОНЕМЕНТЫ КЛУБА</b>\n\n` +
+                 `Экономьте на встречах и бронируйте места в один клик без ввода карты.\n\n` +
+                 `🥂 <b>Talk & Toast Pass (3 игры)</b>\n` +
+                 `Обычная цена: 105 PLN | По абонементу: <b>89 PLN</b>\n\n` +
+                 `🔥 <b>Dating Pass (3 игры)</b>\n` +
+                 `Обычная цена: 255 PLN | По абонементу: <b>219 PLN</b>`;
+
+    await ctx.editMessageText(text, {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([
+            [Markup.button.callback('Купить T&T Pass (89 PLN)', 'checkout_pass_tnt')],
+            [Markup.button.callback('Купить Dating Pass (219 PLN)', 'checkout_pass_dating')],
+            [Markup.button.callback('🔙 Назад в профиль', 'profile_menu')] // Замени на свой action профиля
+        ])
+    }).catch(() => {});
+});
+
+// Обработчик покупки абонемента (ловит и tnt, и dating)
+bot.action(/checkout_pass_(tnt|dating)/, async (ctx) => {
+    await ctx.answerCbQuery('Создаем ссылку на оплату... ⏳').catch(() => {});
+    
+    try {
+        const passAction = ctx.match[1]; // 'tnt' или 'dating'
+        const telegramId = ctx.from!.id;
+        
+        // Настраиваем цены и названия под выбранный абонемент
+        let priceAmount = 0;
+        let passName = '';
+        let passTypeForDb = '';
+        
+        if (passAction === 'tnt') {
+            priceAmount = 8900; // Stripe принимает суммы в копейках/грошах (89.00 PLN = 8900)
+            passName = 'Talk & Toast Pass (3 игры)';
+            passTypeForDb = 'tnt_pass';
+        } else if (passAction === 'dating') {
+            priceAmount = 21900; // 219.00 PLN
+            passName = 'Dating Pass (3 игры)';
+            passTypeForDb = 'dating_pass';
+        }
+
+        // Создаем сессию в Stripe
+        const session = await stripe.checkout.sessions.create({
+            payment_method_types: ['card', 'blik'], // BLIK мастхэв для польской аудитории
+            line_items: [{
+                price_data: {
+                    currency: 'pln',
+                    product_data: {
+                        name: passName,
+                        description: 'Абонемент действует на 3 соответствующие игры клуба',
+                    },
+                    unit_amount: priceAmount,
+                },
+                quantity: 1,
+            }],
+            mode: 'payment',
+            // URL куда перекинет пользователя после успешной или отмененной оплаты
+            success_url: `${process.env.WEBHOOK_DOMAIN}/success_pass?session_id={CHECKOUT_SESSION_ID}`,
+            cancel_url: `${process.env.WEBHOOK_DOMAIN}/cancel_pass`,
+            
+            // 🔥 САМОЕ ВАЖНОЕ: Метаданные для вебхука
+            metadata: {
+                type: 'pass_purchase',          // Флаг, что это покупка абонемента, а не билета на 1 игру
+                telegramId: telegramId.toString(),
+                passType: passTypeForDb         // 'tnt_pass' или 'dating_pass'
+            },
+        });
+
+        // Выводим сообщение со ссылкой на оплату
+        await ctx.editMessageText(
+            `🎟 <b>Оформление абонемента</b>\n\n` +
+            `Вы выбрали: <b>${passName}</b>\n` +
+            `К оплате: <b>${priceAmount / 100} PLN</b>\n\n` +
+            `<i>Ссылка на оплату действительна 30 минут.</i>`,
+            {
+                parse_mode: 'HTML',
+                ...Markup.inlineKeyboard([
+                    [Markup.button.url('💳 Оплатить', session.url!)],
+                    [Markup.button.callback('🔙 Назад к выбору', 'buy_pass_menu')]
+                ])
+            }
+        ).catch(() => {});
+
+    } catch (error) {
+        console.error("Ошибка при создании Stripe сессии для абонемента:", error);
+        await ctx.reply("❌ Произошла ошибка при создании ссылки. Пожалуйста, попробуйте позже.");
+    }
+});
+
 bot.action(/confirm_reveal_(\d+)/, async (ctx) => {
     const eid = parseInt(ctx.match[1]);
     await ctx.answerCbQuery("Проверяю оплату... ⏳");
