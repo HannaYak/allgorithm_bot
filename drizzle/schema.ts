@@ -106,7 +106,9 @@ export const vouchers = pgTable('vouchers', {
   id: serial('id').primaryKey(),
   userId: integer('user_id').references(() => users.id),
   photoFileId: text('photo_file_id'),
-  status: text('status').default('pending'),
+  status: text('status').default('pending'), // 'approved_10', 'approved_free', 'pass_active', 'used'
+  passType: text('pass_type'),               // 'tnt_pass' или 'dating_pass'
+  usageLeft: integer('usage_left').default(1), // Для обычных ваучеров = 1, для Passes = 3
   usedInEventId: integer('used_in_event_id').references(() => events.id),
 });
 
