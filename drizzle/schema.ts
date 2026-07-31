@@ -17,7 +17,7 @@ export const users = pgTable('users', {
   profileCompleted: boolean('profile_completed').default(false),
 
   // Дополнительные поля
-  city: text('city'),
+  city: varchar('city', { length: 50 }).default('Warsaw'),
   lastActive: timestamp('last_active').defaultNow(),
   isBanned: boolean('is_banned').default(false),
   banReason: text('ban_reason'),
@@ -75,6 +75,7 @@ export const events = pgTable('events', {
   price: integer('price'), // Динамическая цена
   maxPlayers: integer('max_players').notNull(),
   currentPlayers: integer('current_players').default(0),
+  city: varchar('city', { length: 50 }).default('Main'),
   isActive: boolean('is_active').default(true),
 });
 
