@@ -113,6 +113,7 @@ export const vouchers = pgTable('vouchers', {
   // ДОБАВЛЯЕМ ДЛЯ АБОНЕМЕНТОВ
   maxUses: integer('max_uses').default(1), 
   currentUses: integer('current_uses').default(0),
+  expiresAt: timestamp('expires_at'),
 });
 
 // === ТАБЛИЦА СКИДОЧНЫХ ВАУЧЕРОВ / ПРОМОКОДОВ (НОВАЯ) ===
