@@ -5225,6 +5225,81 @@ bot.action(/rate_select_(\d+)_(\d+)/, async (ctx) => {
     await ctx.editMessageText(text, { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) }).catch(()=>{});
 });
 
+// --- КОМАНДА: ВЫДАТЬ АБОНЕМЕНТ (PASS) ВРУЧНУЮ ---
+bot.command('give_pass', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+
+    const parts = ctx.message.text.split(' ');
+    // Формат: /give_pass [TG_ID] [tnt|dating]
+    if (parts.length < 3) {
+        return ctx.reply(
+            '❌ **Формат команды:**\n' +
+            '`/give_pass [TG_ID] [tnt или dating]`\n\n' +
+            '**Пример:**\n' +
+            '`/give_pass 123456789 tnt` — выдаст Talk & Toast Pass\n' +
+            '`/give_pass 123456789 dating` — выдаст Dating Pass',
+            { parse_mode: 'Markdown' }
+        );
+    }
+
+    const targetTgId = parseInt(parts[1]);
+    const passChoice = parts[2].toLowerCase();
+
+    if (isNaN(targetTgId)) {
+        return ctx.reply('❌ Ошибка: TG ID должен быть числом.');
+    }
+
+    if (passChoice !== 'tnt' && passChoice !== 'dating') {
+        return ctx.reply('❌ Ошибка: Тип пасса должен быть `tnt` или `dating`.');
+    }
+
+    const passTypeForDb = passChoice === 'tnt' ? 'tnt_pass' : 'dating_pass';
+    const passTitle = passChoice === 'tnt' ? 'Talk & Toast Pass (3 игры)' : 'Dating Pass (3 игры)';
+
+    try {
+        // 1. Ищем пользователя в базе
+        const user = await db.query.users.findFirst({
+            where: eq(schema.users.telegramId, targetTgId)
+        });
+
+        if (!user) {
+            return ctx.reply('❌ Ошибка: Пользователь с таким Telegram ID не найден в базе.');
+        }
+
+        // 2. Добавляем активный пасс с 3 использованиями
+        await db.insert(schema.vouchers).values({
+            userId: user.id,
+            status: 'pass_active',
+            passType: passTypeForDb,
+            usageLeft: 3,
+            photoFileId: 'MANUAL_ADMIN_GIFT_PASS'
+        });
+
+        // 3. Отправляем уведомление пользователю
+        const giftNotice = 
+            `🎟 <b>Вам начислен Абонемент от администратора!</b>\n\n` +
+            `Тип: <b>${passTitle}</b>\n` +
+            `Доступно списаний: <b>3 игры</b>.\n\n` +
+            `Теперь при бронировании встреч соответствующего формата доступ будет списываться с вашего баланса автоматически в один клик! 🥂`;
+
+        await bot.telegram.sendMessage(targetTgId, giftNotice, { parse_mode: 'HTML' }).catch(() => {
+            console.error(`Не удалось отправить сообщение пользователю ${targetTgId}`);
+        });
+
+        // 4. Логируем и отчитываемся в админку
+        await sendLog('ВЫДАЧА ПАССА ВРУЧНУЮ 🎟', `👤 Кому: <b>${user.name}</b> (TG: <code>${targetTgId}</code>)\n🎫 Пасс: <b>${passTitle}</b>`);
+        
+        await ctx.replyWithHTML(
+            `✅ <b>Успешно!</b>\n` +
+            `Пользователю <b>${user.name || 'без имени'}</b> (TG: <code>${targetTgId}</code>) зачислен <b>${passTitle}</b> на 3 использования.`
+        );
+
+    } catch (e) {
+        console.error("Ошибка в команде /give_pass:", e);
+        ctx.reply('❌ Произошла ошибка при выдаче абонемента.');
+    }
+});
+
 // 3. Обработка самой оценки (нажатие на звезду или жалобу)
 // 3. Обработка самой оценки (нажатие на звезду или жалобу)
 bot.action(/do_rate_(\d+)_(\d+)_(\w+)/, async (ctx) => {
