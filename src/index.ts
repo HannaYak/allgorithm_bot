@@ -2090,7 +2090,8 @@ bot.hears('👤 Личный кабинет', async (ctx) => {
       [Markup.button.callback('🎟 Купить Абонемент (Pass)', 'buy_pass_menu')],
       [Markup.button.callback('💳 Ваучеры', 'upload_voucher')],
       [Markup.button.callback('📅 Мои резервы', 'my_games')],
-      [Markup.button.callback('🤝 Приглашение', 'referral_info')]
+      [Markup.button.callback('🤝 Приглашение', 'referral_info')],
+      [Markup.button.callback('💡 Предложить идею', 'suggest_idea')] // <-- ДОБАВИЛИ КНОПКУ СЮДА
     );
 
     return ctx.replyWithHTML(msg, Markup.inlineKeyboard(buttons));
@@ -5581,9 +5582,11 @@ bot.on('message', async (ctx, next) => {
 bot.action('suggest_idea', async (ctx) => {
     await ctx.answerCbQuery().catch(() => {});
     (ctx.session as any).waitingForIdea = true;
-    await ctx.reply("💡 Напиши свою идею, предложение по улучшению или партнерству одним сообщением ниже. Админ обязательно это прочитает:");
+    await ctx.reply(
+      "💡 Напиши свою идею, предложение по улучшению или партнерству одним сообщением ниже. Админ обязательно это прочитает:\n\n" +
+      "(Напиши /cancel если передумал)"
+    );
 });
-
 
 bot.action('end_support_session', async (ctx) => {
     (ctx.session as any).waitingForSupport = false;
