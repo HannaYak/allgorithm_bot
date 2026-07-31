@@ -3450,6 +3450,7 @@ bot.action('admin_stats_menu', async (ctx) => {
         ...Markup.inlineKeyboard([
             [Markup.button.callback('📈 Общий статус (Status)', 'admin_trigger_status')],
             [Markup.button.callback('🔎 Инспекция игры (Inspect)', 'admin_bookings')],
+            [Markup.button.callback('💎 Глубокая аналитика (LTV, Retention)', 'admin_deep_analytics')], // <--- НОВАЯ КНОПКА
             [Markup.button.callback('🔙 Назад в меню', 'admin_back_main')]
         ])
     }).catch(() => {});
@@ -3492,6 +3493,77 @@ bot.action('admin_back_main', async (ctx) => {
     }).catch(() => {});
 });
 
+bot.action('admin_deep_analytics', async (ctx) => {
+    await ctx.answerCbQuery('Считаю Retention и LTV... ⏳').catch(() => {});
+
+    try {
+        // 1. Получаем все оплаченные бронирования
+        const allPaidBookings = await db.query.bookings.findMany({
+            where: eq(schema.bookings.paid, true)
+        });
+
+        // 2. Группируем бронирования по пользователям
+        const userBookingsMap: Record<number, number> = {};
+        allPaidBookings.forEach(b => {
+            userBookingsMap[b.userId] = (userBookingsMap[b.userId] || 0) + 1;
+        });
+
+        const uniquePayingUsers = Object.keys(userBookingsMap).length;
+
+        // 3. Считаем Retention (вернувшиеся юзеры)
+        let returningUsers = 0;
+        Object.values(userBookingsMap).forEach(count => {
+            if (count > 1) returningUsers++;
+        });
+
+        const retentionRate = uniquePayingUsers > 0 
+            ? ((returningUsers / uniquePayingUsers) * 100).toFixed(1) 
+            : '0.0';
+
+        // 4. Считаем примерный LTV 
+        // (Для скорости берем средний чек в 50 PLN. Если захочешь точнее — сделаем джоин таблиц)
+        const totalRevenue = allPaidBookings.length * 50; 
+        const ltv = uniquePayingUsers > 0 
+            ? (totalRevenue / uniquePayingUsers).toFixed(0) 
+            : '0';
+
+        // 5. Топ-участники (Самые лояльные резиденты)
+        const topUsers = await db.select({
+                id: schema.users.id,
+                name: schema.users.name,
+                telegramId: schema.users.telegramId,
+                games: schema.users.gamesPlayed
+            })
+            .from(schema.users)
+            .orderBy(desc(schema.users.gamesPlayed))
+            .limit(10); // Берем топ-10
+
+        let topMsg = '';
+        topUsers.forEach((u, i) => {
+            if (u.games && u.games > 0) {
+                topMsg += `${i + 1}. <b>${u.name || 'Аноним'}</b> (ID: <code>${u.telegramId}</code>) — ${u.games} игр\n`;
+            }
+        });
+
+        const report = `💎 <b>ГЛУБОКАЯ АНАЛИТИКА КЛУБА</b>\n\n` +
+            `👥 Уникальных платящих клиентов: <b>${uniquePayingUsers}</b>\n` +
+            `🔄 Вернулись 2+ раза (Retention): <b>${retentionRate}%</b> (${returningUsers} чел.)\n` +
+            `💰 Средний LTV клиента: <b>~${ltv} PLN</b>\n` +
+            `💵 Общая оценочная выручка: <b>~${totalRevenue} PLN</b>\n\n` +
+            `🏆 <b>ТОП-10 РЕЗИДЕНТОВ:</b>\n${topMsg || 'Пока нет данных'}`;
+
+        await ctx.editMessageText(report, {
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([
+                [Markup.button.callback('🔙 Назад к статистике', 'admin_stats_menu')]
+            ])
+        });
+
+    } catch (e) {
+        console.error("Ошибка в глубокой аналитике:", e);
+        await ctx.reply("❌ Произошла ошибка при расчете аналитики.");
+    }
+});
 
 bot.command('detective_panel', async (ctx) => {
   if (ctx.from.id !== ADMIN_ID) return;
