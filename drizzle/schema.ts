@@ -126,7 +126,7 @@ export const discountVouchers = pgTable('discount_vouchers', {
 export const userVouchers = pgTable('user_vouchers', {
   id: serial('id').primaryKey(),
   userId: integer('user_id').references(() => users.id),
-  voucherId: integer('voucher_id')->references(() => discountVouchers.id),
+  voucherId: integer('voucher_id').references(() => discountVouchers.id),
   usedAt: timestamp('used_at').defaultNow(),
 });
 
