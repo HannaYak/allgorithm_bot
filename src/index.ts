@@ -60,7 +60,7 @@ const GAME_PRICES: Record<string, string> = {
 };
 
 const REVEAL_PRICE_ID = 'price_1TM9ewHhXyjuCWwfdbpcocNd';
-const STRIPE_COUPON_ID = 'MBWWLu8j'; 
+const STRIPE_COUPON_ID = 'WCWEvbPD'; 
 const ADMIN_ID = 5456905649; 
 
 const BEAUTY_NAMES: Record<string, string> = {
