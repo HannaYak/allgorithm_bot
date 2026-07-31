@@ -2721,6 +2721,7 @@ async function bookGame(ctx: any, gameType: string) {
     const events = await db.query.events.findMany({
       where: and(
         eq(schema.events.isActive, true),
+        eq(schema.events.city, user.city || 'Warsaw'), // <--- ЖЕСТКИЙ ФИЛЬТР ПО ГОРОДУ
         gameType === 'speed_dating' 
           ? or(
               eq(schema.events.type, 'speed_dating_25_35')
