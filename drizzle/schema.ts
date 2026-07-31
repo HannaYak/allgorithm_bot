@@ -9,11 +9,11 @@ export const users = pgTable('users', {
 
   // === АНКЕТА ===
   name: text('name'),
-  birthDate: text('birth_date'),        // возраст
+  birthDate: text('birth_date'),
   gender: text('gender'),
   fact: text('fact'),
-  strangeStory: text('strange_story'),  // странный факт
-  expectations: text('expectations'),   // Новый важный вопрос
+  strangeStory: text('strange_story'),
+  expectations: text('expectations'),
   profileCompleted: boolean('profile_completed').default(false),
 
   // Дополнительные поля
@@ -30,25 +30,25 @@ export const users = pgTable('users', {
   loyaltyPoints: integer('loyalty_points').default(0),
 
   // === B2B СЕГМЕНТ ===
-  isCorporate: boolean('is_corporate').default(false), // Обход стандартной воронки оплаты
-  companyName: text('company_name'), // Привязка к компании (опционально)
+  isCorporate: boolean('is_corporate').default(false),
+  companyName: text('company_name'),
   
   createdAt: timestamp('created_at').defaultNow(),
   invitedBy: bigint('invited_by', { mode: 'number' }),
   referralCount: integer('referral_count').default(0),
 
   // === ТРЕКИНГ ТРАФИКА ===
-  utmSource: varchar('utm_source', { length: 255 }), // Откуда пришел (например, inst_campaign)
-  referrerId: bigint('referrer_id', { mode: 'number' }), // Кто пригласил (ID)
+  utmSource: varchar('utm_source', { length: 255 }),
+  referrerId: bigint('referrer_id', { mode: 'number' }),
 });
 
 // === ТАБЛИЦЫ ДЛЯ ИГРЫ "ОСИНТ / ДЕТЕКТИВ" ===
 export const detectiveCases = pgTable('detective_cases', {
   id: serial('id').primaryKey(),
   eventId: integer('event_id').notNull(),
-  suspectNumber: integer('suspect_number').notNull(), // 1-9
+  suspectNumber: integer('suspect_number').notNull(),
   name: varchar('name', { length: 255 }).notNull(),
-  dossier: text('dossier').notNull(), // Специфичные улики ("дыры")
+  dossier: text('dossier').notNull(),
   clue: text('clue').notNull(),
   isCulprit: boolean('is_killer').default(false).notNull()
 });
@@ -69,10 +69,10 @@ export const trialStates = pgTable('trial_states', {
 // === ТАБЛИЦА СОБЫТИЙ (ИГР) ===
 export const events = pgTable('events', {
   id: serial('id').primaryKey(),
-  type: text('type').notNull(), // 'talk_toast', 'stock_know', 'speed_dating', 'corporate', 'osint_game'
-  dateString: text('date_string').notNull(), // "20.12.2025 19:00"
-  description: text('description'), // Например "Кухня: Азия"
-  price: integer('price'), // Динамическая цена
+  type: text('type').notNull(),
+  dateString: text('date_string').notNull(),
+  description: text('description'),
+  price: integer('price'),
   maxPlayers: integer('max_players').notNull(),
   currentPlayers: integer('current_players').default(0),
   city: varchar('city', { length: 50 }).default('Main'),
@@ -81,8 +81,8 @@ export const events = pgTable('events', {
 
 export const autoStates = pgTable('auto_states', {
   id: serial('id').primaryKey(),
-  key: varchar('key', { length: 255 }).notNull().unique(), // например: "remind_3d_45"
-  value: text('value'), // JSON строка
+  key: varchar('key', { length: 255 }).notNull().unique(),
+  value: text('value'),
   createdAt: timestamp('created_at').defaultNow(),
   expiresAt: timestamp('expires_at'),
 });
@@ -97,26 +97,20 @@ export const bookings = pgTable('bookings', {
   createdAt: timestamp('created_at').defaultNow(),
 }, (table) => {
   return {
-    // Этот индекс ускорит автопилот в десятки раз
-    eventPaidIdx: index('event_paid_idx').on(table.eventId, table.paid) 
+    eventPaidIdx: index('event_paid_idx').on(table.eventId, table.paid)
   };
 });
 
-// === ТАБЛИЦА ВАУЧЕРОВ (ПОДТВЕРЖДЕНИЙ ОПЛАТ ФОТОГРАФИЕЙ) ===
+// === ТАБЛИЦА ВАУЧЕРОВ (ОРИГИНАЛЬНАЯ БЕЗ АБОНЕМЕНТОВ) ===
 export const vouchers = pgTable('vouchers', {
   id: serial('id').primaryKey(),
   userId: integer('user_id').references(() => users.id),
-  photoFileId: text('photo_file_id'), // УБИРАЕМ .notNull(), так как абонемент из Stripe без фото
-  status: text('status').default('pending'), // 'pending', 'approved', 'rejected', 'pass_active', 'pass_exhausted'
+  photoFileId: text('photo_file_id'),
+  status: text('status').default('pending'),
   usedInEventId: integer('used_in_event_id').references(() => events.id),
-  passType: varchar('pass_type', { length: 50 }),
-  // ДОБАВЛЯЕМ ДЛЯ АБОНЕМЕНТОВ
-  maxUses: integer('max_uses').default(1), 
-  currentUses: integer('current_uses').default(0),
-  expiresAt: timestamp('expires_at'),
 });
 
-// === ТАБЛИЦА СКИДОЧНЫХ ВАУЧЕРОВ / ПРОМОКОДОВ (НОВАЯ) ===
+// === ТАБЛИЦА СКИДОЧНЫХ ВАУЧЕРОВ / ПРОМОКОДОВ ===
 export const discountVouchers = pgTable('discount_vouchers', {
   id: serial('id').primaryKey(),
   code: varchar('code', { length: 50 }).notNull().unique(),
@@ -128,11 +122,11 @@ export const discountVouchers = pgTable('discount_vouchers', {
   expiresAt: timestamp('expires_at'),
 });
 
-// === ТАБЛИЦА ИСПОЛЬЗОВАНИЯ СКИДОЧНЫХ ВАУЧЕРОВ (НОВАЯ) ===
+// === ТАБЛИЦА ИСПОЛЬЗОВАНИЯ СКИДОЧНЫХ ВАУЧЕРОВ ===
 export const userVouchers = pgTable('user_vouchers', {
   id: serial('id').primaryKey(),
-  userId: integer('user_id').references(() => users.id), // references users.id (integer)
-  voucherId: integer('voucher_id').references(() => discountVouchers.id),
+  userId: integer('user_id').references(() => users.id),
+  voucherId: integer('voucher_id')->references(() => discountVouchers.id),
   usedAt: timestamp('used_at').defaultNow(),
 });
 
@@ -151,7 +145,7 @@ export const promoCodes = pgTable('promo_codes', {
   maxUses: integer('max_uses').default(1),
   currentUses: integer('current_uses').default(0),
   expiresAt: timestamp('expires_at'),
-  eventIds: text('event_ids'), // Строка типа "12,15,18"
+  eventIds: text('event_ids'),
   isActive: boolean('is_active').default(true),
 });
 
