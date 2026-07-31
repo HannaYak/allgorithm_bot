@@ -5732,6 +5732,8 @@ bot.action('buy_pass_menu', async (ctx) => {
 });
 
 // Обработчик покупки абонемента (ловит и tnt, и dating)
+// Обработчик покупки абонемента (ловит и tnt, и dating)
+// Обработчик покупки абонемента через Stripe Product API
 bot.action(/checkout_pass_(tnt|dating)/, async (ctx) => {
     await ctx.answerCbQuery('Создаем ссылку на оплату... ⏳').catch(() => {});
     
@@ -5739,24 +5741,27 @@ bot.action(/checkout_pass_(tnt|dating)/, async (ctx) => {
         const passAction = ctx.match[1]; // 'tnt' или 'dating'
         const telegramId = ctx.from!.id;
         
-        // Настраиваем цены и названия под выбранный абонемент
         let priceAmount = 0;
         let passName = '';
         let passTypeForDb = '';
         
         if (passAction === 'tnt') {
-            priceAmount = 8900; // Stripe принимает суммы в копейках/грошах (89.00 PLN = 8900)
+            priceAmount = 8900; // 89 PLN в грошах
             passName = 'Talk & Toast Pass (3 игры)';
             passTypeForDb = 'tnt_pass';
         } else if (passAction === 'dating') {
-            priceAmount = 21900; // 219.00 PLN
+            priceAmount = 21900; // 219 PLN в грошах
             passName = 'Dating Pass (3 игры)';
             passTypeForDb = 'dating_pass';
         }
 
-        // Создаем сессию в Stripe
+        // Страховка для URL возврата (если process.env.WEBHOOK_DOMAIN не задан на Render)
+        const botUsername = ctx.botInfo.username;
+        const baseUrl = process.env.WEBHOOK_DOMAIN || process.env.APP_URL || `https://t.me/${botUsername}`;
+
+        // Создаем динамический Продукт и Сессию в Stripe API
         const session = await stripe.checkout.sessions.create({
-            payment_method_types: ['card', 'blik'], // BLIK мастхэв для польской аудитории
+            payment_method_types: ['card', 'blik'],
             line_items: [{
                 price_data: {
                     currency: 'pln',
@@ -5769,19 +5774,17 @@ bot.action(/checkout_pass_(tnt|dating)/, async (ctx) => {
                 quantity: 1,
             }],
             mode: 'payment',
-            // URL куда перекинет пользователя после успешной или отмененной оплаты
-            success_url: `${process.env.WEBHOOK_DOMAIN}/success_pass?session_id={CHECKOUT_SESSION_ID}`,
-            cancel_url: `${process.env.WEBHOOK_DOMAIN}/cancel_pass`,
-            
-            // 🔥 САМОЕ ВАЖНОЕ: Метаданные для вебхука
+            locale: 'ru',
+            success_url: `${baseUrl}?status=success_pass`,
+            cancel_url: `${baseUrl}?status=cancel_pass`,
             metadata: {
-                type: 'pass_purchase',          // Флаг, что это покупка абонемента, а не билета на 1 игру
+                type: 'pass_purchase',
                 telegramId: telegramId.toString(),
-                passType: passTypeForDb         // 'tnt_pass' или 'dating_pass'
+                passType: passTypeForDb
             },
         });
 
-        // Выводим сообщение со ссылкой на оплату
+        // Отправляем кнопку со ссылкой на сгенерированную сессию Stripe
         await ctx.editMessageText(
             `🎟 <b>Оформление абонемента</b>\n\n` +
             `Вы выбрали: <b>${passName}</b>\n` +
